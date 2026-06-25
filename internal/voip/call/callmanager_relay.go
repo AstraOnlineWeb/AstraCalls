@@ -8,11 +8,13 @@ import (
 type RelayTransport interface {
 	SetSsrc(ssrc uint32)
 	SetSubscriptionSsrc(ssrc uint32)
+	SetStreamSsrcs(selfSsrcs, peerSsrcs []uint32)
 	SetOnConnected(fn func(ip string, port int))
 	SetOnReceive(fn func(data []byte))
 	ResendSubscriptions()
 	ConfigureRelays(relays []transport.RelayConfig)
 	Broadcast(data []byte)
+	BufferedAmount() uint64
 	HasConnection() bool
 	ConnectedCount() int
 	Cleanup()
@@ -26,7 +28,7 @@ func (m *CallManager) onRelayConnected() {
 	if call != nil && call.StateData.State == core.CallStateConnecting {
 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
 			m.emitState()
-			m.startSilenceKeepaliveLocked()
+			m.startMediaSendLoopLocked()
 			m.log.Info("relay connected → active", "call_id", call.CallID)
 		}
 	}
@@ -79,18 +81,24 @@ func (m *CallManager) cleanupMedia() {
 	m.mu.Lock()
 	codec := m.codec
 	m.codec = nil
-	if m.keepaliveStop != nil {
-		close(m.keepaliveStop)
-		m.keepaliveStop = nil
+	if m.sendLoopStop != nil {
+		close(m.sendLoopStop)
+		m.sendLoopStop = nil
 	}
 	m.rtpSession = nil
 	m.srtpSession = nil
+	m.videoRtpSession = nil
+	m.videoSrtpSession = nil
+	m.videoSelfSsrc = 0
+	m.videoDepacketizer = nil
+	m.videoFrameBuf = nil
 	m.firstPacketSent = false
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
 	m.actualPeerSet = false
-	m.encodeBuf = nil
-	m.encodeBufPos = 0
+	m.captureBuf = nil
+	m.audioTimelineSet = false
+	m.audioPlayedSamples = 0
 	m.mu.Unlock()
 
 	m.relay.Cleanup()

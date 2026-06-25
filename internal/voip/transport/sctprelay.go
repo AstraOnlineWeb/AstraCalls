@@ -72,6 +72,8 @@ type SctpRelayManager struct {
 
 	audioSsrc        uint32
 	subscriptionSsrc uint32
+	streamSelfSsrcs  []uint32
+	streamPeerSsrcs  []uint32
 
 	onConnected func(ip string, port int)
 
@@ -91,6 +93,11 @@ func NewSctpRelayManager(log *slog.Logger) *SctpRelayManager {
 func (m *SctpRelayManager) SetSsrc(ssrc uint32) { m.audioSsrc = ssrc }
 
 func (m *SctpRelayManager) SetSubscriptionSsrc(ssrc uint32) { m.subscriptionSsrc = ssrc }
+
+func (m *SctpRelayManager) SetStreamSsrcs(selfSsrcs, peerSsrcs []uint32) {
+	m.streamSelfSsrcs = append(m.streamSelfSsrcs[:0], selfSsrcs...)
+	m.streamPeerSsrcs = append(m.streamPeerSsrcs[:0], peerSsrcs...)
+}
 
 func (m *SctpRelayManager) SetOnConnected(fn func(ip string, port int)) { m.onConnected = fn }
 
@@ -317,11 +324,17 @@ func (m *SctpRelayManager) sendStunRegistration(conn *relayConnection) {
 		m.sendRaw(conn, BuildBindingRequestWithSubs(nil, nil, subs, false, false))
 
 		if len(info.RawToken) > 0 {
-			var peerSsrcs []uint32
-			if m.subscriptionSsrc != 0 {
-				peerSsrcs = []uint32{m.subscriptionSsrc}
+			var selfSsrcs, peerSsrcs []uint32
+			if len(m.streamSelfSsrcs) > 0 {
+				selfSsrcs = m.streamSelfSsrcs
+				peerSsrcs = m.streamPeerSsrcs
+			} else {
+				selfSsrcs = []uint32{m.audioSsrc}
+				if m.subscriptionSsrc != 0 {
+					peerSsrcs = []uint32{m.subscriptionSsrc}
+				}
 			}
-			ssrcList := BuildSSRCSubscriptionList([]uint32{m.audioSsrc}, peerSsrcs, 0, 0)
+			ssrcList := BuildSSRCSubscriptionList(selfSsrcs, peerSsrcs, 0, 0)
 			m.sendRaw(conn, BuildAllocateForRelay(info.RawToken, ssrcList, hmacKey, info.IP, info.Port))
 		}
 	}
@@ -393,6 +406,24 @@ func (m *SctpRelayManager) countOpenLocked() int {
 		}
 	}
 	return n
+}
+
+func (m *SctpRelayManager) BufferedAmount() uint64 {
+	m.mu.Lock()
+	conns := make([]*relayConnection, 0, len(m.connections))
+	for _, c := range m.connections {
+		conns = append(conns, c)
+	}
+	m.mu.Unlock()
+	var maxBuf uint64
+	for _, c := range conns {
+		if c.state == relayStateOpen && c.channel != nil {
+			if b := c.channel.BufferedAmount(); b > maxBuf {
+				maxBuf = b
+			}
+		}
+	}
+	return maxBuf
 }
 
 func (m *SctpRelayManager) HasConnection() bool {
@@ -469,6 +500,8 @@ func (m *SctpRelayManager) Cleanup() {
 	m.connections = map[string]*relayConnection{}
 	m.audioSsrc = 0
 	m.subscriptionSsrc = 0
+	m.streamSelfSsrcs = nil
+	m.streamPeerSsrcs = nil
 	m.mu.Unlock()
 	for _, c := range conns {
 		m.teardown(c)

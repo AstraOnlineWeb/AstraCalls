@@ -162,7 +162,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		m.mu.Lock()
 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
 			m.emitState()
-			m.startSilenceKeepaliveLocked()
+			m.startMediaSendLoopLocked()
 			m.log.Info("call ACTIVE (media path established)", "call_id", call.CallID, "audio", m.codec != nil)
 		}
 		m.mu.Unlock()

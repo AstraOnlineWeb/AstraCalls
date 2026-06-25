@@ -175,8 +175,16 @@ func NewWhatsAppOpusSession(ssrc uint32) *RtpSession {
 	return NewRtpSession(ssrc, core.PayloadTypeWhatsAppOpus, 16000, 960)
 }
 
+func NewH264Session(ssrc uint32) *RtpSession {
+	return NewRtpSession(ssrc, core.PayloadTypeWhatsAppH264, 90000, 0)
+}
+
 func (s *RtpSession) CreatePacket(payload []byte, marker bool) *RtpPacket {
 	return s.CreatePacketWithDuration(payload, s.samplesPerPacket, marker)
+}
+
+func (s *RtpSession) AdvanceTimestamp(samples uint32) {
+	s.timestamp += samples
 }
 
 func (s *RtpSession) CreatePacketWithDuration(payload []byte, durationSamples int, marker bool) *RtpPacket {

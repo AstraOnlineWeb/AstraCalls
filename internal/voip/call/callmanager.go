@@ -30,22 +30,31 @@ type CallManager struct {
 	peerSsrcs     []uint32
 	actualPeerSet bool
 
+	videoRtpSession   *media.RtpSession
+	videoSrtpSession  *media.SrtpSession
+	videoSelfSsrc     uint32
+	videoDepacketizer *transport.H264Depacketizer
+	videoFrameBuf     []byte
+	lastVideoAUAt     time.Time
+
 	firstPacketSent       bool
 	initialTransportSent  bool
 	outgoingPreacceptSent bool
 	acceptedByJid         string
 	debeEnabled           bool
 
-	encodeBuf    []float32
-	encodeBufPos int
+	captureBuf   []float32
+	sendLoopStop chan struct{}
 
-	lastCaptureAt time.Time
-	keepaliveStop chan struct{}
+	audioTimelineSet   bool
+	audioBaseTs        uint32
+	audioPlayedSamples uint64
 
 	OnStateChange func(*CallInfo)
 	OnIncoming    func(*CallInfo)
 	OnEnded       func(*CallInfo)
 	OnPeerAudio   func([]float32)
+	OnPeerVideo   func([]byte)
 }
 
 func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {

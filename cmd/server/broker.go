@@ -200,9 +200,10 @@ func (b *Broker) broadcastCallList() {
 	b.broadcast(map[string]any{"type": "call-list", "calls": list})
 }
 
-func (b *Broker) emitIncoming(sessionID, id, peer string) {
+func (b *Broker) emitIncoming(sessionID, id, peer string, video bool) {
 	b.broadcast(map[string]any{
-		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer, "offeredAt": time.Now().UnixMilli(),
+		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer,
+		"video": video, "offeredAt": time.Now().UnixMilli(),
 	})
 }
 

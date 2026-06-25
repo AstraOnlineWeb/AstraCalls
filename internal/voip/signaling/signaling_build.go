@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	capabilityOffer     = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
-	capabilityPreaccept = []byte{0x01, 0x05, 0xff, 0x09, 0xe4, 0xbb, 0x07}
+	capabilityOffer     = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x13}
+	capabilityPreaccept = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
 )
 
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, error) {
@@ -46,9 +46,10 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "8000"}},
 		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 	)
+	capability := capabilityOffer
 	if isVideo {
 		offerContent = append(offerContent, waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
-			"enc": "vp8", "dec": "vp8", "orientation": "0",
+			"enc": "h264", "dec": "h264", "orientation": "0",
 			"screen_width": "1920", "screen_height": "1080", "device_orientation": "0",
 		}})
 	}
@@ -56,7 +57,7 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	// confirmado: preaccept recebido). Trocar por <enc> direto foi regressão.
 	offerContent = append(offerContent,
 		waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
-		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capabilityOffer},
+		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capability},
 		waBinary.Node{Tag: "destination", Content: destinations},
 		waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
 	)
@@ -104,7 +105,7 @@ func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string,
 		}
 	}
 	if isVideo {
-		acceptContent = append(acceptContent, waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{"enc": "vp8"}})
+		acceptContent = append(acceptContent, waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{"enc": "h264"}})
 	}
 
 	return waBinary.Node{
