@@ -319,6 +319,7 @@ créditos do projeto original:
 <a href="https://github.com/jotadev66"><img src="https://github.com/jotadev66.png" width="72" height="72" style="border-radius:50%" alt="jotadev66"/></a>
 <a href="https://github.com/edgardmessias"><img src="https://github.com/edgardmessias.png" width="72" height="72" style="border-radius:50%" alt="edgardmessias"/></a>
 <a href="https://github.com/w3nder"><img src="https://github.com/w3nder.png" width="72" height="72" style="border-radius:50%" alt="w3nder"/></a>
+<a href="https://github.com/purpshell"><img src="https://github.com/purpshell.png" width="72" height="72" style="border-radius:50%" alt="purpshell"/></a>
 
 [**@jotadev66**](https://github.com/jotadev66) · [**@edgardmessias**](https://github.com/edgardmessias) · [**@w3nder**](https://github.com/w3nder)
 
@@ -333,6 +334,7 @@ créditos do projeto original:
 - [**whatsmeow**](https://github.com/tulir/whatsmeow) — biblioteca Go do protocolo WhatsApp Web
 - [**pion/webrtc**](https://github.com/pion/webrtc) — pilha WebRTC em Go puro (ICE + DTLS + SCTP)
 - [**opus_mlow**](https://github.com/edgardmessias/opus_mlow) — codec MLow nativo
+- [**meowcaller**](https://github.com/purpshell/meowcaller) — referência do motor de chamadas VoIP do WhatsApp
 - [**zapo**](https://github.com/w3nder/zapo) — referência da pilha de mídia VoIP
 - [**WAHA**](https://github.com/devlikeapro/waha) — inspiração para o storage por sessão e a integração Chatwoot
 

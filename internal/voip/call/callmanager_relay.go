@@ -87,11 +87,6 @@ func (m *CallManager) cleanupMedia() {
 	}
 	m.rtpSession = nil
 	m.srtpSession = nil
-	m.videoRtpSession = nil
-	m.videoSrtpSession = nil
-	m.videoSelfSsrc = 0
-	m.videoDepacketizer = nil
-	m.videoFrameBuf = nil
 	m.firstPacketSent = false
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
@@ -101,6 +96,7 @@ func (m *CallManager) cleanupMedia() {
 	m.audioPlayedSamples = 0
 	m.mu.Unlock()
 
+	m.video.Reset()
 	m.relay.Cleanup()
 	if codec != nil {
 		codec.Close()

@@ -1,11 +1,7 @@
 import { apiPost } from "./api";
-import { VideoReceiver, VideoSender, videoSupported } from "./video-codec";
-import {
-  H264_CHANNEL_LABEL,
-  VIDEO_FPS,
-  VIDEO_HEIGHT,
-  VIDEO_WIDTH,
-} from "../constants/video";
+import { setupVideoChannel } from "./call/video-channel";
+import { videoSupported } from "./call/video-codec";
+import { VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH } from "../constants/video";
 
 export type OpenCallOptions = {
   video?: boolean;
@@ -46,8 +42,8 @@ export const openCall = async (
   const pc = new RTCPeerConnection({ iceServers: [] });
 
   // Audio: carried over an Opus RTP media track (our transport). Only the audio
-  // track is added to the peer connection; the camera track (if any) is encoded
-  // with WebCodecs and sent over the h264 data channel below, not as RTP.
+  // track is added to the peer connection; the camera track (if any) is handled
+  // by the video channel below, which encodes it with WebCodecs.
   localStream.getAudioTracks().forEach((t) => pc.addTrack(t, localStream));
   pc.addTransceiver("audio", { direction: "recvonly" });
   const remoteHolder: { stream: MediaStream | null } = { stream: null };
@@ -55,28 +51,8 @@ export const openCall = async (
     if (ev.streams[0]) remoteHolder.stream = ev.streams[0];
   };
 
-  // Video: H264 access units over an out-of-order data channel, encoded/decoded
-  // with WebCodecs on the browser side.
-  let videoSender: VideoSender | null = null;
-  let videoReceiver: VideoReceiver | null = null;
-  let localVideoStream: MediaStream | null = null;
-  let remoteVideoStream: MediaStream | null = null;
-  if (wantVideo) {
-    const camTrack = localStream.getVideoTracks()[0];
-    if (camTrack) {
-      localVideoStream = new MediaStream([camTrack]);
-      const videoDc = pc.createDataChannel(H264_CHANNEL_LABEL, { ordered: false, maxRetransmits: 0 });
-      videoDc.binaryType = "arraybuffer";
-      videoReceiver = new VideoReceiver();
-      remoteVideoStream = videoReceiver.stream;
-      videoDc.onmessage = (e: MessageEvent<ArrayBuffer>) => videoReceiver?.decode(e.data);
-      videoDc.onopen = () => {
-        videoSender = new VideoSender(camTrack, (au) => {
-          if (videoDc.readyState === "open") videoDc.send(au);
-        });
-      };
-    }
-  }
+  // Video: H264 access units over an out-of-order data channel (WebCodecs).
+  const video = setupVideoChannel(pc, localStream, wantVideo);
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -98,15 +74,10 @@ export const openCall = async (
     get remoteStream() {
       return remoteHolder.stream;
     },
-    localVideoStream,
-    remoteVideoStream,
+    localVideoStream: video.localVideoStream,
+    remoteVideoStream: video.remoteVideoStream,
     close: () => {
-      try {
-        videoSender?.close();
-      } catch {}
-      try {
-        videoReceiver?.close();
-      } catch {}
+      video.close();
       try {
         localStream.getTracks().forEach((t) => t.stop());
       } catch {}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
-	"time"
+	callvideo "wacalls/internal/voip/call/video"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 	"wacalls/internal/voip/signaling"
@@ -30,12 +30,7 @@ type CallManager struct {
 	peerSsrcs     []uint32
 	actualPeerSet bool
 
-	videoRtpSession   *media.RtpSession
-	videoSrtpSession  *media.SrtpSession
-	videoSelfSsrc     uint32
-	videoDepacketizer *transport.H264Depacketizer
-	videoFrameBuf     []byte
-	lastVideoAUAt     time.Time
+	video *callvideo.Pipeline
 
 	firstPacketSent       bool
 	initialTransportSent  bool
@@ -70,6 +65,12 @@ func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {
 	relay.SetOnConnected(func(ip string, port int) { m.onRelayConnected() })
 	relay.SetOnReceive(func(data []byte) { m.onRelayData(data) })
 	m.relay = relay
+	m.video = callvideo.New(log, relay)
+	m.video.OnFrame = func(au []byte) {
+		if m.OnPeerVideo != nil {
+			m.OnPeerVideo(au)
+		}
+	}
 	return m
 }
 

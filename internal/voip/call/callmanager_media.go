@@ -102,7 +102,7 @@ func (m *CallManager) onRelayData(data []byte) {
 	case core.PayloadTypeWhatsAppOpus:
 		m.handleAudioRelayData(data)
 	case core.PayloadTypeWhatsAppH264:
-		m.handleVideoRelayData(data)
+		m.video.HandleRelayData(data)
 	}
 }
 
@@ -112,7 +112,7 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 		m.mu.Unlock()
 		return
 	}
-	ssrc := readRtpSsrc(data)
+	ssrc := media.RTPSsrc(data)
 	if ssrc == m.selfSsrc {
 		m.mu.Unlock()
 		return
