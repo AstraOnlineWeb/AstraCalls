@@ -166,8 +166,8 @@ IP público.
 ## ⚙️ Início Rápido
 
 ```bash
-git clone https://github.com/JotaDev66/WaCalls.git astracalls
-cd astracalls
+git clone https://github.com/AstraOnlineWeb/AstraCalls.git
+cd AstraCalls
 
 go mod download                 # dependências Go
 cd client && npm install && cd ..   # dependências do cliente React
@@ -221,9 +221,13 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 ## 🐳 Deploy em produção (Docker Swarm + Traefik)
 
 ```bash
-# build + push da imagem
-docker build -t SEU_USER/astracalls:develop .
-docker push SEU_USER/astracalls:develop
+# imagem oficial publicada no Docker Hub:
+#   astraonline/wacalls:develop
+# para usar direto, basta referenciá-la na stack (PullImage).
+
+# para buildar a sua própria a partir do código:
+docker build -t astraonline/wacalls:develop .
+docker push astraonline/wacalls:develop
 
 # deploy da stack (Postgres + servidor em rede de host + proxy Traefik)
 docker stack deploy -c astracalls-stack.yml astracalls
