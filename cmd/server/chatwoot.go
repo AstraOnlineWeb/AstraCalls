@@ -29,6 +29,10 @@ import (
 
 const cwChatIDAttr = "wacalls_chat_id"
 
+func isGroupChatID(id string) bool {
+	return strings.HasSuffix(id, "@g.us")
+}
+
 type ChatwootConfig struct {
 	URL             string `json:"url"`
 	AccountID       int    `json:"account_id"`
@@ -104,6 +108,9 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 		}
 	}
 	chatID := phone + "@" + types.DefaultUserServer
+	if isGroupChatID(chat.String()) {
+		chatID = chat.String()
+	}
 	name := evt.Info.PushName
 	if name == "" {
 		name = phone
@@ -150,16 +157,28 @@ var avatarSynced sync.Map
 
 // ensureContact acha (por telefone) ou cria o contato e garante o source_id da inbox.
 func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (contactID int, sourceID string, err error) {
-	// procura por telefone
 	if res, code, e := c.req(http.MethodGet, "/contacts/search?q="+phone, nil); e == nil && code == 200 {
 		for _, it := range asList(res["payload"]) {
 			m := asMap(it)
 			if id := asInt(m["id"]); id != 0 {
+				ident := asStr(m["identifier"])
+				attr := ""
+				if ca := asMap(m["custom_attributes"]); ca != nil {
+					attr = asStr(ca[cwChatIDAttr])
+				}
+				if isGroupChatID(ident) && ident != chatID {
+					continue
+				}
+				if isGroupChatID(attr) && attr != chatID {
+					continue
+				}
+				if isGroupChatID(chatID) && ident != chatID && attr != chatID {
+					continue
+				}
 				c.syncAvatar(id, avatarURL)
 				if sid := sourceIDForInbox(m, c.InboxID); sid != "" {
 					return id, sid, nil
 				}
-				// achou contato mas sem source_id p/ esta inbox -> cria contact_inbox
 				sid, e2 := c.ensureContactInbox(id)
 				return id, sid, e2
 			}
@@ -496,11 +515,11 @@ func chatIDFromWebhook(body map[string]any) string {
 			return v
 		}
 	}
-	if ph := asStr(sender["phone_number"]); ph != "" {
-		return strings.TrimPrefix(ph, "+")
-	}
 	if id := asStr(sender["identifier"]); id != "" {
 		return id
+	}
+	if ph := asStr(sender["phone_number"]); ph != "" {
+		return strings.TrimPrefix(ph, "+")
 	}
 	return ""
 }
@@ -541,11 +560,9 @@ func (s *server) handleChatwootResolve(w http.ResponseWriter, r *http.Request) {
 	phone := ""
 	if ca := asMap(sender["custom_attributes"]); ca != nil {
 		raw := asStr(ca[cwChatIDAttr])
-		if raw != "" {
+		if raw != "" && !isGroupChatID(raw) {
 			if jid, e := types.ParseJID(raw); e == nil {
-				phone = sess.realPhone(jid) // converte LID->PN se necessário
-			} else {
-				phone = digitsOnly(raw)
+				phone = sess.realPhone(jid)
 			}
 		}
 	}
