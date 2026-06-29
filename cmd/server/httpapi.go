@@ -51,6 +51,10 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
+	// Gravações de chamada (MP3) para o EnriqueceAI baixar. Rota pública (fora de
+	// /api/, sem API key): o id é não-enumerável e atua como capability.
+	mux.HandleFunc("GET /recordings/{id}", s.handleRecording)
+
 	if s.staticDir != "" {
 		if _, err := os.Stat(s.staticDir); err == nil {
 			mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
@@ -289,7 +293,9 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return
 		}
-		ac.cm.FeedCapturedPCM(media.Downsample48to16(pcm48))
+		down := media.Downsample48to16(pcm48)
+		ac.recorder.writeBrowser(down)
+		ac.cm.FeedCapturedPCM(down)
 	}
 	bridge.OnTerminalICE = func() {
 		go sess.terminateCall(callID, core.EndCallReasonUserEnded)

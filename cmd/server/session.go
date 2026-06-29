@@ -84,7 +84,7 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 func (s *Session) createCall(callID string) *call.CallManager {
 	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
 	s.wireCall(cm, callID)
-	s.reg.add(callID, &activeCall{cm: cm})
+	s.reg.add(callID, &activeCall{cm: cm, recorder: newCallRecorder(callID, s.log, time.Now())})
 	return cm
 }
 
@@ -123,7 +123,12 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
-		if !ok || ac.bridge == nil || ac.browserOpus == nil {
+		if !ok {
+			return
+		}
+		// Grava o lado do lead independentemente do navegador estar pronto.
+		ac.recorder.writePeer(pcm16)
+		if ac.bridge == nil || ac.browserOpus == nil {
 			return
 		}
 		pcm48 := media.Upsample16to48(pcm16)
@@ -298,12 +303,37 @@ func (s *Session) removeCall(callID string) {
 	if !ok {
 		return
 	}
+	s.finalizeRecording(ac)
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
 	if ac.browserOpus != nil {
 		ac.browserOpus.Close()
 	}
+}
+
+// finalizeRecording encerra a gravação da chamada (encode MP3) e, se gerou
+// áudio, notifica o EnriqueceAI. Roda em goroutine pois o encode (ffmpeg) é
+// lento e não pode segurar o teardown. finish() é idempotente, então é seguro
+// chamar pelos dois caminhos de término (removeCall / teardownAllCalls); como
+// remove e drain são mutuamente exclusivos, na prática roda uma vez por chamada.
+func (s *Session) finalizeRecording(ac *activeCall) {
+	if ac == nil || ac.recorder == nil {
+		return
+	}
+	rec := ac.recorder
+	go func() {
+		path, _, ok := rec.finish()
+		if !ok {
+			return
+		}
+		url := recordingPublicURL(path)
+		if url == "" {
+			rec.log.Debug("recording ready but WACALLS_PUBLIC_BASE_URL not set", "call_id", rec.callID)
+			return
+		}
+		dispatchRecordingWebhook(rec.log, rec.callID, url)
+	}()
 }
 
 func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
@@ -317,6 +347,7 @@ func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
 func (s *Session) teardownAllCalls() {
 	for _, ac := range s.reg.drain() {
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+		s.finalizeRecording(ac)
 		if ac.bridge != nil {
 			ac.bridge.Close()
 		}
