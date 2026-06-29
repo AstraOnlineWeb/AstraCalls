@@ -215,6 +215,20 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_PUBLIC_IP` | — | IP público p/ NAT 1:1 / ICE-TCP (`auto` detecta) |
 | `WACALLS_UDP_PORT` | — | Porta de mídia (UDP + ICE-TCP) |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` por env |
+| `WACALLS_RECORDING_DIR` | `$TMPDIR/wacalls-recordings` | Diretório onde os MP3s de gravação ficam até serem baixados |
+| `WACALLS_PUBLIC_BASE_URL` | — | Base pública do serviço p/ montar a URL de download da gravação (ex.: `https://voice.exemplo.com`) |
+| `WACALLS_RECORDING_WEBHOOK_URL` | — | Endpoint que recebe o aviso "gravação pronta" (ex.: EnriqueceAI `/api/webhooks/wacalls`) |
+| `WACALLS_WEBHOOK_SECRET` | — | Segredo compartilhado enviado no header `X-Webhook-Secret` do webhook de gravação |
+
+> **Gravação de chamada (opcional).** Se `WACALLS_PUBLIC_BASE_URL`,
+> `WACALLS_RECORDING_WEBHOOK_URL` e `WACALLS_WEBHOOK_SECRET` estiverem setadas, ao
+> fim de cada chamada o áudio dos dois lados é mixado num MP3 mono 16 kHz,
+> servido em `GET /recordings/{callId}.mp3` (rota pública — o `callId` é
+> não-enumerável e atua como capability), e um webhook
+> `POST {WACALLS_RECORDING_WEBHOOK_URL}` avisa o consumidor com
+> `{ "service_call_id", "recording_url" }`. Sem essas envs, a gravação é
+> desativada (degradação graciosa). Requer `ffmpeg` no PATH (já incluso na imagem
+> Docker).
 
 ---
 
