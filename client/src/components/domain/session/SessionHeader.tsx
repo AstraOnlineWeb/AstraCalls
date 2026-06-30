@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChatwootDialog } from "./ChatwootDialog";
+import { SIPDialog } from "./SIPDialog";
 import { logoutSession, pairSession } from "@/services/sessions";
 import type { SessionInfo, SessionState } from "@/types/session";
 
@@ -42,6 +43,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>
       </div>
       <div className="flex items-center gap-2">
+        {session.paired && <SIPDialog session={session} />}
         {session.paired && <ChatwootDialog sid={session.id} />}
         {session.paired ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>

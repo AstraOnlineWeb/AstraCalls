@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,12 @@ type Session struct {
 	auth     AuthSnapshot
 	webhook  string
 	chatwoot ChatwootConfig
+
+	// Credenciais SIP desta sessão (modelo Wavoip: o PBX do cliente se
+	// registra no AstraCalls usando estes dados). Definidas na criação.
+	SIPUser string
+	SIPPass string
+	SIPURL  string
 }
 
 func (s *Session) setWebhook(url string) {
@@ -95,12 +102,23 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid)
+		if s.mgr.sipInbound != nil {
+			s.mgr.sipInbound(s, c.CallID, sipUserPart(c.PeerJid))
+		}
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {
+			if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
+				ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
+			}
 			s.removeCall(c.CallID)
 			s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 			return
+		}
+		if c.IsActive() {
+			if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
+				ac.rtpBridge.NotifyActive()
+			}
 		}
 		dir := "outbound"
 		if c.Direction == core.CallDirectionIncoming {
@@ -118,20 +136,30 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.mgr.broker.upsertCall(rec)
 	}
 	cm.OnEnded = func(c *call.CallInfo) {
+		if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
+			ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
+		}
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 	}
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
-		if !ok || ac.bridge == nil || ac.browserOpus == nil {
+		if !ok {
 			return
 		}
-		pcm48 := media.Upsample16to48(pcm16)
-		opus, err := ac.browserOpus.Encode(pcm48)
-		if err != nil || len(opus) == 0 {
-			return
+		// Ponte SIP (G.711 u-law): recebe o PCM 16kHz direto.
+		if ac.rtpBridge != nil {
+			_ = ac.rtpBridge.WritePCM(pcm16)
 		}
-		_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
+		// Caminho do navegador (WebRTC/Opus).
+		if ac.bridge != nil && ac.browserOpus != nil {
+			pcm48 := media.Upsample16to48(pcm16)
+			opus, err := ac.browserOpus.Encode(pcm48)
+			if err != nil || len(opus) == 0 {
+				return
+			}
+			_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
+		}
 	}
 }
 
@@ -273,7 +301,7 @@ func (s *Session) info() SessionInfo {
 	if id := s.client.Store.ID; id != nil {
 		jid = id.String()
 	}
-	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
+	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != "", SIPUser: s.SIPUser, SIPPass: s.SIPPass, SIPURL: s.SIPURL}
 }
 
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {
@@ -303,6 +331,9 @@ func (s *Session) removeCall(callID string) {
 	}
 	if ac.browserOpus != nil {
 		ac.browserOpus.Close()
+	}
+	if ac.rtpBridge != nil {
+		ac.rtpBridge.Close()
 	}
 }
 
@@ -351,5 +382,38 @@ func mapStatus(state core.CallState) CallStatus {
 		return StatusStarting
 	default:
 		return StatusRinging
+	}
+}
+
+// sipStartCall dispara uma chamada WhatsApp de saída a partir de um INVITE SIP.
+func (s *Session) sipStartCall(ctx context.Context, phone string, isVideo bool) (string, error) {
+	phone = strings.TrimSpace(phone)
+	phone = strings.TrimPrefix(phone, "+")
+	var cleaned strings.Builder
+	for _, c := range phone {
+		if c >= '0' && c <= '9' {
+			cleaned.WriteRune(c)
+		}
+	}
+	peer := types.NewJID(cleaned.String(), types.DefaultUserServer)
+	return s.startOutgoing(ctx, peer, isVideo)
+}
+
+func (s *Session) terminateCallByID(callID string) {
+	ac, ok := s.reg.get(callID)
+	if !ok {
+		return
+	}
+	_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+}
+
+func (s *Session) setRTPBridge(callID string, b *SIPRTPBridge) {
+	oldB, found := s.reg.setRTPBridge(callID, b)
+	if !found {
+		b.Close()
+		return
+	}
+	if oldB != nil {
+		oldB.Close()
 	}
 }

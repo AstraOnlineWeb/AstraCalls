@@ -21,6 +21,10 @@ type SessionManager struct {
 	log      *slog.Logger
 	maxCalls int
 
+	// sipInbound, se definido, é chamado quando o WhatsApp recebe uma chamada,
+	// para tocar num softphone/PBX SIP registrado (gateway SIP).
+	sipInbound func(sess *Session, callID, peerNumber string)
+
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	order    []string
@@ -143,6 +147,14 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 		s := newSession(m, row.ID, row.Name, client)
 		s.waContainer = container
 		s.waDB = db
+		// backfill de credenciais SIP para sessões criadas antes do recurso.
+		if row.SIPUser == "" {
+			row.SIPUser = "wa_" + genSIPCredential(4)
+			row.SIPPass = genSIPCredential(12)
+			_ = m.store.setSIP(ctx, row.ID, row.SIPUser, row.SIPPass)
+		}
+		s.SIPUser = row.SIPUser
+		s.SIPPass = row.SIPPass
 		s.setWebhook(row.Webhook)
 		if row.Chatwoot != "" {
 			var cfg ChatwootConfig
@@ -162,7 +174,8 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 
 func (m *SessionManager) Create(name string) (string, error) {
 	id := newSessionID()
-	if err := m.store.insert(m.appCtx, id, name); err != nil {
+	sipUser, sipPass, err := m.store.insert(m.appCtx, id, name)
+	if err != nil {
 		return "", err
 	}
 	container, db, err := m.db.openSessionContainer(m.appCtx, id)
@@ -176,6 +189,8 @@ func (m *SessionManager) Create(name string) (string, error) {
 	s := newSession(m, id, name, client)
 	s.waContainer = container
 	s.waDB = db
+	s.SIPUser = sipUser
+	s.SIPPass = sipPass
 	m.register(s)
 	m.broker.emitSessionList(m.infos())
 	if err := s.startPairing(m.appCtx); err != nil {

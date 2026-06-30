@@ -35,11 +35,14 @@ type AuthSnapshot struct {
 }
 
 type SessionInfo struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	JID    string `json:"jid"`
-	State  string `json:"state"`
-	Paired bool   `json:"paired"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	JID     string `json:"jid"`
+	State   string `json:"state"`
+	Paired  bool   `json:"paired"`
+	SIPUser string `json:"sip_user"`
+	SIPPass string `json:"sip_pass"`
+	SIPURL  string `json:"sip_url"`
 }
 
 type subscriber struct {
