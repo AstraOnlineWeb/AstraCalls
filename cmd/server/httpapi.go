@@ -36,6 +36,24 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/audio", s.handleSendAudio)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/video", s.handleSendVideo)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/document", s.handleSendDocument)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/location", s.handleSendLocation)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/contact", s.handleSendContact)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll", s.handleSendPoll)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/link-preview", s.handleSendLinkPreview)
+	mux.HandleFunc("PUT /api/sessions/{sid}/messages/react", s.handleReact)
+	mux.HandleFunc("PUT /api/sessions/{sid}/messages/edit", s.handleEditMessage)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/messages", s.handleDeleteMessage)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/seen", s.handleMarkSeen)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/typing", s.handleTyping)
+
+	// Contatos (whatsmeow)
+	mux.HandleFunc("GET /api/sessions/{sid}/contacts/check", s.handleCheckNumber)
+	mux.HandleFunc("GET /api/sessions/{sid}/contacts", s.handleListContacts)
+	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}", s.handleContactInfo)
+	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}/picture", s.handleContactPicture)
+	mux.HandleFunc("POST /api/sessions/{sid}/contacts/{jid}/block", s.handleBlock(true))
+	mux.HandleFunc("POST /api/sessions/{sid}/contacts/{jid}/unblock", s.handleBlock(false))
+	mux.HandleFunc("GET /api/sessions/{sid}/blocklist", s.handleBlocklist)
 
 	// Webhook por sessão (recebimento -> Chatwoot etc.)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhook", s.handleSetWebhook)
@@ -67,7 +85,7 @@ func withCORS(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Client-Id, X-API-Key")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

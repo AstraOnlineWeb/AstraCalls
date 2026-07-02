@@ -72,14 +72,7 @@ func (s *server) send(sess *Session, w http.ResponseWriter, r *http.Request, to 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	resp, err := sess.client.SendMessage(r.Context(), jid, msg)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
-	})
+	s.sendTo(sess, w, r, jid, msg)
 }
 
 // uploadFor faz o download/decode + upload da mídia, retornando a mensagem montada
