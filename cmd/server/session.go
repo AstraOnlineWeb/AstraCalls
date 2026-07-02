@@ -81,10 +81,10 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 	return s
 }
 
-func (s *Session) createCall(callID string) *call.CallManager {
+func (s *Session) createCall(callID string, recorder *callRecorder) *call.CallManager {
 	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
 	s.wireCall(cm, callID)
-	s.reg.add(callID, &activeCall{cm: cm})
+	s.reg.add(callID, &activeCall{cm: cm, recorder: recorder})
 	return cm
 }
 
@@ -114,6 +114,10 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if existing != nil {
 			rec.Owner = existing.Owner
 			rec.StartedAt = existing.StartedAt
+			rec.Record = existing.Record
+			rec.RecordingStatus = existing.RecordingStatus
+			rec.RecordingPath = existing.RecordingPath
+			rec.RecordingURL = existing.RecordingURL
 		}
 		s.mgr.broker.upsertCall(rec)
 	}
@@ -123,6 +127,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
+		if ok && ac.recorder != nil {
+			ac.recorder.AddPeerPCM(pcm16)
+		}
 		if !ok || ac.bridge == nil || ac.browserOpus == nil {
 			return
 		}
@@ -135,14 +142,13 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 }
 
-func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
-	callID := signaling.GenerateCallID()
-	cm := s.createCall(callID)
+func (s *Session) startOutgoing(ctx context.Context, callID string, peer types.JID, isVideo bool, recorder *callRecorder) error {
+	cm := s.createCall(callID, recorder)
 	if err := cm.StartCall(ctx, callID, peer, isVideo); err != nil {
 		s.removeCall(callID)
-		return "", err
+		return err
 	}
-	return callID, nil
+	return nil
 }
 
 func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall, bool) {
@@ -163,7 +169,7 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 		s.rejectOffer(ctx, node, evt.From)
 		return
 	}
-	cm := s.createCall(callID)
+	cm := s.createCall(callID, nil)
 	cm.HandleCallOffer(ctx, node, evt.From)
 }
 
@@ -304,6 +310,15 @@ func (s *Session) removeCall(callID string) {
 	if ac.browserOpus != nil {
 		ac.browserOpus.Close()
 	}
+	if ac.recorder != nil {
+		path, err := ac.recorder.Close()
+		status := recordingReady
+		if err != nil {
+			status = recordingFailed
+			s.log.Warn("recording close failed", "call_id", callID, "err", err)
+		}
+		s.mgr.broker.finishRecording(callID, path, status)
+	}
 }
 
 func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
@@ -322,6 +337,9 @@ func (s *Session) teardownAllCalls() {
 		}
 		if ac.browserOpus != nil {
 			ac.browserOpus.Close()
+		}
+		if ac.recorder != nil {
+			_, _ = ac.recorder.Close()
 		}
 	}
 }

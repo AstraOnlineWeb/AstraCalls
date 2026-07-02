@@ -17,15 +17,20 @@ const (
 )
 
 type CallRecord struct {
-	SessionID string     `json:"sessionId"`
-	CallID    string     `json:"callId"`
-	Owner     *string    `json:"owner"`
-	Direction string     `json:"direction"`
-	Peer      string     `json:"peer"`
-	StartedAt int64      `json:"startedAt"`
-	Status    CallStatus `json:"status"`
-	EndedAt   *int64     `json:"endedAt,omitempty"`
-	EndReason string     `json:"endReason,omitempty"`
+	SessionID       string          `json:"sessionId"`
+	CallID          string          `json:"callId"`
+	Owner           *string         `json:"owner"`
+	Direction       string          `json:"direction"`
+	Peer            string          `json:"peer"`
+	StartedAt       int64           `json:"startedAt"`
+	Status          CallStatus      `json:"status"`
+	EndedAt         *int64          `json:"endedAt,omitempty"`
+	EndReason       string          `json:"endReason,omitempty"`
+	DurationMs      int64           `json:"durationMs,omitempty"`
+	Record          bool            `json:"record"`
+	RecordingStatus recordingStatus `json:"recordingStatus"`
+	RecordingPath   string          `json:"recordingPath,omitempty"`
+	RecordingURL    string          `json:"recordingUrl,omitempty"`
 }
 
 type AuthSnapshot struct {
@@ -109,6 +114,9 @@ func (b *Broker) emitSessionQR(sessionID, qr string) {
 }
 
 func (b *Broker) upsertCall(r CallRecord) {
+	if r.RecordingStatus == "" {
+		r.RecordingStatus = recordingDisabled
+	}
 	b.mu.Lock()
 	cp := r
 	b.calls[r.CallID] = &cp
@@ -129,6 +137,18 @@ func (b *Broker) getCall(id string) (*CallRecord, bool) {
 	}
 	cp := *c
 	return &cp, true
+}
+
+func (b *Broker) finishRecording(id, path string, status recordingStatus) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if c, ok := b.calls[id]; ok {
+		c.RecordingStatus = status
+		c.RecordingPath = path
+		if c.Record && status == recordingReady {
+			c.RecordingURL = "/api/sessions/" + c.SessionID + "/calls/" + c.CallID + "/recording"
+		}
+	}
 }
 
 func (b *Broker) setOwner(id, owner string) bool {
@@ -170,6 +190,9 @@ func (b *Broker) endCall(id, reason string) {
 	c.Status = StatusEnded
 	c.EndedAt = &now
 	c.EndReason = reason
+	if c.StartedAt > 0 {
+		c.DurationMs = now - c.StartedAt
+	}
 	ended := *c
 	delete(b.calls, id)
 	b.history = append(b.history, ended)
@@ -213,6 +236,21 @@ func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 		}
 	}
 	return rows
+}
+
+func (b *Broker) recordingPath(sessionID, callID string) (string, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if c, ok := b.calls[callID]; ok && c.SessionID == sessionID && c.Record && c.RecordingPath != "" {
+		return c.RecordingPath, true
+	}
+	for i := len(b.history) - 1; i >= 0; i-- {
+		c := b.history[i]
+		if c.SessionID == sessionID && c.CallID == callID && c.Record && c.RecordingStatus == recordingReady && c.RecordingPath != "" {
+			return c.RecordingPath, true
+		}
+	}
+	return "", false
 }
 
 func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string) {

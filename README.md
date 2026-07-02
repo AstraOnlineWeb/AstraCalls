@@ -93,6 +93,14 @@ Middleware `withAuth`: se `WACALLS_API_KEY` estiver setada, todas as rotas `/api
 o header `X-API-Key` (ou `?apiKey=` no SSE). O cliente React ganhou tela de login (URL +
 key). Essencial para expor o serviço fora de uma LAN confiável.
 
+### 🎙️ Gravação de chamadas
+`POST /api/sessions/{sid}/calls` aceita `record: true`. Quando habilitado, o servidor grava
+um WAV estéreo best-effort em `WACALLS_RECORDINGS_DIR` (padrão `/data/recordings`), em
+`{sessionId}/{callId}.wav`: canal esquerdo = operador/navegador, canal direito = peer/lead.
+O histórico (`GET /api/sessions/{sid}/history`) retorna `record`, `recordingStatus`,
+`recordingUrl`, `recordingPath` e `durationMs`; o arquivo fica disponível em
+`GET /api/sessions/{sid}/calls/{callId}/recording` com a mesma autenticação por API key.
+
 ### 🌐 Mídia WebRTC pronta para nuvem (ICE-TCP / NAT 1:1)
 Muitos provedores cloud (ex.: Hetzner) **bloqueiam UDP de entrada novo** na interface
 pública, o que derruba o WebRTC padrão. O `bridge.go` agora configura
