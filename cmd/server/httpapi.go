@@ -10,6 +10,7 @@ import (
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -54,6 +55,26 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/contacts/{jid}/block", s.handleBlock(true))
 	mux.HandleFunc("POST /api/sessions/{sid}/contacts/{jid}/unblock", s.handleBlock(false))
 	mux.HandleFunc("GET /api/sessions/{sid}/blocklist", s.handleBlocklist)
+
+	// Grupos (whatsmeow)
+	mux.HandleFunc("POST /api/sessions/{sid}/groups", s.handleCreateGroup)
+	mux.HandleFunc("GET /api/sessions/{sid}/groups", s.handleListGroups)
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/join", s.handleJoinGroup)
+	mux.HandleFunc("GET /api/sessions/{sid}/groups/join-info", s.handleGroupJoinInfo)
+	mux.HandleFunc("GET /api/sessions/{sid}/groups/{gid}", s.handleGroupInfo)
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/leave", s.handleLeaveGroup)
+	mux.HandleFunc("GET /api/sessions/{sid}/groups/{gid}/participants", s.handleGroupParticipants)
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/participants/add", s.handleGroupParticipantChange(whatsmeow.ParticipantChangeAdd))
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/participants/remove", s.handleGroupParticipantChange(whatsmeow.ParticipantChangeRemove))
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/participants/promote", s.handleGroupParticipantChange(whatsmeow.ParticipantChangePromote))
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/participants/demote", s.handleGroupParticipantChange(whatsmeow.ParticipantChangeDemote))
+	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/subject", s.handleGroupSubject)
+	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/description", s.handleGroupDescription)
+	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/picture", s.handleGroupPicture)
+	mux.HandleFunc("GET /api/sessions/{sid}/groups/{gid}/invite", s.handleGroupInvite)
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/invite/revoke", s.handleGroupInviteRevoke)
+	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/announce", s.handleGroupAnnounce)
+	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/locked", s.handleGroupLocked)
 
 	// Webhook por sessão (recebimento -> Chatwoot etc.)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhook", s.handleSetWebhook)
