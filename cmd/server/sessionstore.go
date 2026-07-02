@@ -35,6 +35,26 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS webhook TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chatwoot TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
+
+	// Histórico de mensagens (para as rotas de chats/messages estilo WAHA).
+	// O whatsmeow não persiste histórico; guardamos aqui o que passa pela sessão.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS messages (
+		session_id TEXT NOT NULL,
+		chat_jid   TEXT NOT NULL,
+		sender_jid TEXT NOT NULL,
+		msg_id     TEXT NOT NULL,
+		from_me    BOOLEAN NOT NULL,
+		ts         BIGINT NOT NULL,
+		type       TEXT NOT NULL,
+		body       TEXT,
+		raw        JSONB,
+		PRIMARY KEY (session_id, chat_jid, msg_id)
+	)`); err != nil {
+		return nil, err
+	}
+	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages (session_id, chat_jid, ts DESC)`)
+	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_session_ts ON messages (session_id, ts DESC)`)
+
 	return &sessionStore{db: db}, nil
 }
 

@@ -99,6 +99,11 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/status/video", s.handleStatusVideo)
 	mux.HandleFunc("POST /api/sessions/{sid}/status/audio", s.handleStatusAudio)
 
+	// Histórico de conversas/mensagens
+	mux.HandleFunc("GET /api/sessions/{sid}/chats", s.handleListChats)
+	mux.HandleFunc("GET /api/sessions/{sid}/chats/{chatId}/messages", s.handleChatMessages)
+	mux.HandleFunc("GET /api/sessions/{sid}/messages", s.handleQueryMessages)
+
 	// Webhook por sessão (recebimento -> Chatwoot etc.)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhook", s.handleSetWebhook)
 	mux.HandleFunc("GET /api/sessions/{sid}/webhook", s.handleGetWebhook)
