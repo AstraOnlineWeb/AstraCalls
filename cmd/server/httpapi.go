@@ -76,6 +76,29 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/announce", s.handleGroupAnnounce)
 	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/locked", s.handleGroupLocked)
 
+	// Canais / Newsletters (whatsmeow)
+	mux.HandleFunc("GET /api/sessions/{sid}/channels", s.handleListChannels)
+	mux.HandleFunc("GET /api/sessions/{sid}/channels/{id}", s.handleChannelInfo)
+	mux.HandleFunc("GET /api/sessions/{sid}/channels/{id}/messages", s.handleChannelMessages)
+	mux.HandleFunc("POST /api/sessions/{sid}/channels/{id}/follow", s.handleChannelFollow(true))
+	mux.HandleFunc("POST /api/sessions/{sid}/channels/{id}/unfollow", s.handleChannelFollow(false))
+	mux.HandleFunc("POST /api/sessions/{sid}/channels/{id}/mute", s.handleChannelMute(true))
+	mux.HandleFunc("POST /api/sessions/{sid}/channels/{id}/unmute", s.handleChannelMute(false))
+
+	// Presença
+	mux.HandleFunc("POST /api/sessions/{sid}/presence", s.handleSetPresence)
+	mux.HandleFunc("POST /api/sessions/{sid}/presence/{jid}/subscribe", s.handleSubscribePresence)
+
+	// Perfil próprio
+	mux.HandleFunc("GET /api/sessions/{sid}/profile", s.handleGetProfile)
+	mux.HandleFunc("PUT /api/sessions/{sid}/profile/status", s.handleSetProfileStatus)
+
+	// Status / Stories
+	mux.HandleFunc("POST /api/sessions/{sid}/status/text", s.handleStatusText)
+	mux.HandleFunc("POST /api/sessions/{sid}/status/image", s.handleStatusImage)
+	mux.HandleFunc("POST /api/sessions/{sid}/status/video", s.handleStatusVideo)
+	mux.HandleFunc("POST /api/sessions/{sid}/status/audio", s.handleStatusAudio)
+
 	// Webhook por sessão (recebimento -> Chatwoot etc.)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhook", s.handleSetWebhook)
 	mux.HandleFunc("GET /api/sessions/{sid}/webhook", s.handleGetWebhook)
