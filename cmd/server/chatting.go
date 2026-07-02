@@ -288,6 +288,7 @@ func (s *server) sendTo(sess *Session, w http.ResponseWriter, r *http.Request, j
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	sess.recordOutgoing(jid, resp.ID, resp.Timestamp.UnixMilli(), msg)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
 	})

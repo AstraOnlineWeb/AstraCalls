@@ -192,6 +192,7 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	case *events.Message:
+		s.storeMessageEvent(evt)
 		s.dispatchWebhook("message", summarizeMessage(evt))
 		go s.chatwootPushIncoming(evt)
 	case *events.Receipt:
