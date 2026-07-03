@@ -883,6 +883,11 @@ func downloadableOf(m *waE2E.Message) whatsmeow.DownloadableMessage {
 		return m.GetVideoMessage()
 	case m.GetDocumentMessage() != nil:
 		return m.GetDocumentMessage()
+	case m.GetProductMessage() != nil:
+		// a imagem do produto/catálogo vira anexo no Chatwoot
+		if img := productImage(m.GetProductMessage()); img != nil {
+			return img
+		}
 	}
 	return nil
 }
@@ -899,6 +904,10 @@ func mediaMeta(m *waE2E.Message) (string, string) {
 	case m.GetDocumentMessage() != nil:
 		d := m.GetDocumentMessage()
 		return firstNonEmpty(d.GetFileName(), "file"), firstNonEmpty(d.GetMimetype(), "application/octet-stream")
+	case m.GetProductMessage() != nil:
+		if img := productImage(m.GetProductMessage()); img != nil {
+			return "produto.jpg", firstNonEmpty(img.GetMimetype(), "image/jpeg")
+		}
 	}
 	return "file", "application/octet-stream"
 }

@@ -76,6 +76,10 @@ func messageText(m *waE2E.Message) string {
 		return m.GetImageMessage().GetCaption()
 	case m.GetVideoMessage() != nil:
 		return m.GetVideoMessage().GetCaption()
+	case m.GetProductMessage() != nil:
+		return productText(m.GetProductMessage())
+	case m.GetOrderMessage() != nil:
+		return orderText(m.GetOrderMessage())
 	}
 	return ""
 }
@@ -98,6 +102,10 @@ func messageType(m *waE2E.Message) string {
 		return "location"
 	case m.GetContactMessage() != nil:
 		return "contact"
+	case m.GetProductMessage() != nil:
+		return "product"
+	case m.GetOrderMessage() != nil:
+		return "order"
 	}
 	return "unknown"
 }
