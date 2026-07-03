@@ -68,6 +68,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	startRecordingJanitor(log)
+
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
 	go func() {
 		log.Info("HTTP server listening", "addr", *addr)

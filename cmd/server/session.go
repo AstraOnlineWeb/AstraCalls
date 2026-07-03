@@ -38,10 +38,11 @@ type Session struct {
 	waContainer *sqlstore.Container
 	waDB        *sql.DB
 
-	mu       sync.Mutex
-	auth     AuthSnapshot
-	webhook  string
-	chatwoot ChatwootConfig
+	mu        sync.Mutex
+	auth      AuthSnapshot
+	webhook   string
+	chatwoot  ChatwootConfig
+	recording bool // grava as chamadas desta sessão (opt-in)
 
 	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou (via API ou
 	// pelo agente do Chatwoot), para não espelhá-las como nota privada quando
@@ -103,6 +104,18 @@ func (s *Session) getChatwoot() ChatwootConfig {
 	return s.chatwoot
 }
 
+func (s *Session) setRecording(on bool) {
+	s.mu.Lock()
+	s.recording = on
+	s.mu.Unlock()
+}
+
+func (s *Session) getRecording() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recording
+}
+
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
 	s := &Session{
 		id:     id,
@@ -120,7 +133,11 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 func (s *Session) createCall(callID string) *call.CallManager {
 	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
 	s.wireCall(cm, callID)
-	s.reg.add(callID, &activeCall{cm: cm})
+	ac := &activeCall{cm: cm}
+	if s.getRecording() {
+		ac.recorder = newCallRecorder(callID, s.log, time.Now())
+	}
+	s.reg.add(callID, ac)
 	return cm
 }
 
@@ -159,7 +176,12 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
-		if !ok || ac.bridge == nil || ac.browserOpus == nil {
+		if !ok {
+			return
+		}
+		// grava o lado do peer (WhatsApp) mesmo se o navegador ainda não estiver pronto
+		ac.recorder.writePeer(pcm16)
+		if ac.bridge == nil || ac.browserOpus == nil {
 			return
 		}
 		pcm48 := media.Upsample16to48(pcm16)
@@ -305,12 +327,13 @@ func (s *Session) setAuth(a AuthSnapshot) {
 func (s *Session) info() SessionInfo {
 	s.mu.Lock()
 	a := s.auth
+	rec := s.recording
 	s.mu.Unlock()
 	jid := ""
 	if id := s.client.Store.ID; id != nil {
 		jid = id.String()
 	}
-	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
+	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != "", Recording: rec}
 }
 
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {
@@ -335,12 +358,36 @@ func (s *Session) removeCall(callID string) {
 	if !ok {
 		return
 	}
+	s.finalizeRecording(ac)
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
 	if ac.browserOpus != nil {
 		ac.browserOpus.Close()
 	}
+}
+
+// finalizeRecording encerra a gravação (encode MP3) e entrega o áudio (Chatwoot
+// + webhook). Roda em goroutine pois o encode (ffmpeg) é lento e não pode segurar
+// o teardown. finish() é idempotente, então é seguro chamar pelos dois caminhos
+// de término (removeCall / teardownAllCalls).
+func (s *Session) finalizeRecording(ac *activeCall) {
+	if ac == nil || ac.recorder == nil {
+		return
+	}
+	rec := ac.recorder
+	callID := rec.callID
+	peer := ""
+	if cr, ok := s.mgr.broker.getCall(callID); ok && cr != nil {
+		peer = cr.Peer
+	}
+	go func() {
+		path, seconds, ok := rec.finish()
+		if !ok {
+			return
+		}
+		s.onRecordingReady(callID, peer, path, seconds)
+	}()
 }
 
 func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
@@ -354,6 +401,7 @@ func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
 func (s *Session) teardownAllCalls() {
 	for _, ac := range s.reg.drain() {
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+		s.finalizeRecording(ac)
 		if ac.bridge != nil {
 			ac.bridge.Close()
 		}

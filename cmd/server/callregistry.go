@@ -11,6 +11,7 @@ type activeCall struct {
 	cm          *call.CallManager
 	bridge      *Bridge
 	browserOpus media.Codec
+	recorder    *callRecorder // nil quando a gravação está desligada na sessão
 }
 
 type callRegistry struct {

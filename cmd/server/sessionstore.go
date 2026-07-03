@@ -8,11 +8,12 @@ import (
 )
 
 type sessionRow struct {
-	ID       string
-	Name     string
-	JID      string
-	Webhook  string
-	Chatwoot string
+	ID        string
+	Name      string
+	JID       string
+	Webhook   string
+	Chatwoot  string
+	Recording bool
 }
 
 type sessionStore struct{ db *sql.DB }
@@ -35,6 +36,7 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS webhook TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chatwoot TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS recording BOOLEAN NOT NULL DEFAULT false`)
 
 	// Histórico de mensagens (para as rotas de chats/messages).
 	// O whatsmeow não persiste histórico; guardamos aqui o que passa pela sessão.
@@ -65,7 +67,7 @@ func newSessionID() string {
 }
 
 func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, '') FROM sessions ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(recording, false) FROM sessions ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +75,7 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	var out []sessionRow
 	for rows.Next() {
 		var r sessionRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.Recording); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -98,6 +100,11 @@ func (s *sessionStore) setWebhook(ctx context.Context, id, url string) error {
 
 func (s *sessionStore) setChatwoot(ctx context.Context, id, cfgJSON string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET chatwoot = $1 WHERE id = $2`, cfgJSON, id)
+	return err
+}
+
+func (s *sessionStore) setRecording(ctx context.Context, id string, on bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET recording = $1 WHERE id = $2`, on, id)
 	return err
 }
 

@@ -98,6 +98,7 @@ components:
         jid: { type: string, example: "556192264108:13@s.whatsapp.net" }
         state: { type: string, enum: [open, connecting, close], example: open }
         paired: { type: boolean, example: true }
+        recording: { type: boolean, example: false, description: "Gravação de chamadas ligada para esta conta" }
     StartCallRequest:
       type: object
       required: [phone]
@@ -246,6 +247,61 @@ paths:
               schema:
                 type: object
                 properties: { id: { type: string } }
+
+  /api/sessions/{sid}/recording:
+    get:
+      tags: [Sessões]
+      summary: Estado da gravação de chamadas da conta
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { enabled: { type: boolean } }
+    put:
+      tags: [Sessões]
+      summary: Liga/desliga a gravação de chamadas da conta
+      description: |
+        Quando ligado, TODAS as chamadas desta conta são gravadas. No fim de cada
+        chamada o MP3 vira uma **nota privada** na conversa do número no Chatwoot
+        (se configurado) e um evento `recording` é enviado no webhook da sessão.
+        O áudio também fica em `GET /recordings/{callId}.mp3`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties: { enabled: { type: boolean, example: true } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { enabled: { type: boolean } }
+
+  /recordings/{id}:
+    get:
+      tags: [Sessões]
+      summary: Baixa o MP3 de uma gravação (rota pública / capability)
+      description: "Fora de /api/ (sem API key). O id (callId) é não-enumerável e atua como capability."
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: "abc123.mp3" }
+      responses:
+        "200":
+          description: Áudio MP3
+          content:
+            audio/mpeg: { schema: { type: string, format: binary } }
+        "404": { description: Não encontrado }
 
   /api/sessions/{sid}:
     delete:

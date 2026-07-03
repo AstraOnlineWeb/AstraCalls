@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Loader2, Power, QrCode } from "lucide-react";
+import { Loader2, Power, QrCode, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { ChatwootDialog } from "./ChatwootDialog";
-import { logoutSession, pairSession } from "@/services/sessions";
+import { logoutSession, pairSession, setRecording } from "@/services/sessions";
 import type { SessionInfo, SessionState } from "@/types/session";
 
 const statusLabel: Record<SessionState, string> = {
@@ -23,6 +24,18 @@ const statusVariant: Record<SessionState, "success" | "secondary" | "muted" | "d
 
 export const SessionHeader = ({ session }: { session: SessionInfo }) => {
   const [busy, setBusy] = useState(false);
+  const [recBusy, setRecBusy] = useState(false);
+
+  const toggleRecording = async (value: boolean) => {
+    setRecBusy(true);
+    try {
+      await setRecording(session.id, value);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setRecBusy(false);
+    }
+  };
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -42,6 +55,18 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>
       </div>
       <div className="flex items-center gap-2">
+        {session.paired && (
+          <label className="mr-1 flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <Mic className="h-4 w-4" />
+            <span className="hidden sm:inline">Gravar</span>
+            <Switch
+              checked={session.recording}
+              onCheckedChange={toggleRecording}
+              disabled={recBusy}
+              aria-label="Gravar chamadas desta conta"
+            />
+          </label>
+        )}
         {session.paired && <ChatwootDialog sid={session.id} />}
         {session.paired ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>

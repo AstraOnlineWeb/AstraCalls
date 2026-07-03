@@ -23,3 +23,12 @@ const postVoid = async (path: string): Promise<void> => {
 export const logoutSession = (id: string) => postVoid(`/api/sessions/${id}/logout`);
 
 export const pairSession = (id: string) => postVoid(`/api/sessions/${id}/pair`);
+
+export const setRecording = async (id: string, enabled: boolean): Promise<void> => {
+  const r = await fetch(apiUrl(`/api/sessions/${id}/recording`), {
+    method: "PUT",
+    headers: { "X-Client-Id": getClientId(), "X-API-Key": getApiKey(), "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!r.ok) throw new Error(`recording ${r.status}`);
+};

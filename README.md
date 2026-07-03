@@ -215,6 +215,17 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_PUBLIC_IP` | — | IP público p/ NAT 1:1 / ICE-TCP (`auto` detecta) |
 | `WACALLS_UDP_PORT` | — | Porta de mídia (UDP + ICE-TCP) |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` por env |
+| `WACALLS_RECORDING_DIR` | `$TMPDIR/wacalls-recordings` | Onde os MP3s de gravação ficam (retenção ~48h, limpeza automática) |
+| `WACALLS_PUBLIC_BASE_URL` | — | Base pública p/ montar a URL de download da gravação e do evento `recording` no webhook (ex.: `https://call.seudominio.com`) |
+
+> **Gravação de chamada (opt-in por sessão).** Ligue em `PUT /api/sessions/{sid}/recording {"enabled":true}`
+> (ou pelo toggle "Gravar" no painel). Com a gravação ligada, TODAS as chamadas da
+> conta são gravadas: o áudio dos dois lados é mixado num MP3 mono 16 kHz e, ao
+> fim da chamada, vira **nota privada** na conversa do número no Chatwoot (se
+> configurado — nunca é reenviado ao cliente) e dispara um evento `recording` no
+> webhook da sessão com `{ callId, to, url, seconds }`. O MP3 também fica em
+> `GET /recordings/{callId}.mp3` (capability). Requer `ffmpeg` (já na imagem). Base
+> feita a partir da contribuição de @Mercantes (PR #12).
 
 ---
 

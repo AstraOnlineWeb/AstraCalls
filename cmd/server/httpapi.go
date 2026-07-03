@@ -119,6 +119,13 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/chatwoot/groups/{gid}/open", s.handleChatwootOpenGroup)
 	mux.HandleFunc("POST /api/sessions/{sid}/chatwoot/channels/{id}/open", s.handleChatwootOpenChannel)
 
+	// Gravação de chamadas (opt-in por sessão)
+	mux.HandleFunc("GET /api/sessions/{sid}/recording", s.handleGetRecording)
+	mux.HandleFunc("PUT /api/sessions/{sid}/recording", s.handleSetRecording)
+	// MP3 finalizado — rota pública (fora de /api/, sem API key): o id é
+	// não-enumerável e atua como capability.
+	mux.HandleFunc("GET /recordings/{id}", s.handleRecording)
+
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
 	if s.staticDir != "" {
@@ -359,7 +366,9 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return
 		}
-		ac.cm.FeedCapturedPCM(media.Downsample48to16(pcm48))
+		down := media.Downsample48to16(pcm48)
+		ac.recorder.writeBrowser(down)
+		ac.cm.FeedCapturedPCM(down)
 	}
 	bridge.OnTerminalICE = func() {
 		go sess.terminateCall(callID, core.EndCallReasonUserEnded)
