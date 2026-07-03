@@ -65,8 +65,8 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
             className={cn(
               "group flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition-colors",
               s.id === activeId
-                ? "bg-accent text-accent-foreground shadow-soft"
-                : "text-foreground/80 hover:bg-muted",
+                ? "bg-accent font-medium text-accent-foreground"
+                : "text-foreground/70 hover:bg-muted",
             )}
           >
             <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-card", dotClass[s.state])} />
