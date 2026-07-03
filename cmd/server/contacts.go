@@ -32,14 +32,15 @@ func (s *server) handleCheckNumber(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(resp) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"query": phone, "exists": false})
+		writeJSON(w, http.StatusOK, map[string]any{"query": phone, "exists": false, "numberExists": false})
 		return
 	}
 	it := resp[0]
-	out := map[string]any{"query": it.Query, "exists": it.IsIn}
+	out := map[string]any{"query": it.Query, "exists": it.IsIn, "numberExists": it.IsIn}
 	if it.IsIn {
 		out["jid"] = it.JID.String()
 		out["number"] = it.JID.User
+		out["chatId"] = waChatID(it.JID) // alias WAHA
 	}
 	if it.VerifiedName != nil && it.VerifiedName.Details != nil {
 		out["verifiedName"] = it.VerifiedName.Details.GetVerifiedName()
@@ -67,6 +68,10 @@ func (s *server) handleListContacts(w http.ResponseWriter, r *http.Request) {
 			"firstName":    c.FirstName,
 			"pushName":     c.PushName,
 			"businessName": c.BusinessName,
+			// aliases WAHA
+			"id":       waChatID(jid),
+			"name":     firstNonEmptyOf(c.FullName, c.PushName, c.FirstName, c.BusinessName),
+			"pushname": c.PushName,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -98,6 +103,7 @@ func (s *server) handleContactInfo(w http.ResponseWriter, r *http.Request) {
 		"number":    jid.User,
 		"status":    ui.Status,
 		"pictureId": ui.PictureID,
+		"id":        waChatID(jid), // alias WAHA
 	}
 	if !ui.LID.IsEmpty() {
 		out["lid"] = ui.LID.String()
@@ -124,10 +130,13 @@ func (s *server) handleContactPicture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pic == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"url": ""})
+		writeJSON(w, http.StatusOK, map[string]any{"url": "", "profilePictureURL": ""})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"url": pic.URL, "id": pic.ID, "type": pic.Type})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"url": pic.URL, "id": pic.ID, "type": pic.Type,
+		"profilePictureURL": pic.URL, // alias WAHA
+	})
 }
 
 // POST /api/sessions/{sid}/contacts/{jid}/block  e /unblock

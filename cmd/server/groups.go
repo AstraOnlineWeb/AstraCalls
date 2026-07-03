@@ -40,6 +40,10 @@ func groupJSON(g *types.GroupInfo) map[string]any {
 			"number":       p.JID.User,
 			"isAdmin":      p.IsAdmin,
 			"isSuperAdmin": p.IsSuperAdmin,
+			// aliases WAHA
+			"id":   waChatID(p.JID),
+			"pn":   p.JID.User,
+			"role": waRole(p.IsAdmin, p.IsSuperAdmin),
 		})
 	}
 	return map[string]any{
@@ -51,6 +55,10 @@ func groupJSON(g *types.GroupInfo) map[string]any {
 		"locked":       g.IsLocked,   // só admins editam info
 		"created":      g.GroupCreated.UnixMilli(),
 		"participants": parts,
+		// aliases WAHA
+		"id":          g.JID.String(), // grupos já são @g.us
+		"subject":     g.Name,
+		"description": g.Topic,
 	}
 }
 

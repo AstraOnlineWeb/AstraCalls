@@ -74,6 +74,17 @@ type storedMessage struct {
 	Raw       json.RawMessage `json:"raw,omitempty"`
 }
 
+// MarshalJSON acrescenta aliases no estilo WAHA (from/chatId) sem remover os
+// campos originais (id/body/timestamp/fromMe já coincidem com a WAHA).
+func (m storedMessage) MarshalJSON() ([]byte, error) {
+	type alias storedMessage
+	return json.Marshal(struct {
+		alias
+		From   string `json:"from"`
+		ChatID string `json:"chatId"`
+	}{alias(m), waChatIDStr(m.SenderJID), waChatIDStr(m.ChatJID)})
+}
+
 // chatOverview resume uma conversa (última mensagem + contagem).
 type chatOverview struct {
 	ChatJID    string `json:"chat"`
@@ -82,6 +93,15 @@ type chatOverview struct {
 	LastTS     int64  `json:"timestamp"`
 	Count      int    `json:"count"`
 	LastFromMe bool   `json:"lastFromMe"`
+}
+
+// MarshalJSON acrescenta o alias id (chatId estilo WAHA).
+func (o chatOverview) MarshalJSON() ([]byte, error) {
+	type alias chatOverview
+	return json.Marshal(struct {
+		alias
+		ID string `json:"id"`
+	}{alias(o), waChatIDStr(o.ChatJID)})
 }
 
 // saveMessage persiste (ou atualiza) uma mensagem. Idempotente por (session, chat, msg_id).

@@ -25,6 +25,9 @@ func newsletterJSON(n *types.NewsletterMetadata) map[string]any {
 		"description": n.ThreadMeta.Description.Text,
 		"subscribers": n.ThreadMeta.SubscriberCount,
 		"invite":      n.ThreadMeta.InviteCode,
+		// aliases WAHA
+		"id":               n.ID.String(),
+		"subscribersCount": n.ThreadMeta.SubscriberCount,
 	}
 	if n.ViewerMeta != nil {
 		out["role"] = string(n.ViewerMeta.Role)

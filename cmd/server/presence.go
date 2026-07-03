@@ -66,6 +66,9 @@ func (s *server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		"jid":      id.String(),
 		"number":   id.User,
 		"pushName": sess.client.Store.PushName,
+		// aliases WAHA
+		"id":   waChatID(*id),
+		"name": sess.client.Store.PushName,
 	}
 	writeJSON(w, http.StatusOK, out)
 }

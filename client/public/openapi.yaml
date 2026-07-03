@@ -116,6 +116,7 @@ components:
         mimetype: { type: string, example: "image/jpeg" }
     GroupInfo:
       type: object
+      description: "Inclui aliases de compatibilidade (id/subject/description) ao lado dos campos nativos."
       properties:
         jid: { type: string, example: "120363000000000000@g.us" }
         name: { type: string }
@@ -124,6 +125,9 @@ components:
         announce: { type: boolean, description: "true = só admins enviam" }
         locked: { type: boolean, description: "true = só admins editam info" }
         created: { type: integer, format: int64 }
+        id: { type: string, description: "alias de jid", example: "120363000000000000@g.us" }
+        subject: { type: string, description: "alias de name" }
+        description: { type: string, description: "alias de topic" }
         participants:
           type: array
           items:
@@ -133,6 +137,9 @@ components:
               number: { type: string }
               isAdmin: { type: boolean }
               isSuperAdmin: { type: boolean }
+              id: { type: string, description: "alias (número@c.us)" }
+              pn: { type: string, description: "alias do número" }
+              role: { type: string, enum: [participant, admin, superadmin] }
   requestBodies:
     Participants:
       required: true
@@ -174,6 +181,8 @@ components:
                 type: { type: string, example: text }
                 body: { type: string }
                 raw: { type: object }
+                from: { type: string, description: "alias (remetente em número@c.us)" }
+                chatId: { type: string, description: "alias (chat em número@c.us)" }
     Group:
       description: Dados do grupo
       content:
