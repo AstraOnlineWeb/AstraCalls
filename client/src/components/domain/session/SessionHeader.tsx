@@ -55,7 +55,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         <h1 className="truncate text-xl font-semibold tracking-tight">{session.name}</h1>
         <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {session.paired && (
           <label className="mr-1 flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             <Mic className="h-4 w-4" />
@@ -71,14 +71,20 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         {session.paired && <ProxyDialog sid={session.id} />}
         {session.paired && <ChatwootDialog sid={session.id} />}
         {session.paired ? (
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            title="Desconectar"
+            onClick={() => run(() => logoutSession(session.id))}
+          >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-            Desconectar
+            <span className="hidden sm:inline">Desconectar</span>
           </Button>
         ) : (
-          <Button size="sm" disabled={busy} onClick={() => run(() => pairSession(session.id))}>
+          <Button size="sm" disabled={busy} title="Reativar" onClick={() => run(() => pairSession(session.id))}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
-            Reativar
+            <span className="hidden sm:inline">Reativar</span>
           </Button>
         )}
       </div>

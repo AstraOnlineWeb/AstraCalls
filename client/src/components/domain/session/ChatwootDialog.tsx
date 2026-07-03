@@ -90,9 +90,9 @@ export const ChatwootDialog = ({ sid }: { sid: string }) => {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant={enabled ? "default" : "outline"} size="sm">
+        <Button variant={enabled ? "default" : "outline"} size="sm" title="Chatwoot">
           <MessageSquare className="h-4 w-4" />
-          Chatwoot
+          <span className="hidden sm:inline">Chatwoot</span>
         </Button>
       </DialogTrigger>
       <DialogContent>
