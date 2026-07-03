@@ -57,7 +57,7 @@ func (s *server) handleChatMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/sessions/{sid}/messages?chatId=&limit=&offset=&raw=
-// Atalho estilo WAHA para as mensagens de um chat via query string.
+// Atalho para as mensagens de um chat via query string.
 func (s *server) handleQueryMessages(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {

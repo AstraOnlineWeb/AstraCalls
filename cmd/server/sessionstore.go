@@ -36,7 +36,7 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chatwoot TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
 
-	// Histórico de mensagens (para as rotas de chats/messages estilo WAHA).
+	// Histórico de mensagens (para as rotas de chats/messages).
 	// O whatsmeow não persiste histórico; guardamos aqui o que passa pela sessão.
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS messages (
 		session_id TEXT NOT NULL,

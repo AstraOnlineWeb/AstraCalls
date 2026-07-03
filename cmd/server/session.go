@@ -33,7 +33,7 @@ type Session struct {
 	client *whatsmeow.Client
 	reg    *callRegistry
 
-	// store próprio desta sessão (1 banco por sessão, estilo WAHA)
+	// store próprio desta sessão (1 banco por sessão)
 	waContainer *sqlstore.Container
 	waDB        *sql.DB
 
