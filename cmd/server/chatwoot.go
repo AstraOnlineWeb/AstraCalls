@@ -30,6 +30,12 @@ import (
 
 const cwChatIDAttr = "wacalls_chat_id"
 
+// isGroupChatID diz se um identifier/chatID é de um grupo (@g.us). Usado para não
+// reutilizar contatos de grupo legado em conversas 1:1 (fix @diegotiemann, PR #11).
+func isGroupChatID(id string) bool {
+	return strings.HasSuffix(id, "@g.us")
+}
+
 type ChatwootConfig struct {
 	URL             string `json:"url"`
 	AccountID       int    `json:"account_id"`
@@ -282,8 +288,22 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (co
 	if res, code, e := c.req(http.MethodGet, "/contacts/search?q="+url.QueryEscape(query), nil); e == nil && code == 200 {
 		for _, it := range asList(res["payload"]) {
 			m := asMap(it)
-			// buscando por identifier: confirma o match exato p/ não pegar outro contato
-			if phone == "" && asStr(m["identifier"]) != chatID {
+			ident := asStr(m["identifier"])
+			attr := ""
+			if ca := asMap(m["custom_attributes"]); ca != nil {
+				attr = asStr(ca[cwChatIDAttr])
+			}
+			// Fix (@diegotiemann, PR #11): numa busca 1:1 por telefone, não
+			// reutilizar um contato de GRUPO legado ({phone}-{ts}@g.us) que casou
+			// pelo número.
+			if isGroupChatID(ident) && ident != chatID {
+				continue
+			}
+			if isGroupChatID(attr) && attr != chatID {
+				continue
+			}
+			// grupos/canais (busca por identifier): exige match exato do JID/attr.
+			if phone == "" && ident != chatID && attr != chatID {
 				continue
 			}
 			if id := asInt(m["id"]); id != 0 {
@@ -635,11 +655,13 @@ func chatIDFromWebhook(body map[string]any) string {
 			return v
 		}
 	}
-	if ph := asStr(sender["phone_number"]); ph != "" {
-		return strings.TrimPrefix(ph, "+")
-	}
+	// Fix (@diegotiemann, PR #11): prioriza o identifier (que guarda o JID de
+	// grupo/canal) sobre o phone_number.
 	if id := asStr(sender["identifier"]); id != "" {
 		return id
+	}
+	if ph := asStr(sender["phone_number"]); ph != "" {
+		return strings.TrimPrefix(ph, "+")
 	}
 	return ""
 }
@@ -680,7 +702,8 @@ func (s *server) handleChatwootResolve(w http.ResponseWriter, r *http.Request) {
 	phone := ""
 	if ca := asMap(sender["custom_attributes"]); ca != nil {
 		raw := asStr(ca[cwChatIDAttr])
-		if raw != "" {
+		// Fix (@diegotiemann, PR #11): grupo não tem telefone p/ o widget de chamada.
+		if raw != "" && !isGroupChatID(raw) {
 			if jid, e := types.ParseJID(raw); e == nil {
 				phone = sess.realPhone(jid) // converte LID->PN se necessário
 			} else {
