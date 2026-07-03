@@ -42,7 +42,8 @@ type Session struct {
 	auth      AuthSnapshot
 	webhook   string
 	chatwoot  ChatwootConfig
-	recording bool // grava as chamadas desta sessão (opt-in)
+	recording bool   // grava as chamadas desta sessão (opt-in)
+	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)
 
 	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou (via API ou
 	// pelo agente do Chatwoot), para não espelhá-las como nota privada quando
@@ -114,6 +115,39 @@ func (s *Session) getRecording() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.recording
+}
+
+func (s *Session) setProxy(url string) {
+	s.mu.Lock()
+	s.proxy = url
+	s.mu.Unlock()
+}
+
+func (s *Session) getProxy() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.proxy
+}
+
+// applyProxy aplica o proxy configurado ao client whatsmeow. Precisa rodar ANTES
+// do Connect(); trocar depois exige reconnect() (o whatsmeow só relê no dial).
+func (s *Session) applyProxy() {
+	addr := s.getProxy()
+	if err := s.client.SetProxyAddress(addr); err != nil {
+		s.log.Warn("proxy inválido, conectando sem proxy", "err", err)
+	}
+}
+
+// reconnect derruba e reconecta a sessão pareada para o novo proxy valer.
+func (s *Session) reconnect() {
+	if s.client.Store.ID == nil {
+		return // não pareada: o proxy será aplicado no próximo pareamento
+	}
+	s.client.Disconnect()
+	s.applyProxy()
+	if err := s.client.Connect(); err != nil {
+		s.log.Error("reconexão após troca de proxy falhou", "err", err)
+	}
 }
 
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
@@ -281,6 +315,7 @@ func (s *Session) handleEvent(rawEvt any) {
 }
 
 func (s *Session) connect(ctx context.Context) error {
+	s.applyProxy()
 	if s.client.Store.ID != nil {
 		return s.client.Connect()
 	}
@@ -288,6 +323,7 @@ func (s *Session) connect(ctx context.Context) error {
 }
 
 func (s *Session) startPairing(ctx context.Context) error {
+	s.applyProxy()
 	qrChan, err := s.client.GetQRChannel(ctx)
 	if err != nil {
 		return err

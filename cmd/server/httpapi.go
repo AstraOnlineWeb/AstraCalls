@@ -122,6 +122,9 @@ func (s *server) routes() http.Handler {
 	// Gravação de chamadas (opt-in por sessão)
 	mux.HandleFunc("GET /api/sessions/{sid}/recording", s.handleGetRecording)
 	mux.HandleFunc("PUT /api/sessions/{sid}/recording", s.handleSetRecording)
+	// Proxy de saída por sessão (http/https/socks5)
+	mux.HandleFunc("GET /api/sessions/{sid}/proxy", s.handleGetProxy)
+	mux.HandleFunc("PUT /api/sessions/{sid}/proxy", s.handleSetProxy)
 	// MP3 finalizado — rota pública (fora de /api/, sem API key): o id é
 	// não-enumerável e atua como capability.
 	mux.HandleFunc("GET /recordings/{id}", s.handleRecording)

@@ -289,6 +289,52 @@ paths:
                 type: object
                 properties: { enabled: { type: boolean } }
 
+  /api/sessions/{sid}/proxy:
+    get:
+      tags: [Sessões]
+      summary: Proxy de saída da conexão da conta
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proxy: { type: string, example: "socks5://user:pass@host:1080" }
+                  enabled: { type: boolean }
+    put:
+      tags: [Sessões]
+      summary: Define/remove o proxy da conexão (http/https/socks5)
+      description: |
+        A conexão do WhatsApp desta conta (websocket + mídia) passa a sair pelo
+        proxy informado. Trocar reconecta a sessão automaticamente. Envie `""`
+        para voltar à conexão direta.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proxy]
+              properties:
+                proxy: { type: string, example: "socks5://user:pass@host:1080", description: "vazio = sem proxy" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proxy: { type: string }
+                  enabled: { type: boolean }
+        "400": { description: URL/scheme de proxy inválido }
+
   /recordings/{id}:
     get:
       tags: [Sessões]

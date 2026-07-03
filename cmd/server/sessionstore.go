@@ -14,6 +14,7 @@ type sessionRow struct {
 	Webhook   string
 	Chatwoot  string
 	Recording bool
+	Proxy     string
 }
 
 type sessionStore struct{ db *sql.DB }
@@ -37,6 +38,7 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chatwoot TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS recording BOOLEAN NOT NULL DEFAULT false`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS proxy TEXT`)
 
 	// Histórico de mensagens (para as rotas de chats/messages).
 	// O whatsmeow não persiste histórico; guardamos aqui o que passa pela sessão.
@@ -67,7 +69,7 @@ func newSessionID() string {
 }
 
 func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(recording, false) FROM sessions ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, '') FROM sessions ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +77,7 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	var out []sessionRow
 	for rows.Next() {
 		var r sessionRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.Recording); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.Recording, &r.Proxy); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -105,6 +107,11 @@ func (s *sessionStore) setChatwoot(ctx context.Context, id, cfgJSON string) erro
 
 func (s *sessionStore) setRecording(ctx context.Context, id string, on bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET recording = $1 WHERE id = $2`, on, id)
+	return err
+}
+
+func (s *sessionStore) setProxy(ctx context.Context, id, proxyURL string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET proxy = $1 WHERE id = $2`, proxyURL, id)
 	return err
 }
 
