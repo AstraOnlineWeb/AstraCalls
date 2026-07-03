@@ -21,7 +21,15 @@ tags:
   - name: Chamadas
     description: Iniciar, atender, rejeitar e encerrar chamadas
   - name: Mensagens
-    description: Envio de texto e mídia (texto, imagem, áudio, vídeo, documento)
+    description: Envio e ações de mensagem (texto, mídia, localização, contato, enquete, reação, edição, exclusão, visto, digitando)
+  - name: Contatos
+    description: Verificar número, listar/consultar contatos, foto, bloquear/desbloquear
+  - name: Grupos
+    description: Criar, listar e administrar grupos e participantes
+  - name: Canais
+    description: Canais/Newsletters (seguir, silenciar, mensagens)
+  - name: Presença & Perfil
+    description: Presença (online/digitando), perfil próprio e status/stories
   - name: Webhook
     description: "Configura a URL que recebe os eventos da sessão (ex: integração com Chatwoot)"
   - name: Chatwoot
@@ -57,6 +65,30 @@ components:
       required: true
       schema: { type: string }
       description: ID da chamada.
+    Jid:
+      name: jid
+      in: path
+      required: true
+      schema: { type: string }
+      description: Número (DDI+DDD) ou JID completo do contato.
+    Gid:
+      name: gid
+      in: path
+      required: true
+      schema: { type: string }
+      description: ID do grupo (com ou sem @g.us).
+    ChannelId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: ID do canal/newsletter (com ou sem @newsletter).
+    ChatId:
+      name: chatId
+      in: path
+      required: true
+      schema: { type: string }
+      description: Número ou JID do chat.
   schemas:
     Session:
       type: object
@@ -82,6 +114,38 @@ components:
         base64: { type: string, description: "Conteúdo em base64 (aceita prefixo data:...)" }
         url: { type: string, description: "URL de onde baixar a mídia" }
         mimetype: { type: string, example: "image/jpeg" }
+    GroupInfo:
+      type: object
+      properties:
+        jid: { type: string, example: "120363000000000000@g.us" }
+        name: { type: string }
+        topic: { type: string }
+        owner: { type: string }
+        announce: { type: boolean, description: "true = só admins enviam" }
+        locked: { type: boolean, description: "true = só admins editam info" }
+        created: { type: integer, format: int64 }
+        participants:
+          type: array
+          items:
+            type: object
+            properties:
+              jid: { type: string }
+              number: { type: string }
+              isAdmin: { type: boolean }
+              isSuperAdmin: { type: boolean }
+  requestBodies:
+    Participants:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [participants]
+            properties:
+              participants:
+                type: array
+                items: { type: string }
+                example: ["5561988887777@s.whatsapp.net", "5561966665555"]
   responses:
     SendOK:
       description: Mensagem enviada
@@ -93,6 +157,35 @@ components:
               id: { type: string, description: "ID da mensagem no WhatsApp" }
               to: { type: string }
               timestamp: { type: integer, format: int64 }
+    MessageList:
+      description: Lista de mensagens
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              type: object
+              properties:
+                chat: { type: string }
+                sender: { type: string }
+                id: { type: string }
+                fromMe: { type: boolean }
+                timestamp: { type: integer, format: int64 }
+                type: { type: string, example: text }
+                body: { type: string }
+                raw: { type: object }
+    Group:
+      description: Dados do grupo
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GroupInfo" }
+    GroupList:
+      description: Lista de grupos
+      content:
+        application/json:
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/GroupInfo" }
 
 paths:
   /api/config:
@@ -509,3 +602,790 @@ paths:
           content:
             text/event-stream:
               schema: { type: string }
+
+  # ===================== Mensagens (ações) =====================
+  /api/sessions/{sid}/messages/location:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma localização
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, latitude, longitude]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                latitude: { type: number, example: -15.7942 }
+                longitude: { type: number, example: -47.8822 }
+                name: { type: string, example: "Praça dos Três Poderes" }
+                address: { type: string, example: "Brasília - DF" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/contact:
+    post:
+      tags: [Mensagens]
+      summary: Envia um ou mais contatos (vcard)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, contacts]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                contacts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      fullName: { type: string, example: "João Silva" }
+                      phone: { type: string, example: "5561988887777" }
+                      vcard: { type: string, description: "vCard pronto (opcional; se ausente é montado a partir de fullName/phone)" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/poll:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma enquete
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, name, options]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                name: { type: string, example: "Qual horário?" }
+                options: { type: array, items: { type: string }, example: ["Manhã", "Tarde", "Noite"] }
+                multipleAnswers: { type: boolean, example: false, description: "true = permite marcar várias opções" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/link-preview:
+    post:
+      tags: [Mensagens]
+      summary: Envia texto com prévia de link
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, url]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                url: { type: string, example: "https://exemplo.com" }
+                text: { type: string, description: "Texto da mensagem (padrão = a própria URL)" }
+                title: { type: string }
+                description: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/react:
+    put:
+      tags: [Mensagens]
+      summary: Reage a uma mensagem (emoji; string vazia remove)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, messageId, reaction]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                messageId: { type: string }
+                reaction: { type: string, example: "👍" }
+                participant: { type: string, description: "Em grupo: JID de quem enviou a mensagem" }
+                fromMe: { type: boolean, description: "true se a mensagem é sua" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/edit:
+    put:
+      tags: [Mensagens]
+      summary: Edita uma mensagem já enviada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, messageId, text]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                messageId: { type: string }
+                text: { type: string, example: "texto corrigido" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Mensagens de um chat (via query)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: chatId, in: query, required: true, schema: { type: string }, description: "Número ou JID do chat" }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: raw, in: query, schema: { type: boolean }, description: "true inclui o proto bruto de cada mensagem" }
+      responses:
+        "200": { $ref: "#/components/responses/MessageList" }
+    delete:
+      tags: [Mensagens]
+      summary: Apaga/revoga uma mensagem
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, messageId]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                messageId: { type: string }
+                participant: { type: string }
+                fromMe: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/seen:
+    post:
+      tags: [Mensagens]
+      summary: Marca mensagem(ns) como lida(s)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                messageId: { type: string }
+                messageIds: { type: array, items: { type: string } }
+                participant: { type: string }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/messages/typing:
+    post:
+      tags: [Mensagens]
+      summary: Indica "digitando"/"gravando" (ou para)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                typing: { type: boolean, example: true, description: "true = digitando; false = parou" }
+                audio: { type: boolean, description: "true = mostra 'gravando áudio'" }
+      responses:
+        "200": { description: OK }
+
+  # ===================== Contatos =====================
+  /api/sessions/{sid}/contacts/check:
+    get:
+      tags: [Contatos]
+      summary: Verifica se o número existe no WhatsApp (retorna o JID canônico)
+      description: |
+        Consulta autoritativa (`IsOnWhatsApp`). Resolve o problema do 9º dígito (BR):
+        devolve o JID real, independente de o número ter sido informado com ou sem o 9.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: phone, in: query, required: true, schema: { type: string }, example: "5561999999999" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query: { type: string }
+                  exists: { type: boolean }
+                  jid: { type: string, example: "556192264108@s.whatsapp.net" }
+                  number: { type: string, example: "556192264108" }
+                  verifiedName: { type: string }
+
+  /api/sessions/{sid}/contacts:
+    get:
+      tags: [Contatos]
+      summary: Lista os contatos conhecidos
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    jid: { type: string }
+                    number: { type: string }
+                    fullName: { type: string }
+                    firstName: { type: string }
+                    pushName: { type: string }
+                    businessName: { type: string }
+
+  /api/sessions/{sid}/contacts/{jid}:
+    get:
+      tags: [Contatos]
+      summary: Info de um contato (status/About, foto, lid)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Jid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jid: { type: string }
+                  number: { type: string }
+                  status: { type: string }
+                  pictureId: { type: string }
+                  lid: { type: string }
+
+  /api/sessions/{sid}/contacts/{jid}/picture:
+    get:
+      tags: [Contatos]
+      summary: URL da foto de perfil do contato
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Jid" }
+        - { name: preview, in: query, schema: { type: boolean }, description: "true = miniatura" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { url: { type: string }, id: { type: string }, type: { type: string } }
+
+  /api/sessions/{sid}/contacts/{jid}/block:
+    post:
+      tags: [Contatos]
+      summary: Bloqueia o contato
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Jid" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/contacts/{jid}/unblock:
+    post:
+      tags: [Contatos]
+      summary: Desbloqueia o contato
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Jid" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/blocklist:
+    get:
+      tags: [Contatos]
+      summary: Lista os JIDs bloqueados
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { blocked: { type: array, items: { type: string } } }
+
+  # ===================== Grupos =====================
+  /api/sessions/{sid}/groups:
+    get:
+      tags: [Grupos]
+      summary: Lista os grupos da conta
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200": { $ref: "#/components/responses/GroupList" }
+    post:
+      tags: [Grupos]
+      summary: Cria um grupo
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "Turma 2026" }
+                participants: { type: array, items: { type: string }, example: ["5561988887777", "5561966665555"] }
+      responses:
+        "200": { $ref: "#/components/responses/Group" }
+
+  /api/sessions/{sid}/groups/join:
+    post:
+      tags: [Grupos]
+      summary: Entra em um grupo por código/link de convite
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "https://chat.whatsapp.com/XXXXXXXX" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { jid: { type: string } } }
+
+  /api/sessions/{sid}/groups/join-info:
+    get:
+      tags: [Grupos]
+      summary: Info do grupo antes de entrar (via código)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: code, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Group" }
+
+  /api/sessions/{sid}/groups/{gid}:
+    get:
+      tags: [Grupos]
+      summary: Info de um grupo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      responses:
+        "200": { $ref: "#/components/responses/Group" }
+
+  /api/sessions/{sid}/groups/{gid}/leave:
+    post:
+      tags: [Grupos]
+      summary: Sai do grupo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/participants:
+    get:
+      tags: [Grupos]
+      summary: Lista os participantes
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/participants/add:
+    post:
+      tags: [Grupos]
+      summary: Adiciona participantes
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody: { $ref: "#/components/requestBodies/Participants" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/participants/remove:
+    post:
+      tags: [Grupos]
+      summary: Remove participantes
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody: { $ref: "#/components/requestBodies/Participants" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/participants/promote:
+    post:
+      tags: [Grupos]
+      summary: Promove participantes a admin
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody: { $ref: "#/components/requestBodies/Participants" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/participants/demote:
+    post:
+      tags: [Grupos]
+      summary: Rebaixa admins a participante
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody: { $ref: "#/components/requestBodies/Participants" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/subject:
+    put:
+      tags: [Grupos]
+      summary: Altera o nome do grupo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [subject], properties: { subject: { type: string } } }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/description:
+    put:
+      tags: [Grupos]
+      summary: Altera a descrição do grupo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [description], properties: { description: { type: string } } }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/picture:
+    put:
+      tags: [Grupos]
+      summary: Define a foto do grupo (base64 ou url)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { base64: { type: string }, url: { type: string } } }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/invite:
+    get:
+      tags: [Grupos]
+      summary: Obtém o link de convite
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { link: { type: string } } }
+
+  /api/sessions/{sid}/groups/{gid}/invite/revoke:
+    post:
+      tags: [Grupos]
+      summary: Revoga o link atual e gera um novo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { link: { type: string } } }
+
+  /api/sessions/{sid}/groups/{gid}/settings/announce:
+    put:
+      tags: [Grupos]
+      summary: Só admins enviam mensagens (announce)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { enabled: { type: boolean } } }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/settings/locked:
+    put:
+      tags: [Grupos]
+      summary: Só admins editam as infos do grupo (locked)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { enabled: { type: boolean } } }
+      responses:
+        "200": { description: OK }
+
+  # ===================== Canais =====================
+  /api/sessions/{sid}/channels:
+    get:
+      tags: [Canais]
+      summary: Lista os canais que a conta segue
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/channels/{id}:
+    get:
+      tags: [Canais]
+      summary: Info de um canal
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChannelId" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/channels/{id}/messages:
+    get:
+      tags: [Canais]
+      summary: Mensagens do canal
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChannelId" }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/channels/{id}/follow:
+    post:
+      tags: [Canais]
+      summary: Segue o canal
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChannelId" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/channels/{id}/unfollow:
+    post:
+      tags: [Canais]
+      summary: Deixa de seguir o canal
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChannelId" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/channels/{id}/mute:
+    post:
+      tags: [Canais]
+      summary: Silencia o canal
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChannelId" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/channels/{id}/unmute:
+    post:
+      tags: [Canais]
+      summary: Remove o silêncio do canal
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChannelId" }
+      responses:
+        "200": { description: OK }
+
+  # ===================== Presença & Perfil =====================
+  /api/sessions/{sid}/presence:
+    post:
+      tags: [Presença & Perfil]
+      summary: Define a presença global (online/offline)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { available: { type: boolean, example: true } } }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/presence/{jid}/subscribe:
+    post:
+      tags: [Presença & Perfil]
+      summary: Assina os eventos de presença de um contato
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Jid" }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/profile:
+    get:
+      tags: [Presença & Perfil]
+      summary: Dados da conta autenticada
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { jid: { type: string }, number: { type: string }, pushName: { type: string } }
+
+  /api/sessions/{sid}/profile/status:
+    put:
+      tags: [Presença & Perfil]
+      summary: Define o recado/About do próprio perfil
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, example: "Disponível" } } }
+      responses:
+        "200": { description: OK }
+
+  /api/sessions/{sid}/status/text:
+    post:
+      tags: [Presença & Perfil]
+      summary: Posta um status/story de texto
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [text], properties: { text: { type: string } } }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/status/image:
+    post:
+      tags: [Presença & Perfil]
+      summary: Posta um status/story de imagem
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base64: { type: string }
+                url: { type: string }
+                caption: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/status/video:
+    post:
+      tags: [Presença & Perfil]
+      summary: Posta um status/story de vídeo
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base64: { type: string }
+                url: { type: string }
+                caption: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/status/audio:
+    post:
+      tags: [Presença & Perfil]
+      summary: Posta um status/story de áudio
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base64: { type: string }
+                url: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  # ===================== Histórico =====================
+  /api/sessions/{sid}/chats:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Visão geral das conversas (última mensagem + contagem)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    chat: { type: string }
+                    lastMessage: { type: string }
+                    lastType: { type: string }
+                    timestamp: { type: integer, format: int64 }
+                    count: { type: integer }
+                    lastFromMe: { type: boolean }
+
+  /api/sessions/{sid}/chats/{chatId}/messages:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Mensagens de um chat (mais recentes primeiro)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChatId" }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: raw, in: query, schema: { type: boolean } }
+      responses:
+        "200": { $ref: "#/components/responses/MessageList" }
