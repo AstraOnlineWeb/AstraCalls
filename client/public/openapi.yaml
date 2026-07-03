@@ -335,6 +335,77 @@ paths:
                   enabled: { type: boolean }
         "400": { description: URL/scheme de proxy inválido }
 
+  /api/sessions/{sid}/broadcast:
+    post:
+      tags: [Sessões]
+      summary: Disparo em massa de ligações com áudio pré-gravado
+      description: |
+        Liga para cada número e, ao atender, toca o áudio (mixado no codec do
+        WhatsApp) e desliga ao fim. Concorrência limitada ao máximo de chamadas
+        simultâneas da conta. Emite eventos `broadcast` no webhook da sessão
+        (ringing/answered/completed/no-answer/failed) para rastrear o lote.
+
+        ⚠️ Use apenas com contatos que consentiram (opt-in). Ligação em massa não
+        solicitada viola o WhatsApp (risco de ban) e a legislação (Anatel/CDC/LGPD).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [numbers]
+              properties:
+                audio_url: { type: string, description: "URL do áudio (mais leve p/ lotes)" }
+                audio_base64: { type: string, description: "ou o áudio em base64" }
+                numbers: { type: array, items: { type: string }, example: ["5561999998888", "5561999997777"] }
+                concurrency: { type: integer, default: 1, description: "ligações simultâneas (limitado ao máx. da conta)" }
+                gap_ms: { type: integer, default: 1500, description: "intervalo (+jitter) entre disparos" }
+                max_ring_ms: { type: integer, default: 45000, description: "timeout de toque → no-answer" }
+                hangup_after_ms: { type: integer, default: 0, description: "corta após N ms (0 = ao fim do áudio)" }
+      responses:
+        "200":
+          description: Campanha iniciada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaignId: { type: string }
+                  total: { type: integer }
+                  seconds: { type: integer }
+        "400": { description: Áudio/numbers inválido }
+
+  /api/sessions/{sid}/broadcast/{cid}:
+    get:
+      tags: [Sessões]
+      summary: Status de uma campanha de disparo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: cid, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaignId: { type: string }
+                  total: { type: integer }
+                  done: { type: boolean }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        number: { type: string }
+                        callId: { type: string }
+                        status: { type: string, example: completed }
+                        durationMs: { type: integer }
+        "404": { description: Campanha não encontrada }
+
   /recordings/{id}:
     get:
       tags: [Sessões]
