@@ -33,7 +33,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
             }}
             placeholder="+55 11 99999 9999"
             inputMode="tel"
-            className="min-w-[200px] flex-1"
+            className="min-w-0 flex-1"
           />
           <Button onClick={submit} disabled={startCall.isPending || !phone.trim()}>
             <Phone className="h-4 w-4" />
