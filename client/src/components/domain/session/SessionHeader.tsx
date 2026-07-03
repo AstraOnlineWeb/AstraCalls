@@ -36,7 +36,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-2">
         <h1 className="truncate text-xl font-semibold tracking-tight">{session.name}</h1>
         <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>

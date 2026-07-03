@@ -44,12 +44,16 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
 
   return (
     <div className="flex h-full flex-col gap-1 p-3">
-      <div className="flex items-center px-2 pb-2 pt-1">
+      <div className="flex items-center px-2 pb-3 pt-1">
         <span className="inline-flex dark:rounded-lg dark:bg-white dark:px-2 dark:py-1.5">
           <img src="/logoCalls.png" alt="AstraCalls" className="h-7 w-auto select-none" draggable={false} />
         </span>
       </div>
-      <p className="px-3 pb-1 pt-2 text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground">
+      <Button className="w-full" onClick={onNew} disabled={creating}>
+        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+        Nova conta
+      </Button>
+      <p className="px-3 pb-1 pt-4 text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground">
         Contas
       </p>
       <div className="flex-1 space-y-1 overflow-y-auto pr-0.5">
@@ -90,10 +94,6 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
           <p className="px-3 py-2 text-sm text-muted-foreground">Nenhuma conta ainda.</p>
         )}
       </div>
-      <Button variant="outline" className="w-full" onClick={onNew} disabled={creating}>
-        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-        Nova conta
-      </Button>
 
       <ConfirmDialog
         open={!!toDelete}
