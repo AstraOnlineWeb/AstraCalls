@@ -96,7 +96,18 @@ func (s *Session) realPhone(jid types.JID) string {
 
 func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	cfg := s.getChatwoot()
-	if !cfg.valid() || evt.Info.IsFromMe {
+	if !cfg.valid() {
+		return
+	}
+	if evt.Info.IsFromMe {
+		// espelha as mensagens 1:1 que a conta enviou PELO APARELHO (como nota
+		// privada). Ignora as que saíram pela nossa API / pelo agente do Chatwoot.
+		switch evt.Info.Chat.Server {
+		case types.DefaultUserServer, types.HiddenUserServer:
+			if !s.isSelfSent(evt.Info.ID) {
+				s.chatwootMirrorOwn(cfg, evt)
+			}
+		}
 		return
 	}
 	switch evt.Info.Chat.Server {
@@ -111,6 +122,37 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	case types.DefaultUserServer, types.HiddenUserServer:
 		s.chatwootPushDirect(cfg, evt)
 	}
+}
+
+// chatwootMirrorOwn espelha, como NOTA PRIVADA, uma mensagem 1:1 que a conta
+// enviou pelo aparelho — para o agente ver no Chatwoot o que foi dito por fora.
+// Não é reenviado ao contato (nota privada não dispara o webhook de saída).
+func (s *Session) chatwootMirrorOwn(cfg ChatwootConfig, evt *events.Message) {
+	chat := evt.Info.Chat // numa msg from_me 1:1, o Chat é o destinatário
+	phone := chat.User
+	if chat.Server != types.DefaultUserServer {
+		if evt.Info.RecipientAlt.Server == types.DefaultUserServer && evt.Info.RecipientAlt.User != "" {
+			phone = evt.Info.RecipientAlt.User
+		} else {
+			phone = s.realPhone(chat)
+		}
+	}
+	chatID := phone + "@" + types.DefaultUserServer
+	avatar := ""
+	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), chat, nil); perr == nil && pp != nil {
+		avatar = pp.URL
+	}
+	contactID, sourceID, err := cfg.ensureContact(chatID, phone, phone, avatar)
+	if err != nil {
+		s.log.Error("chatwoot: ensure contact (espelho) failed", "err", err)
+		return
+	}
+	convID, err := cfg.ensureConversation(contactID, sourceID)
+	if err != nil {
+		s.log.Error("chatwoot: ensure conversation (espelho) failed", "err", err)
+		return
+	}
+	s.chatwootDeliver(cfg, convID, evt, "", true)
 }
 
 // chatwootPushDirect trata a conversa 1:1 (comportamento original).
@@ -145,7 +187,7 @@ func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
 		s.log.Error("chatwoot: ensure conversation failed", "err", err)
 		return
 	}
-	s.chatwootDeliver(cfg, convID, evt, "")
+	s.chatwootDeliver(cfg, convID, evt, "", false)
 }
 
 // chatwootPushGroup abre/atualiza uma conversa no Chatwoot para um GRUPO. O
@@ -177,7 +219,7 @@ func (s *Session) chatwootPushGroup(cfg ChatwootConfig, evt *events.Message) {
 	if author == "" {
 		author = s.realPhone(evt.Info.Sender)
 	}
-	s.chatwootDeliver(cfg, convID, evt, "*"+author+"*:\n")
+	s.chatwootDeliver(cfg, convID, evt, "*"+author+"*:\n", false)
 }
 
 // chatwootPushChannel abre/atualiza uma conversa no Chatwoot para um CANAL
@@ -200,19 +242,19 @@ func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
 		s.log.Error("chatwoot: ensure channel conversation failed", "err", err)
 		return
 	}
-	s.chatwootDeliver(cfg, convID, evt, "")
+	s.chatwootDeliver(cfg, convID, evt, "", false)
 }
 
 // chatwootDeliver baixa a mídia (se houver) e posta a mensagem na conversa.
 // prefix é acrescentado ao texto (usado em grupos p/ identificar o autor).
-func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Message, prefix string) {
+func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Message, prefix string, private bool) {
 	text := messageText(evt.Message)
-	// mídia recebida: baixa do WhatsApp e sobe pro Chatwoot como anexo
+	// mídia: baixa do WhatsApp e sobe pro Chatwoot como anexo
 	if dl := downloadableOf(evt.Message); dl != nil {
 		data, derr := s.client.Download(context.Background(), dl)
 		if derr == nil && len(data) > 0 {
 			fname, mime := mediaMeta(evt.Message)
-			if uerr := cfg.postAttachment(convID, prefix+text, fname, mime, data); uerr != nil {
+			if uerr := cfg.postAttachment(convID, prefix+text, fname, mime, data, private); uerr != nil {
 				s.log.Error("chatwoot: post attachment failed", "err", uerr)
 			}
 			return
@@ -221,7 +263,7 @@ func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Me
 	if strings.TrimSpace(text) == "" {
 		return
 	}
-	if err := cfg.postText(convID, prefix+text); err != nil {
+	if err := cfg.postText(convID, prefix+text, private); err != nil {
 		s.log.Error("chatwoot: post message failed", "err", err)
 	}
 }
@@ -336,10 +378,14 @@ func (c ChatwootConfig) ensureConversation(contactID int, sourceID string) (int,
 	return asInt(res["id"]), nil
 }
 
-func (c ChatwootConfig) postText(convID int, content string) error {
-	_, code, e := c.req(http.MethodPost, fmt.Sprintf("/conversations/%d/messages", convID), map[string]any{
-		"content": content, "message_type": "incoming", "content_type": "text",
-	})
+func (c ChatwootConfig) postText(convID int, content string, private bool) error {
+	body := map[string]any{"content": content, "message_type": "incoming", "content_type": "text"}
+	if private {
+		// nota privada: registro interno p/ o agente, não reenvia ao contato
+		body["message_type"] = "outgoing"
+		body["private"] = true
+	}
+	_, code, e := c.req(http.MethodPost, fmt.Sprintf("/conversations/%d/messages", convID), body)
 	if e != nil {
 		return e
 	}
@@ -350,10 +396,15 @@ func (c ChatwootConfig) postText(convID int, content string) error {
 }
 
 // postAttachment sobe a mídia como anexo (multipart) numa mensagem incoming.
-func (c ChatwootConfig) postAttachment(convID int, content, filename, mime string, data []byte) error {
+func (c ChatwootConfig) postAttachment(convID int, content, filename, mime string, data []byte, private bool) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	_ = mw.WriteField("message_type", "incoming")
+	if private {
+		_ = mw.WriteField("message_type", "outgoing")
+		_ = mw.WriteField("private", "true")
+	} else {
+		_ = mw.WriteField("message_type", "incoming")
+	}
 	if content != "" {
 		_ = mw.WriteField("content", content)
 	}
@@ -419,9 +470,9 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	attachments := asList(body["attachments"])
 	ctx := r.Context()
 
-	// texto (só envia separado se não houver exatamente 1 anexo, igual ao WAHA)
+	// texto (só envia separado se não houver exatamente 1 anexo)
 	if strings.TrimSpace(content) != "" && len(attachments) != 1 {
-		_, _ = sess.client.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(content)})
+		_ = sess.sendAndMark(ctx, jid, &waE2E.Message{Conversation: proto.String(content)})
 	}
 	// anexos
 	for _, it := range attachments {
@@ -454,12 +505,11 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 		if e != nil {
 			return e
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+		return s.sendAndMark(ctx, jid, &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
 			Caption: proto.String(caption), Mimetype: proto.String("image/jpeg"),
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 		}})
-		return e
 	case "audio":
 		ogg, seconds, waveform, terr := transcodeVoice(data)
 		if terr != nil {
@@ -478,31 +528,28 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 			am.Seconds = proto.Uint32(seconds)
 			am.Waveform = waveform
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{AudioMessage: am})
-		return e
+		return s.sendAndMark(ctx, jid, &waE2E.Message{AudioMessage: am})
 	case "video":
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaVideo)
 		if e != nil {
 			return e
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+		return s.sendAndMark(ctx, jid, &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
 			Caption: proto.String(caption), Mimetype: proto.String("video/mp4"),
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 		}})
-		return e
 	default:
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaDocument)
 		if e != nil {
 			return e
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+		return s.sendAndMark(ctx, jid, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
 			FileName: proto.String(filename), Title: proto.String(filename),
 			Mimetype: proto.String("application/octet-stream"),
 			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 		}})
-		return e
 	}
 }
 

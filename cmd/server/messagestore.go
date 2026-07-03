@@ -36,6 +36,8 @@ func (s *Session) storeMessageEvent(evt *events.Message) {
 // conteúdo de fato (texto/mídia/etc.); ações como reação, edição e revogação
 // caem em type "unknown" e são ignoradas para não poluir o histórico.
 func (s *Session) recordOutgoing(chat types.JID, msgID string, ts int64, msg *waE2E.Message) {
+	// registra como "enviada por nós" para o espelhamento no Chatwoot não duplicar
+	s.markSelfSent(msgID)
 	if s.mgr.store == nil {
 		return
 	}

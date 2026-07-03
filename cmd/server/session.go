@@ -19,6 +19,7 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -41,6 +42,41 @@ type Session struct {
 	auth     AuthSnapshot
 	webhook  string
 	chatwoot ChatwootConfig
+
+	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou (via API ou
+	// pelo agente do Chatwoot), para não espelhá-las como nota privada quando
+	// voltarem como evento from_me. msgID -> unixMilli.
+	sentIDs sync.Map
+}
+
+// markSelfSent registra uma mensagem enviada por nós (com prune do que é antigo).
+func (s *Session) markSelfSent(id string) {
+	if id == "" {
+		return
+	}
+	now := time.Now().UnixMilli()
+	s.sentIDs.Store(id, now)
+	s.sentIDs.Range(func(k, v any) bool {
+		if ts, ok := v.(int64); ok && now-ts > 10*60*1000 {
+			s.sentIDs.Delete(k)
+		}
+		return true
+	})
+}
+
+// isSelfSent diz se a mensagem foi enviada por nós (API/agente), não pelo aparelho.
+func (s *Session) isSelfSent(id string) bool {
+	_, ok := s.sentIDs.Load(id)
+	return ok
+}
+
+// sendAndMark envia uma mensagem e a registra como "enviada por nós".
+func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) error {
+	resp, err := s.client.SendMessage(ctx, jid, msg)
+	if err == nil {
+		s.markSelfSent(resp.ID)
+	}
+	return err
 }
 
 func (s *Session) setWebhook(url string) {
