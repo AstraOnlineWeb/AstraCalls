@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
+	"wacalls/internal/voip/signaling"
 
 	"go.mau.fi/whatsmeow/types"
 )
@@ -28,6 +30,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/recording", s.handleRecordingDownload)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 
 	// Mensageria (whatsmeow)
@@ -221,6 +224,31 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *server) handleRecordingDownload(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	path, ok := s.broker.recordingPath(sess.id, r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recording not found"})
+		return
+	}
+	root, err := filepath.Abs(recordingsRoot())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil || (abs != root && !strings.HasPrefix(abs, root+string(os.PathSeparator))) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid recording path"})
+		return
+	}
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+r.PathValue("id")+".wav\"")
+	http.ServeFile(w, r, abs)
+}
+
 func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Request) {
 	if sess.client.Store.ID == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not paired"})
@@ -244,14 +272,29 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 	}
 	peer := types.NewJID(normalizePhone(body.Phone), types.DefaultUserServer)
 
-	callID, err := sess.startOutgoing(r.Context(), peer, false)
-	if err != nil {
+	callID := signaling.GenerateCallID()
+	var recorder *callRecorder
+	recordingStatus := recordingDisabled
+	recordingPath := ""
+	if body.Record {
+		var err error
+		recorder, err = newCallRecorder(sess.id, callID)
+		if err != nil {
+			recordingStatus = recordingFailed
+			s.log.Warn("recording unavailable", "session", sess.id, "call_id", callID, "err", err)
+		} else {
+			recordingStatus = recordingRecording
+			recordingPath = recorder.path
+		}
+	}
+	if err := sess.startOutgoing(r.Context(), callID, peer, false, recorder); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	s.broker.upsertCall(CallRecord{
 		SessionID: sess.id, CallID: callID, Owner: &owner, Direction: "outbound", Peer: peer.String(),
-		StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
+		StartedAt: time.Now().UnixMilli(), Status: StatusRinging, Record: body.Record,
+		RecordingStatus: recordingStatus, RecordingPath: recordingPath,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": callID}})
 }
@@ -289,7 +332,11 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return
 		}
-		ac.cm.FeedCapturedPCM(media.Downsample48to16(pcm48))
+		pcm16 := media.Downsample48to16(pcm48)
+		if ac.recorder != nil {
+			ac.recorder.AddOperatorPCM(pcm16)
+		}
+		ac.cm.FeedCapturedPCM(pcm16)
 	}
 	bridge.OnTerminalICE = func() {
 		go sess.terminateCall(callID, core.EndCallReasonUserEnded)
