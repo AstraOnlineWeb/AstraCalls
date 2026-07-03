@@ -10,6 +10,7 @@ import (
 	"math"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -35,6 +36,11 @@ type ChatwootConfig struct {
 	AccountToken    string `json:"account_token"`
 	InboxID         int    `json:"inbox_id"`
 	InboxIdentifier string `json:"inbox_identifier"`
+	// Groups: quando true, mensagens de GRUPO também abrem/atualizam uma conversa
+	// no Chatwoot (o "contato" é o próprio grupo; cada mensagem é prefixada com o
+	// autor). Channels: idem para CANAIS (newsletters).
+	Groups   bool `json:"groups"`
+	Channels bool `json:"channels"`
 }
 
 func (c ChatwootConfig) valid() bool {
@@ -90,9 +96,25 @@ func (s *Session) realPhone(jid types.JID) string {
 
 func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	cfg := s.getChatwoot()
-	if !cfg.valid() || evt.Info.IsFromMe || evt.Info.IsGroup {
+	if !cfg.valid() || evt.Info.IsFromMe {
 		return
 	}
+	switch evt.Info.Chat.Server {
+	case types.GroupServer:
+		if cfg.Groups {
+			s.chatwootPushGroup(cfg, evt)
+		}
+	case types.NewsletterServer:
+		if cfg.Channels {
+			s.chatwootPushChannel(cfg, evt)
+		}
+	case types.DefaultUserServer, types.HiddenUserServer:
+		s.chatwootPushDirect(cfg, evt)
+	}
+}
+
+// chatwootPushDirect trata a conversa 1:1 (comportamento original).
+func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
 	// telefone real (PN), nunca o LID
 	chat := evt.Info.Chat
 	phone := chat.User
@@ -123,24 +145,83 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 		s.log.Error("chatwoot: ensure conversation failed", "err", err)
 		return
 	}
+	s.chatwootDeliver(cfg, convID, evt, "")
+}
 
+// chatwootPushGroup abre/atualiza uma conversa no Chatwoot para um GRUPO. O
+// "contato" é o próprio grupo (identificado pelo JID @g.us) e cada mensagem é
+// prefixada com o nome/telefone de quem escreveu, já que a inbox tem 1 contato
+// por conversa.
+func (s *Session) chatwootPushGroup(cfg ChatwootConfig, evt *events.Message) {
+	group := evt.Info.Chat
+	chatID := group.String() // 1203...@g.us
+	name := chatID
+	if gi, err := s.client.GetGroupInfo(context.Background(), group); err == nil && gi.Name != "" {
+		name = gi.Name
+	}
+	avatar := ""
+	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), group, nil); perr == nil && pp != nil {
+		avatar = pp.URL
+	}
+	contactID, sourceID, err := cfg.ensureContact(chatID, "", name, avatar)
+	if err != nil {
+		s.log.Error("chatwoot: ensure group contact failed", "err", err)
+		return
+	}
+	convID, err := cfg.ensureConversation(contactID, sourceID)
+	if err != nil {
+		s.log.Error("chatwoot: ensure group conversation failed", "err", err)
+		return
+	}
+	author := evt.Info.PushName
+	if author == "" {
+		author = s.realPhone(evt.Info.Sender)
+	}
+	s.chatwootDeliver(cfg, convID, evt, "*"+author+"*:\n")
+}
+
+// chatwootPushChannel abre/atualiza uma conversa no Chatwoot para um CANAL
+// (newsletter). O contato é o canal; as mensagens vêm do próprio canal, então
+// não há prefixo de autor.
+func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
+	channel := evt.Info.Chat
+	chatID := channel.String() // ...@newsletter
+	name := chatID
+	if ni, err := s.client.GetNewsletterInfo(context.Background(), channel); err == nil && ni.ThreadMeta.Name.Text != "" {
+		name = ni.ThreadMeta.Name.Text
+	}
+	contactID, sourceID, err := cfg.ensureContact(chatID, "", "📢 "+name, "")
+	if err != nil {
+		s.log.Error("chatwoot: ensure channel contact failed", "err", err)
+		return
+	}
+	convID, err := cfg.ensureConversation(contactID, sourceID)
+	if err != nil {
+		s.log.Error("chatwoot: ensure channel conversation failed", "err", err)
+		return
+	}
+	s.chatwootDeliver(cfg, convID, evt, "")
+}
+
+// chatwootDeliver baixa a mídia (se houver) e posta a mensagem na conversa.
+// prefix é acrescentado ao texto (usado em grupos p/ identificar o autor).
+func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Message, prefix string) {
 	text := messageText(evt.Message)
 	// mídia recebida: baixa do WhatsApp e sobe pro Chatwoot como anexo
 	if dl := downloadableOf(evt.Message); dl != nil {
 		data, derr := s.client.Download(context.Background(), dl)
 		if derr == nil && len(data) > 0 {
 			fname, mime := mediaMeta(evt.Message)
-			if uerr := cfg.postAttachment(convID, text, fname, mime, data); uerr != nil {
+			if uerr := cfg.postAttachment(convID, prefix+text, fname, mime, data); uerr != nil {
 				s.log.Error("chatwoot: post attachment failed", "err", uerr)
-			} else {
-				return
 			}
+			return
 		}
 	}
 	if strings.TrimSpace(text) == "" {
 		return
 	}
-	if err := cfg.postText(convID, text); err != nil {
+	if err := cfg.postText(convID, prefix+text); err != nil {
 		s.log.Error("chatwoot: post message failed", "err", err)
 	}
 }
@@ -148,12 +229,21 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 // avatarSynced evita re-sincronizar a foto a cada mensagem (1x por contato/processo).
 var avatarSynced sync.Map
 
-// ensureContact acha (por telefone) ou cria o contato e garante o source_id da inbox.
+// ensureContact acha (por telefone, ou por identifier quando phone == "" no caso
+// de grupos/canais) ou cria o contato e garante o source_id da inbox.
 func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (contactID int, sourceID string, err error) {
-	// procura por telefone
-	if res, code, e := c.req(http.MethodGet, "/contacts/search?q="+phone, nil); e == nil && code == 200 {
+	// grupos/canais não têm telefone -> busca pelo identifier (o JID)
+	query := phone
+	if query == "" {
+		query = chatID
+	}
+	if res, code, e := c.req(http.MethodGet, "/contacts/search?q="+url.QueryEscape(query), nil); e == nil && code == 200 {
 		for _, it := range asList(res["payload"]) {
 			m := asMap(it)
+			// buscando por identifier: confirma o match exato p/ não pegar outro contato
+			if phone == "" && asStr(m["identifier"]) != chatID {
+				continue
+			}
 			if id := asInt(m["id"]); id != 0 {
 				c.syncAvatar(id, avatarURL)
 				if sid := sourceIDForInbox(m, c.InboxID); sid != "" {
@@ -167,13 +257,15 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (co
 	}
 	// cria contato
 	body := map[string]any{
-		"inbox_id":     c.InboxID,
-		"name":         name,
-		"phone_number": "+" + phone,
-		"identifier":   chatID,
+		"inbox_id":   c.InboxID,
+		"name":       name,
+		"identifier": chatID,
 		"custom_attributes": map[string]any{
 			cwChatIDAttr: chatID,
 		},
+	}
+	if phone != "" {
+		body["phone_number"] = "+" + phone
 	}
 	if avatarURL != "" {
 		body["avatar_url"] = avatarURL
@@ -605,6 +697,74 @@ func (s *server) handleGetChatwoot(w http.ResponseWriter, r *http.Request) {
 	cfg := sess.getChatwoot()
 	cfg.AccountToken = "" // não devolve o token
 	writeJSON(w, http.StatusOK, map[string]any{"chatwoot": cfg, "enabled": sess.getChatwoot().valid()})
+}
+
+// handleChatwootOpenGroup cria/garante um contato + conversa no Chatwoot para um
+// grupo, sob demanda (sem esperar chegar mensagem). Requer Chatwoot configurado.
+func (s *server) handleChatwootOpenGroup(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	cfg := sess.getChatwoot()
+	if !cfg.valid() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "chatwoot não configurado nesta sessão"})
+		return
+	}
+	gid, err := resolveGroupJID(r.PathValue("gid"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	chatID := gid.String()
+	name := chatID
+	if gi, e := sess.client.GetGroupInfo(r.Context(), gid); e == nil && gi.Name != "" {
+		name = gi.Name
+	}
+	avatar := ""
+	if pp, perr := sess.client.GetProfilePictureInfo(r.Context(), gid, nil); perr == nil && pp != nil {
+		avatar = pp.URL
+	}
+	s.openChatwootConversation(w, cfg, chatID, name, avatar)
+}
+
+// handleChatwootOpenChannel: idem para um canal (newsletter).
+func (s *server) handleChatwootOpenChannel(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	cfg := sess.getChatwoot()
+	if !cfg.valid() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "chatwoot não configurado nesta sessão"})
+		return
+	}
+	jid, err := resolveNewsletterJID(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	chatID := jid.String()
+	name := chatID
+	if ni, e := sess.client.GetNewsletterInfo(r.Context(), jid); e == nil && ni.ThreadMeta.Name.Text != "" {
+		name = ni.ThreadMeta.Name.Text
+	}
+	s.openChatwootConversation(w, cfg, chatID, "📢 "+name, "")
+}
+
+// openChatwootConversation garante contato + conversa e devolve os ids.
+func (s *server) openChatwootConversation(w http.ResponseWriter, cfg ChatwootConfig, chatID, name, avatar string) {
+	contactID, sourceID, err := cfg.ensureContact(chatID, "", name, avatar)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	convID, err := cfg.ensureConversation(contactID, sourceID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"contactId": contactID, "conversationId": convID, "chatId": chatID})
 }
 
 func (s *server) handleDeleteChatwoot(w http.ResponseWriter, r *http.Request) {

@@ -545,6 +545,8 @@ paths:
                 account_token: { type: string, example: "xxxxxxxxxxxxxxxx" }
                 inbox_id: { type: integer, example: 5 }
                 inbox_identifier: { type: string, example: "abcd1234" }
+                groups: { type: boolean, default: false, description: "Abrir conversas de GRUPOS no Chatwoot (mensagens prefixadas com o autor)" }
+                channels: { type: boolean, default: false, description: "Abrir conversas de CANAIS (newsletters) no Chatwoot" }
       responses:
         "200": { description: Conectado }
         "400": { description: Campos obrigatórios faltando }
@@ -556,6 +558,49 @@ paths:
         - { $ref: "#/components/parameters/ClientId" }
       responses:
         "204": { description: Desconectado }
+
+  /api/sessions/{sid}/chatwoot/groups/{gid}/open:
+    post:
+      tags: [Chatwoot]
+      summary: Abre (sob demanda) uma conversa de GRUPO no Chatwoot
+      description: |
+        Cria/garante o contato (o próprio grupo) e uma conversa na inbox, sem
+        esperar chegar mensagem. Requer Chatwoot configurado na sessão.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contactId: { type: integer }
+                  conversationId: { type: integer }
+                  chatId: { type: string, example: "120363000000000000@g.us" }
+        "400": { description: Chatwoot não configurado ou JID inválido }
+
+  /api/sessions/{sid}/chatwoot/channels/{id}/open:
+    post:
+      tags: [Chatwoot]
+      summary: Abre (sob demanda) uma conversa de CANAL no Chatwoot
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChannelId" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contactId: { type: integer }
+                  conversationId: { type: integer }
+                  chatId: { type: string, example: "120363000000000000@newsletter" }
+        "400": { description: Chatwoot não configurado ou JID inválido }
 
   /api/sessions/{sid}/chatwoot/webhook:
     post:
