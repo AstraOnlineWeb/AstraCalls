@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, KeyRound } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,15 +32,12 @@ export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm space-y-5 rounded-xl border bg-card p-6 shadow-sm">
-        <div className="flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <KeyRound className="h-4 w-4" />
+      <div className="w-full max-w-sm space-y-5 rounded-2xl border bg-card p-7 shadow-soft">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <span className="inline-flex dark:rounded-xl dark:bg-white dark:px-3 dark:py-2">
+            <img src="/logoCalls.png" alt="AstraCalls" className="h-9 w-auto select-none" draggable={false} />
           </span>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">WaCalls</h1>
-            <p className="text-xs text-muted-foreground">Acesse com a URL e a API key</p>
-          </div>
+          <p className="text-sm text-muted-foreground">Acesse com a URL e a API key</p>
         </div>
         <div className="space-y-3">
           <div className="space-y-1">

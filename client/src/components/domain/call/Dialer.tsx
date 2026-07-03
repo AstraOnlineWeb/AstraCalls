@@ -21,7 +21,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Dialer</CardTitle>
+        <CardTitle>Discador</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <DeviceSelector />
@@ -44,11 +44,11 @@ export const Dialer = ({ sid }: { sid: string }) => {
             aria-pressed={record}
           >
             <Disc3 className="h-4 w-4" />
-            Record
+            Gravar
           </Button>
           <Button onClick={submit} disabled={startCall.isPending || !phone.trim()}>
             <Phone className="h-4 w-4" />
-            {startCall.isPending ? "Calling…" : "Call"}
+            {startCall.isPending ? "Ligando…" : "Ligar"}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">

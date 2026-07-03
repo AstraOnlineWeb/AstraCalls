@@ -8,10 +8,10 @@ import { logoutSession, pairSession } from "@/services/sessions";
 import type { SessionInfo, SessionState } from "@/types/session";
 
 const statusLabel: Record<SessionState, string> = {
-  open: "Connected",
-  qr: "Scan QR",
-  connecting: "Connecting…",
-  logged_out: "Disconnected",
+  open: "Conectado",
+  qr: "Ler QR",
+  connecting: "Conectando…",
+  logged_out: "Desconectado",
 };
 
 const statusVariant: Record<SessionState, "success" | "secondary" | "muted" | "destructive"> = {
@@ -46,12 +46,12 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         {session.paired ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-            Disconnect
+            Desconectar
           </Button>
         ) : (
           <Button size="sm" disabled={busy} onClick={() => run(() => pairSession(session.id))}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
-            Reactivate
+            Reativar
           </Button>
         )}
       </div>

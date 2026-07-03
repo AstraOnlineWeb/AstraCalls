@@ -3,49 +3,57 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Paleta AstraCalls — navy #233E4F + azul-claro #89CFF3 (extraída da logo) */
 :root {
-  --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
+  --background: 205 25% 96%;
+  --foreground: 205 30% 16%;
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
+  --card-foreground: 205 30% 16%;
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
-  --primary: 152 60% 40%;
+  --popover-foreground: 205 30% 16%;
+  --primary: 203 39% 22%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  --accent: 152 45% 94%;
-  --accent-foreground: 152 45% 20%;
+  --secondary: 202 46% 94%;
+  --secondary-foreground: 203 39% 25%;
+  --muted: 205 22% 94%;
+  --muted-foreground: 205 12% 45%;
+  --accent: 199 78% 92%;
+  --accent-foreground: 203 45% 24%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 152 60% 40%;
-  --radius: 0.625rem;
+  --border: 205 20% 90%;
+  --input: 205 20% 88%;
+  --ring: 199 80% 58%;
+  --radius: 0.9rem;
+
+  /* tokens de marca (acesso direto quando precisar) */
+  --brand-navy: 203 39% 22%;
+  --brand-sky: 199 82% 75%;
 }
 
 .dark {
-  --background: 240 10% 4%;
-  --foreground: 0 0% 98%;
-  --card: 240 9% 7%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 9% 7%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 152 52% 46%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --accent: 152 28% 18%;
-  --accent-foreground: 152 40% 85%;
-  --destructive: 0 62% 47%;
+  --background: 205 32% 9%;
+  --foreground: 200 18% 92%;
+  --card: 205 28% 12%;
+  --card-foreground: 200 18% 92%;
+  --popover: 205 28% 12%;
+  --popover-foreground: 200 18% 92%;
+  --primary: 199 75% 65%;
+  --primary-foreground: 205 45% 11%;
+  --secondary: 205 22% 18%;
+  --secondary-foreground: 200 18% 92%;
+  --muted: 205 20% 17%;
+  --muted-foreground: 205 14% 60%;
+  --accent: 203 35% 22%;
+  --accent-foreground: 199 72% 80%;
+  --destructive: 0 62% 52%;
   --destructive-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 18%;
-  --ring: 152 52% 46%;
+  --border: 205 20% 20%;
+  --input: 205 20% 22%;
+  --ring: 199 75% 58%;
+
+  --brand-navy: 199 75% 65%;
+  --brand-sky: 199 82% 70%;
 }
 
 @theme inline {
@@ -69,10 +77,21 @@
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
 
+  --color-brand-navy: hsl(var(--brand-navy));
+  --color-brand-sky: hsl(var(--brand-sky));
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+/* sombra flutuante suave dos cards (estilo do modelo) */
+@utility shadow-soft {
+  box-shadow:
+    0 1px 2px hsl(var(--brand-navy) / 0.04),
+    0 10px 30px -14px hsl(var(--brand-navy) / 0.16);
 }
 
 @layer base {
@@ -83,5 +102,6 @@
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
     font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
   }
 }

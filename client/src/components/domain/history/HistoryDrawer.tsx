@@ -16,17 +16,17 @@ export const HistoryDrawer = ({ sid }: { sid: string }) => {
       <SheetTrigger asChild>
         <Button variant="outline" size="sm">
           <History className="h-4 w-4" />
-          History
+          Histórico
         </Button>
       </SheetTrigger>
       <SheetContent side="right" className="w-full p-0 sm:max-w-md">
         <SheetHeader className="p-6 pb-4">
-          <SheetTitle>Call history</SheetTitle>
+          <SheetTitle>Histórico de chamadas</SheetTitle>
         </SheetHeader>
         <Separator />
         <ScrollArea className="h-[calc(100vh-5.5rem)] px-6 py-4">
           {rows.length === 0 ? (
-            <EmptyState title="No past calls" description="Calls you make or receive will appear here." />
+            <EmptyState title="Nenhuma chamada anterior" description="As chamadas feitas ou recebidas aparecem aqui." />
           ) : (
             <ul className="space-y-2">
               {rows.map((r) => (

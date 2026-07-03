@@ -11,7 +11,7 @@ export const EmptyState = ({ icon, title, description }: Props) => (
   <Card className="border-dashed bg-transparent shadow-none">
     <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center">
       {icon && (
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
           {icon}
         </div>
       )}
