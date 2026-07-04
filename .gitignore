@@ -44,3 +44,7 @@ Thumbs.db
 /wacalls-mlow
 /wacalls-orig
 /Caddyfile
+
+# binário do go build no root
+/server
+/prints/
