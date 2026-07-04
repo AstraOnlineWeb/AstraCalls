@@ -289,6 +289,8 @@ func (s *Session) handleEvent(rawEvt any) {
 			go s.handleIncomingPollVote(evt) // voto em enquete (decodifica + encaminha)
 		case evt.Message.GetEncEventResponseMessage() != nil:
 			go s.handleIncomingEventResponse(evt) // RSVP de evento (decodifica + encaminha)
+		case evt.Message.GetReactionMessage() != nil || evt.Message.GetEncReactionMessage() != nil:
+			go s.handleIncomingReaction(evt) // reação (emoji) numa mensagem
 		default:
 			s.storeMessageEvent(evt)
 			s.dispatchWebhook("message", summarizeMessage(evt))
