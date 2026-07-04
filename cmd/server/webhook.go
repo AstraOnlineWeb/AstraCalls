@@ -82,6 +82,8 @@ func messageText(m *waE2E.Message) string {
 		return orderText(m.GetOrderMessage())
 	case getPoll(m) != nil:
 		return pollText(getPoll(m))
+	case m.GetInteractiveMessage() != nil:
+		return interactiveText(m.GetInteractiveMessage())
 	}
 	return ""
 }
@@ -110,6 +112,8 @@ func messageType(m *waE2E.Message) string {
 		return "order"
 	case getPoll(m) != nil:
 		return "poll"
+	case m.GetInteractiveMessage() != nil:
+		return interactiveType(m.GetInteractiveMessage())
 	}
 	return "unknown"
 }
