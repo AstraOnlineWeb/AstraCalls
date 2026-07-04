@@ -521,14 +521,20 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	// se o agente respondeu uma mensagem, monta o contexto de citação
 	quote := sess.quoteContext(ctx, body)
 
+	var waMsgID string // ID da 1ª msg do WhatsApp enviada (vira source_id no Chatwoot)
+
 	// texto (só envia separado se não houver exatamente 1 anexo)
 	if strings.TrimSpace(content) != "" && len(attachments) != 1 {
+		var msg *waE2E.Message
 		if quote != nil {
-			_ = sess.sendAndMark(ctx, jid, &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 				Text: proto.String(content), ContextInfo: quote,
-			}})
+			}}
 		} else {
-			_ = sess.sendAndMark(ctx, jid, &waE2E.Message{Conversation: proto.String(content)})
+			msg = &waE2E.Message{Conversation: proto.String(content)}
+		}
+		if id, e := sess.sendAndMark(ctx, jid, msg); e == nil {
+			waMsgID = id
 		}
 	}
 	// anexos
@@ -542,8 +548,17 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		if len(attachments) == 1 {
 			caption = content
 		}
-		if err := sess.sendChatwootFile(ctx, jid, asStr(a["file_type"]), url, caption, quote); err != nil {
-			s.log.Error("chatwoot->wa: send file failed", "err", err)
+		id, ferr := sess.sendChatwootFile(ctx, jid, asStr(a["file_type"]), url, caption, quote)
+		if ferr != nil {
+			s.log.Error("chatwoot->wa: send file failed", "err", ferr)
+		} else if waMsgID == "" {
+			waMsgID = id
+		}
+	}
+	// grava o source_id na mensagem de SAÍDA do Chatwoot (amarra citação cliente->agente)
+	if waMsgID != "" {
+		if cwMsgID := asInt(body["id"]); cwMsgID != 0 {
+			go sess.setMessageSourceID(cwMsgID, waMsgID)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -584,6 +599,25 @@ func (s *Session) quoteContext(ctx context.Context, body map[string]any) *waE2E.
 	return ci
 }
 
+// setMessageSourceID grava o ID da msg do WhatsApp como source_id da mensagem de
+// SAÍDA no Chatwoot (endpoint custom do dev), p/ amarrar a citação quando o
+// cliente responde uma mensagem do agente. Fire-and-forget.
+func (s *Session) setMessageSourceID(chatwootMsgID int, sourceID string) {
+	cfg := s.getChatwoot()
+	if !cfg.valid() {
+		return
+	}
+	_, code, err := cfg.req(http.MethodPost, "/kanban/connections/set_message_source_id", map[string]any{
+		"message_id": chatwootMsgID,
+		"source_id":  sourceID,
+	})
+	if err != nil {
+		s.log.Warn("chatwoot: set_message_source_id falhou", "err", err)
+	} else if code >= 300 {
+		s.log.Warn("chatwoot: set_message_source_id http", "code", code)
+	}
+}
+
 // messageSourceID busca o source_id (ID externo) de uma mensagem do Chatwoot.
 func (c ChatwootConfig) messageSourceID(convID, msgID int) string {
 	res, code, e := c.req(http.MethodGet, fmt.Sprintf("/conversations/%d/messages", convID), nil)
@@ -600,17 +634,17 @@ func (c ChatwootConfig) messageSourceID(convID, msgID int) string {
 }
 
 // sendChatwootFile baixa o anexo do Chatwoot e envia pelo WhatsApp (com citação opcional).
-func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType, url, caption string, quote *waE2E.ContextInfo) error {
+func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType, url, caption string, quote *waE2E.ContextInfo) (string, error) {
 	data, err := fetchMedia("", url)
 	if err != nil {
-		return err
+		return "", err
 	}
 	filename := url[strings.LastIndex(url, "/")+1:]
 	switch fileType {
 	case "image":
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaImage)
 		if e != nil {
-			return e
+			return "", e
 		}
 		return s.sendAndMark(ctx, jid, &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
 			Caption: proto.String(caption), Mimetype: proto.String("image/jpeg"),
@@ -625,7 +659,7 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 		}
 		up, e := s.client.Upload(ctx, ogg, whatsmeow.MediaAudio)
 		if e != nil {
-			return e
+			return "", e
 		}
 		am := &waE2E.AudioMessage{
 			Mimetype: proto.String("audio/ogg; codecs=opus"), PTT: proto.Bool(true),
@@ -641,7 +675,7 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 	case "video":
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaVideo)
 		if e != nil {
-			return e
+			return "", e
 		}
 		return s.sendAndMark(ctx, jid, &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
 			Caption: proto.String(caption), Mimetype: proto.String("video/mp4"),
@@ -652,7 +686,7 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 	default:
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaDocument)
 		if e != nil {
-			return e
+			return "", e
 		}
 		return s.sendAndMark(ctx, jid, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
 			FileName: proto.String(filename), Title: proto.String(filename),

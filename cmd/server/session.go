@@ -72,13 +72,15 @@ func (s *Session) isSelfSent(id string) bool {
 	return ok
 }
 
-// sendAndMark envia uma mensagem e a registra como "enviada por nós".
-func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) error {
+// sendAndMark envia uma mensagem, a registra como "enviada por nós" e devolve o
+// ID da mensagem do WhatsApp (usado p/ gravar o source_id no Chatwoot).
+func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) (string, error) {
 	resp, err := s.client.SendMessage(ctx, jid, msg)
-	if err == nil {
-		s.markSelfSent(resp.ID)
+	if err != nil {
+		return "", err
 	}
-	return err
+	s.markSelfSent(resp.ID)
+	return resp.ID, nil
 }
 
 func (s *Session) setWebhook(url string) {
