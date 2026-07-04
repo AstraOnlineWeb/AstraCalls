@@ -84,6 +84,8 @@ func messageText(m *waE2E.Message) string {
 		return pollText(getPoll(m))
 	case m.GetInteractiveMessage() != nil:
 		return interactiveText(m.GetInteractiveMessage())
+	case m.GetEventMessage() != nil:
+		return eventText(m.GetEventMessage())
 	}
 	return ""
 }
@@ -114,6 +116,8 @@ func messageType(m *waE2E.Message) string {
 		return "poll"
 	case m.GetInteractiveMessage() != nil:
 		return interactiveType(m.GetInteractiveMessage())
+	case m.GetEventMessage() != nil:
+		return "event"
 	}
 	return "unknown"
 }
