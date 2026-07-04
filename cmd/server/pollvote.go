@@ -142,5 +142,5 @@ func (s *Session) chatwootPushVote(cfg ChatwootConfig, evt *events.Message, text
 	if err != nil {
 		return
 	}
-	_ = cfg.postText(convID, text, false)
+	_ = cfg.postText(convID, text, false, "", "")
 }

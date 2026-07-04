@@ -66,6 +66,30 @@ func summarizeMessage(evt *events.Message) map[string]any {
 	return out
 }
 
+// messageContextInfo devolve o ContextInfo da mensagem (onde fica o StanzaID da
+// mensagem citada, quando é uma resposta). Nil se não houver.
+func messageContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case m.GetExtendedTextMessage() != nil:
+		return m.GetExtendedTextMessage().GetContextInfo()
+	case m.GetImageMessage() != nil:
+		return m.GetImageMessage().GetContextInfo()
+	case m.GetVideoMessage() != nil:
+		return m.GetVideoMessage().GetContextInfo()
+	case m.GetAudioMessage() != nil:
+		return m.GetAudioMessage().GetContextInfo()
+	case m.GetDocumentMessage() != nil:
+		return m.GetDocumentMessage().GetContextInfo()
+	case m.GetStickerMessage() != nil:
+		return m.GetStickerMessage().GetContextInfo()
+	case m.GetContactMessage() != nil:
+		return m.GetContactMessage().GetContextInfo()
+	case m.GetLocationMessage() != nil:
+		return m.GetLocationMessage().GetContextInfo()
+	}
+	return nil
+}
+
 func messageText(m *waE2E.Message) string {
 	switch {
 	case m.GetConversation() != "":
