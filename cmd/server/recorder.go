@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"math"
 	"os"
@@ -10,6 +11,8 @@ import (
 )
 
 const recorderSampleRate = 16000
+
+var recordingIndexMu sync.Mutex
 
 type recordingStatus string
 
@@ -42,6 +45,100 @@ func recordingsRoot() string {
 		return v
 	}
 	return "/data/recordings"
+}
+
+func recordingIndexPath() string {
+	return filepath.Join(recordingsRoot(), "recordings-index.json")
+}
+
+func recordingIndexKey(sessionID, callID string) string {
+	return safePathPart(sessionID) + "/" + safePathPart(callID)
+}
+
+func persistRecordingIndex(sessionID, callID, path string) error {
+	if sessionID == "" || callID == "" || path == "" {
+		return nil
+	}
+	recordingIndexMu.Lock()
+	defer recordingIndexMu.Unlock()
+	indexPath := recordingIndexPath()
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0o750); err != nil {
+		return err
+	}
+	idx := map[string]string{}
+	if data, err := os.ReadFile(indexPath); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &idx); err != nil {
+			idx = map[string]string{}
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	idx[recordingIndexKey(sessionID, callID)] = path
+	data, err := json.MarshalIndent(idx, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := indexPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o640); err != nil {
+		return err
+	}
+	return os.Rename(tmp, indexPath)
+}
+
+func indexedRecordingPath(sessionID, callID string) (string, bool) {
+	data, err := os.ReadFile(recordingIndexPath())
+	if err != nil || len(data) == 0 {
+		return "", false
+	}
+	idx := map[string]string{}
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return "", false
+	}
+	path := idx[recordingIndexKey(sessionID, callID)]
+	if path == "" {
+		return "", false
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", false
+	}
+	return path, true
+}
+
+func scanRecordingPath(sessionID, callID string) (string, bool) {
+	root := recordingsRoot()
+	expectedName := safePathPart(callID) + ".wav"
+	candidates := []string{
+		filepath.Join(root, safePathPart(sessionID), expectedName),
+		filepath.Join(root, expectedName),
+	}
+	for _, path := range candidates {
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path, true
+		}
+	}
+	var found string
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != expectedName {
+			return nil
+		}
+		found = path
+		return filepath.SkipAll
+	})
+	if found == "" {
+		return "", false
+	}
+	return found, true
+}
+
+func persistedRecordingPath(sessionID, callID string) (string, bool) {
+	if path, ok := indexedRecordingPath(sessionID, callID); ok {
+		return path, true
+	}
+	path, ok := scanRecordingPath(sessionID, callID)
+	if ok {
+		_ = persistRecordingIndex(sessionID, callID, path)
+	}
+	return path, ok
 }
 
 func newCallRecorder(sessionID, callID string) (*callRecorder, error) {

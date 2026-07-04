@@ -147,6 +147,7 @@ func (b *Broker) finishRecording(id, path string, status recordingStatus) {
 		c.RecordingPath = path
 		if c.Record && status == recordingReady {
 			c.RecordingURL = "/api/sessions/" + c.SessionID + "/calls/" + c.CallID + "/recording"
+			_ = persistRecordingIndex(c.SessionID, c.CallID, path)
 		}
 	}
 }
@@ -249,6 +250,9 @@ func (b *Broker) recordingPath(sessionID, callID string) (string, bool) {
 		if c.SessionID == sessionID && c.CallID == callID && c.Record && c.RecordingStatus == recordingReady && c.RecordingPath != "" {
 			return c.RecordingPath, true
 		}
+	}
+	if path, ok := persistedRecordingPath(sessionID, callID); ok {
+		return path, true
 	}
 	return "", false
 }
