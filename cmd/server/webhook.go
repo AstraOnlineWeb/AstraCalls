@@ -80,6 +80,8 @@ func messageText(m *waE2E.Message) string {
 		return productText(m.GetProductMessage())
 	case m.GetOrderMessage() != nil:
 		return orderText(m.GetOrderMessage())
+	case getPoll(m) != nil:
+		return pollText(getPoll(m))
 	}
 	return ""
 }
@@ -106,6 +108,8 @@ func messageType(m *waE2E.Message) string {
 		return "product"
 	case m.GetOrderMessage() != nil:
 		return "order"
+	case getPoll(m) != nil:
+		return "poll"
 	}
 	return "unknown"
 }
