@@ -260,6 +260,10 @@ func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Me
 	if getPoll(evt.Message) != nil && evt.Info.ID != "" {
 		text += "\n_PID: " + evt.Info.ID + "_"
 	}
+	// evento: anexa o ID da mensagem (p/ referenciar no endpoint de RSVP)
+	if evt.Message.GetEventMessage() != nil && evt.Info.ID != "" {
+		text += "\n_EID: " + evt.Info.ID + "_"
+	}
 	// resposta com citação: source_id = ID da msg do WhatsApp; in_reply_to = a msg citada
 	sourceID := evt.Info.ID
 	inReplyTo := ""

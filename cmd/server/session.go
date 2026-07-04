@@ -284,9 +284,12 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	case *events.Message:
-		if evt.Message.GetPollUpdateMessage() != nil {
+		switch {
+		case evt.Message.GetPollUpdateMessage() != nil:
 			go s.handleIncomingPollVote(evt) // voto em enquete (decodifica + encaminha)
-		} else {
+		case evt.Message.GetEncEventResponseMessage() != nil:
+			go s.handleIncomingEventResponse(evt) // RSVP de evento (decodifica + encaminha)
+		default:
 			s.storeMessageEvent(evt)
 			s.dispatchWebhook("message", summarizeMessage(evt))
 			go s.chatwootPushIncoming(evt)

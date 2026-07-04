@@ -926,6 +926,31 @@ paths:
         "200": { $ref: "#/components/responses/SendOK" }
         "404": { description: Enquete não encontrada pelo ID }
 
+  /api/sessions/{sid}/messages/event-response:
+    post:
+      tags: [Mensagens]
+      summary: Responde (RSVP) um evento recebido
+      description: |
+        Envia "Vou / Talvez / Não vou" para um evento recebido nesta sessão. Use
+        o `eventMessageId` (vem no webhook como `id` e no Chatwoot como `_EID: ..._`).
+        O evento precisa ter sido recebido por esta sessão (o segredo fica guardado).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventMessageId, response]
+              properties:
+                to: { type: string, example: "5561999999999", description: "opcional; padrão = o chat do evento" }
+                eventMessageId: { type: string, description: "ID da mensagem do evento" }
+                response: { type: string, enum: [going, not_going, maybe], example: going }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+        "404": { description: Evento não encontrado pelo ID }
+
   /api/sessions/{sid}/messages/link-preview:
     post:
       tags: [Mensagens]
