@@ -255,6 +255,10 @@ func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
 // prefix é acrescentado ao texto (usado em grupos p/ identificar o autor).
 func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Message, prefix string, private bool) {
 	text := messageText(evt.Message)
+	// enquete: anexa o ID da mensagem (p/ referenciar no endpoint de voto)
+	if getPoll(evt.Message) != nil && evt.Info.ID != "" {
+		text += "\n_PID: " + evt.Info.ID + "_"
+	}
 	// mídia: baixa do WhatsApp e sobe pro Chatwoot como anexo
 	if dl := downloadableOf(evt.Message); dl != nil {
 		data, derr := s.client.Download(context.Background(), dl)

@@ -1,12 +1,30 @@
 package main
 
 import (
+	"crypto/sha256"
 	"strings"
 	"testing"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestMatchVoteOptions(t *testing.T) {
+	options := []string{"Manhã", "Tarde", "Noite"}
+	// simula um voto em "Tarde" e "Noite" (só os hashes, como vem do WhatsApp)
+	h1 := sha256.Sum256([]byte("Tarde"))
+	h2 := sha256.Sum256([]byte("Noite"))
+	got := matchVoteOptions([][]byte{h1[:], h2[:]}, options)
+	if len(got) != 2 || got[0] != "Tarde" || got[1] != "Noite" {
+		t.Fatalf("esperava [Tarde Noite], veio %v", got)
+	}
+	if v := pollVoteText("João", got); !strings.Contains(v, "João votou: Tarde, Noite") {
+		t.Fatalf("pollVoteText inesperado: %s", v)
+	}
+	if v := pollVoteText("João", nil); !strings.Contains(v, "retirou o voto") {
+		t.Fatalf("voto vazio inesperado: %s", v)
+	}
+}
 
 func TestPollText(t *testing.T) {
 	pm := &waE2E.PollCreationMessage{

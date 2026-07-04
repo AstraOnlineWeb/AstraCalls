@@ -284,9 +284,13 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	case *events.Message:
-		s.storeMessageEvent(evt)
-		s.dispatchWebhook("message", summarizeMessage(evt))
-		go s.chatwootPushIncoming(evt)
+		if evt.Message.GetPollUpdateMessage() != nil {
+			go s.handleIncomingPollVote(evt) // voto em enquete (decodifica + encaminha)
+		} else {
+			s.storeMessageEvent(evt)
+			s.dispatchWebhook("message", summarizeMessage(evt))
+			go s.chatwootPushIncoming(evt)
+		}
 	case *events.Receipt:
 		s.dispatchWebhook("receipt", map[string]any{
 			"chat": evt.Chat.String(), "sender": evt.Sender.String(),

@@ -900,6 +900,32 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
+  /api/sessions/{sid}/messages/poll-vote:
+    post:
+      tags: [Mensagens]
+      summary: Vota numa enquete recebida
+      description: |
+        Vota numa enquete que chegou nesta sessão. Use o `pollMessageId` (o ID da
+        mensagem da enquete — vem no webhook como `id` e no Chatwoot como
+        `_PID: ..._`). Envie `selectedNames` vazio para retirar o voto. A enquete
+        precisa ter sido recebida por esta sessão (o segredo fica guardado).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pollMessageId, selectedNames]
+              properties:
+                to: { type: string, example: "5561999999999", description: "opcional; padrão = o chat da enquete" }
+                pollMessageId: { type: string, example: "3EB0C767D...", description: "ID da mensagem da enquete" }
+                selectedNames: { type: array, items: { type: string }, example: ["Tarde"] }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+        "404": { description: Enquete não encontrada pelo ID }
+
   /api/sessions/{sid}/messages/link-preview:
     post:
       tags: [Mensagens]

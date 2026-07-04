@@ -125,6 +125,8 @@ func (s *server) routes() http.Handler {
 	// Proxy de saída por sessão (http/https/socks5)
 	mux.HandleFunc("GET /api/sessions/{sid}/proxy", s.handleGetProxy)
 	mux.HandleFunc("PUT /api/sessions/{sid}/proxy", s.handleSetProxy)
+	// Votar numa enquete recebida
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll-vote", s.handlePollVote)
 	// Disparo em massa de ligações com áudio pré-gravado
 	mux.HandleFunc("POST /api/sessions/{sid}/broadcast", s.handleBroadcast)
 	mux.HandleFunc("GET /api/sessions/{sid}/broadcast/{cid}", s.handleBroadcastStatus)

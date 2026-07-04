@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -42,4 +44,37 @@ func pollText(p *waE2E.PollCreationMessage) string {
 		b.WriteString(fmt.Sprintf("\n_(escolha até %d opções)_", n))
 	}
 	return b.String()
+}
+
+// matchVoteOptions mapeia os hashes SHA-256 de um voto de volta para os nomes
+// das opções da enquete (o voto vem só com os hashes).
+func matchVoteOptions(selected [][]byte, options []string) []string {
+	out := []string{}
+	for _, name := range options {
+		h := sha256.Sum256([]byte(name))
+		for _, sel := range selected {
+			if bytes.Equal(sel, h[:]) {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// pollVoteText formata um voto recebido (quem votou + opções escolhidas).
+func pollVoteText(voter string, names []string) string {
+	if len(names) == 0 {
+		return "🗳️ " + voter + " retirou o voto na enquete"
+	}
+	return "🗳️ " + voter + " votou: " + strings.Join(names, ", ")
+}
+
+// pollOptionNames extrai os nomes das opções de uma enquete guardada (raw).
+func pollOptionNames(p *waE2E.PollCreationMessage) []string {
+	out := make([]string, 0, len(p.GetOptions()))
+	for _, o := range p.GetOptions() {
+		out = append(out, o.GetOptionName())
+	}
+	return out
 }

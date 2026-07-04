@@ -121,6 +121,18 @@ func (s *sessionStore) saveMessage(ctx context.Context, sessionID string, m stor
 	return err
 }
 
+// findMessage acha uma mensagem pelo ID (usada p/ reconstruir a enquete e votar).
+func (s *sessionStore) findMessage(ctx context.Context, sessionID, msgID string) (chatJID, senderJID string, fromMe bool, raw json.RawMessage, err error) {
+	var body []byte
+	err = s.db.QueryRowContext(ctx,
+		`SELECT chat_jid, sender_jid, from_me, raw FROM messages WHERE session_id = $1 AND msg_id = $2 LIMIT 1`,
+		sessionID, msgID).Scan(&chatJID, &senderJID, &fromMe, &body)
+	if err == nil && len(body) > 0 {
+		raw = json.RawMessage(body)
+	}
+	return
+}
+
 // listMessages devolve as mensagens de um chat, mais recentes primeiro.
 func (s *sessionStore) listMessages(ctx context.Context, sessionID, chatJID string, limit, offset int, withRaw bool) ([]storedMessage, error) {
 	rawCol := "NULL"
