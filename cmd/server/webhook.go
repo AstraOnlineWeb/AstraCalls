@@ -86,6 +86,10 @@ func messageText(m *waE2E.Message) string {
 		return interactiveText(m.GetInteractiveMessage())
 	case m.GetEventMessage() != nil:
 		return eventText(m.GetEventMessage())
+	case m.GetContactMessage() != nil:
+		return contactText(m.GetContactMessage())
+	case m.GetContactsArrayMessage() != nil:
+		return contactsArrayText(m.GetContactsArrayMessage())
 	}
 	return ""
 }
@@ -106,7 +110,7 @@ func messageType(m *waE2E.Message) string {
 		return "sticker"
 	case m.GetLocationMessage() != nil:
 		return "location"
-	case m.GetContactMessage() != nil:
+	case m.GetContactMessage() != nil || m.GetContactsArrayMessage() != nil:
 		return "contact"
 	case m.GetProductMessage() != nil:
 		return "product"
