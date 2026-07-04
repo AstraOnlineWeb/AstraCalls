@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: WaCalls API
+  title: AstraCalls API
   version: "1.0.0"
   description: |
-    API HTTP do **WaCalls** — chamadas de voz do WhatsApp pelo navegador.
+    API HTTP do **AstraCalls** — chamadas de voz do WhatsApp pelo navegador.
 
     ## Autenticação
     Não há login/senha. Todas as rotas aceitam o header **`X-Client-Id`** (qualquer

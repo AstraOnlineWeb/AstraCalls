@@ -1,5 +1,5 @@
 /*
- * WaCalls — widget de chamada para o Chatwoot.
+ * AstraCalls — widget de chamada para o Chatwoot.
  * Carregue no Chatwoot (super_admin > app_config > internal), no campo de scripts:
  *   <script src="https://SEU-WACALLS/widget.js" data-api-key="SUA_API_KEY"></script>
  * Injeta um ícone de telefone ao lado do botão de excluir ticket; ao clicar,
@@ -377,7 +377,7 @@
 
   // ---------- vínculo empresa+caixa ----------
   // O ícone só aparece quando a conversa aberta pertence a uma conta E caixa (inbox)
-  // que tem uma sessão WaCalls conectada. O backend (/chatwoot/resolve) é quem decide:
+  // que tem uma sessão AstraCalls conectada. O backend (/chatwoot/resolve) é quem decide:
   // ele descobre o inbox_id da conversa e só responde 200 se houver sessão amarrada.
   var currentConvKey = null; // "acc/conv" da conversa atual
   var callable = false; // a conversa atual é de uma caixa conectada?
