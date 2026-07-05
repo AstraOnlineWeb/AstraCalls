@@ -1,6 +1,7 @@
 package call
 
 import (
+	"context"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
@@ -53,6 +54,69 @@ func (m *CallManager) FeedCapturedPCM(data []float32) {
 		}
 		m.sendOpusFrameLocked(opus)
 	}
+}
+
+func (m *CallManager) IsPlaybackReady() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.currentCall != nil &&
+		m.currentCall.StateData.State == core.CallStateActive &&
+		m.codec != nil &&
+		m.rtpSession != nil &&
+		m.srtpSession != nil &&
+		m.relay.HasConnection()
+}
+
+func (m *CallManager) PlayCapturedPCM(ctx context.Context, pcm16 []float32, onFrame func([]float32)) error {
+	m.mu.Lock()
+	if m.currentCall == nil || m.currentCall.StateData.State != core.CallStateActive {
+		m.mu.Unlock()
+		return &CallError{"call is not connected"}
+	}
+	if m.codec == nil || m.rtpSession == nil || m.srtpSession == nil || !m.relay.HasConnection() {
+		m.mu.Unlock()
+		return &CallError{"call media is not ready"}
+	}
+	frameSize := m.codec.FrameSize()
+	sampleRate := m.codec.SampleRate()
+	m.mu.Unlock()
+
+	if frameSize <= 0 || sampleRate <= 0 {
+		return &CallError{"codec is not ready"}
+	}
+	frameDuration := time.Duration(frameSize) * time.Second / time.Duration(sampleRate)
+	if frameDuration <= 0 {
+		frameDuration = 60 * time.Millisecond
+	}
+
+	for offset := 0; offset < len(pcm16); offset += frameSize {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		end := offset + frameSize
+		if end > len(pcm16) {
+			end = len(pcm16)
+		}
+		frame := media.NormalizeFrame(pcm16[offset:end], frameSize)
+		m.FeedCapturedPCM(frame)
+		if onFrame != nil {
+			onFrame(frame)
+		}
+
+		timer := time.NewTimer(frameDuration)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
 }
 
 func (m *CallManager) sendOpusFrameLocked(opus []byte) {
