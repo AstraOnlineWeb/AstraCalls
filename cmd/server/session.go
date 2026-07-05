@@ -310,6 +310,7 @@ func (s *Session) removeCall(callID string) {
 	if ac.browserOpus != nil {
 		ac.browserOpus.Close()
 	}
+	ac.stopPlayback()
 	if ac.recorder != nil {
 		path, err := ac.recorder.Close()
 		status := recordingReady

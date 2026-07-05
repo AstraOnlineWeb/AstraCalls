@@ -12,6 +12,39 @@ type activeCall struct {
 	bridge      *Bridge
 	browserOpus media.Codec
 	recorder    *callRecorder
+
+	playbackMu     sync.Mutex
+	playbackCancel chan struct{}
+}
+
+func (ac *activeCall) startPlayback() (<-chan struct{}, bool) {
+	ac.playbackMu.Lock()
+	defer ac.playbackMu.Unlock()
+	if ac.playbackCancel != nil {
+		return nil, false
+	}
+	ch := make(chan struct{})
+	ac.playbackCancel = ch
+	return ch, true
+}
+
+func (ac *activeCall) finishPlayback(ch <-chan struct{}) {
+	ac.playbackMu.Lock()
+	defer ac.playbackMu.Unlock()
+	if ac.playbackCancel != ch {
+		return
+	}
+	ac.playbackCancel = nil
+}
+
+func (ac *activeCall) stopPlayback() {
+	ac.playbackMu.Lock()
+	ch := ac.playbackCancel
+	ac.playbackCancel = nil
+	ac.playbackMu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
 }
 
 type callRegistry struct {
