@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"sync"
@@ -363,10 +364,37 @@ func (s *Session) startPairing(ctx context.Context) error {
 				s.setAuth(AuthSnapshot{State: "open", Paired: true})
 			case "timeout":
 				s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+			case "passkey-request":
+				// conta com passkey: o WhatsApp exige uma prova WebAuthn do dono.
+				// Expõe o desafio pro front (que delega ao autenticador via extensão)
+				// e recebe a assinatura de volta em POST .../pair-passkey.
+				s.setPasskeyChallenge(evt.PasskeyRequest.PublicKey)
+			case "passkey-confirmation":
+				// handoff manual: confirma o código exibido no WhatsApp do dono.
+				if err := s.client.SendPasskeyConfirmation(s.mgr.appCtx); err != nil {
+					s.log.Warn("passkey: confirmação falhou", "err", err)
+				}
+			case "error":
+				s.log.Warn("pareamento: erro", "err", evt.Error)
 			}
 		}
 	}()
 	return nil
+}
+
+// setPasskeyChallenge serializa o desafio WebAuthn e o publica no estado de auth
+// (via SSE), no mesmo modelo do QR. O front repassa esse objeto ao autenticador
+// (navigator.credentials.get) na origem web.whatsapp.com através da extensão.
+func (s *Session) setPasskeyChallenge(pk *types.WebAuthnPublicKey) {
+	if pk == nil {
+		return
+	}
+	raw, err := json.Marshal(pk)
+	if err != nil {
+		s.log.Warn("passkey: falha ao serializar desafio", "err", err)
+		return
+	}
+	s.setAuth(AuthSnapshot{State: "passkey_request", Passkey: raw})
 }
 
 // startPhonePairing conecta um device novo e solicita um código de pareamento

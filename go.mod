@@ -6,8 +6,10 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/pion/webrtc/v4 v4.2.15
-	go.mau.fi/whatsmeow v0.0.0-20260622185415-5f04eac6dbbb
+	go.mau.fi/util v0.9.10
+	go.mau.fi/whatsmeow v0.0.0-20260630180629-b572e5bcb92b
 	google.golang.org/protobuf v1.36.11
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -44,7 +46,6 @@ require (
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.mau.fi/libsignal v0.2.2 // indirect
-	go.mau.fi/util v0.9.10 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
 	golang.org/x/net v0.56.0 // indirect
@@ -56,6 +57,5 @@ require (
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.53.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
