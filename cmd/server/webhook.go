@@ -60,15 +60,37 @@ func summarizeMessage(evt *events.Message) map[string]any {
 		"type":      messageType(evt.Message),
 		"text":      messageText(evt.Message),
 	}
+	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
+		out["viewOnce"] = true
+	}
 	if raw, err := protojson.Marshal(evt.Message); err == nil {
 		out["raw"] = json.RawMessage(raw)
 	}
 	return out
 }
 
+// unwrapViewOnce desembrulha mensagens de visualização única. No WhatsApp elas
+// não chegam como ImageMessage/VideoMessage/AudioMessage no topo — vêm embrulhadas
+// num FutureProofMessage (V2 = foto/vídeo, V2Extension = áudio/PTT, e o formato
+// legado). A mídia interna baixa normalmente; o "ver uma vez" é só uma dica de
+// exibição do cliente oficial, não muda a criptografia. Retorna a mensagem interna
+// e true quando era view-once; caso contrário devolve a própria mensagem e false.
+func unwrapViewOnce(m *waE2E.Message) (*waE2E.Message, bool) {
+	switch {
+	case m.GetViewOnceMessageV2().GetMessage() != nil:
+		return m.GetViewOnceMessageV2().GetMessage(), true
+	case m.GetViewOnceMessageV2Extension().GetMessage() != nil:
+		return m.GetViewOnceMessageV2Extension().GetMessage(), true
+	case m.GetViewOnceMessage().GetMessage() != nil:
+		return m.GetViewOnceMessage().GetMessage(), true
+	}
+	return m, false
+}
+
 // messageContextInfo devolve o ContextInfo da mensagem (onde fica o StanzaID da
 // mensagem citada, quando é uma resposta). Nil se não houver.
 func messageContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
+	m, _ = unwrapViewOnce(m)
 	switch {
 	case m.GetExtendedTextMessage() != nil:
 		return m.GetExtendedTextMessage().GetContextInfo()
@@ -91,6 +113,7 @@ func messageContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
 }
 
 func messageText(m *waE2E.Message) string {
+	m, _ = unwrapViewOnce(m)
 	switch {
 	case m.GetConversation() != "":
 		return m.GetConversation()
@@ -119,6 +142,7 @@ func messageText(m *waE2E.Message) string {
 }
 
 func messageType(m *waE2E.Message) string {
+	m, _ = unwrapViewOnce(m)
 	switch {
 	case m.GetConversation() != "" || m.GetExtendedTextMessage() != nil:
 		return "text"

@@ -256,6 +256,10 @@ func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
 // prefix é acrescentado ao texto (usado em grupos p/ identificar o autor).
 func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Message, prefix string, private bool) {
 	text := messageText(evt.Message)
+	// visualização única: sinaliza pro atendente (a mídia baixa e sobe normal)
+	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
+		text = strings.TrimRight("👁️ _Visualização única_\n"+text, "\n")
+	}
 	// enquete: anexa o ID da mensagem (p/ referenciar no endpoint de voto)
 	if getPoll(evt.Message) != nil && evt.Info.ID != "" {
 		text += "\n_PID: " + evt.Info.ID + "_"
@@ -999,6 +1003,7 @@ func firstNonEmpty(a, b string) string {
 
 // downloadableOf devolve a parte de mídia da mensagem (ou nil se for texto).
 func downloadableOf(m *waE2E.Message) whatsmeow.DownloadableMessage {
+	m, _ = unwrapViewOnce(m)
 	switch {
 	case m.GetImageMessage() != nil:
 		return m.GetImageMessage()
@@ -1021,6 +1026,7 @@ func downloadableOf(m *waE2E.Message) whatsmeow.DownloadableMessage {
 
 // mediaMeta devolve (filename, mimetype) p/ a mídia recebida.
 func mediaMeta(m *waE2E.Message) (string, string) {
+	m, _ = unwrapViewOnce(m)
 	switch {
 	case m.GetImageMessage() != nil:
 		return "image.jpg", firstNonEmpty(m.GetImageMessage().GetMimetype(), "image/jpeg")
