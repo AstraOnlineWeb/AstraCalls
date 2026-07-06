@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { setActiveSession, useSessions } from "@/stores/sessions";
 import { createSession, deleteSession } from "@/services/sessions";
+import { EXTENSION_DOWNLOAD_URL } from "@/lib/passkey";
 import type { SessionInfo, SessionState } from "@/types/session";
 
 const dotClass: Record<SessionState, string> = {
@@ -96,6 +97,16 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
           <p className="px-3 py-2 text-sm text-muted-foreground">Nenhuma conta ainda.</p>
         )}
       </div>
+
+      <a
+        href={EXTENSION_DOWNLOAD_URL}
+        download
+        className="mt-1 flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        title="Necessária apenas para conectar contas protegidas por passkey"
+      >
+        <KeyRound className="h-3.5 w-3.5 shrink-0" />
+        Extensão Passkey (.zip)
+      </a>
 
       <ConfirmDialog
         open={!!toDelete}
