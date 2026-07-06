@@ -298,6 +298,12 @@ func (s *Session) handleEvent(rawEvt any) {
 			s.dispatchWebhook("message", summarizeMessage(evt))
 			go s.chatwootPushIncoming(evt)
 		}
+	case *events.UndecryptableMessage:
+		// visualização única chega como placeholder "unavailable" — o WhatsApp não
+		// libera o conteúdo p/ dispositivos vinculados. Avisa o atendente/webhook.
+		if evt.IsUnavailable && evt.UnavailableType == events.UnavailableTypeViewOnce {
+			go s.handleUnavailableViewOnce(evt)
+		}
 	case *events.Receipt:
 		s.dispatchWebhook("receipt", map[string]any{
 			"chat": evt.Chat.String(), "sender": evt.Sender.String(),
