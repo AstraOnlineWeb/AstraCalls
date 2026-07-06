@@ -369,6 +369,22 @@ func (s *Session) startPairing(ctx context.Context) error {
 	return nil
 }
 
+// startPhonePairing conecta um device novo e solicita um código de pareamento
+// por telefone (o usuário digita o código no WhatsApp: Aparelhos conectados ->
+// Conectar com número). O sucesso chega depois via events.Connected.
+func (s *Session) startPhonePairing(ctx context.Context, phone string) (string, error) {
+	s.applyProxy()
+	if err := s.client.Connect(); err != nil {
+		return "", err
+	}
+	code, err := s.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "AstraCalls")
+	if err != nil {
+		return "", err
+	}
+	s.setAuth(AuthSnapshot{State: "pairing_code", Code: code})
+	return code, nil
+}
+
 func (s *Session) setAuth(a AuthSnapshot) {
 	s.mu.Lock()
 	s.auth = a

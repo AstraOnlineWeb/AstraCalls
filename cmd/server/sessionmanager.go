@@ -248,6 +248,26 @@ func (m *SessionManager) Pair(id string) error {
 	return nil
 }
 
+// PairPhone inicia o pareamento por CÓDIGO (sem QR) e devolve o código de 8
+// dígitos que o usuário digita no WhatsApp do aparelho.
+func (m *SessionManager) PairPhone(id, phone string) (string, error) {
+	s, ok := m.Get(id)
+	if !ok {
+		return "", fmt.Errorf("no session %s", id)
+	}
+	if s.client.Store.ID != nil {
+		return "", fmt.Errorf("session already paired")
+	}
+	s.replaceClient(whatsmeow.NewClient(s.waContainer.NewDevice(), m.waLogger))
+	code, err := s.startPhonePairing(m.appCtx, phone)
+	if err != nil {
+		return "", fmt.Errorf("start phone pairing: %w", err)
+	}
+	m.broker.emitSessionList(m.infos())
+	m.log.Info("session phone-pairing", "session", id)
+	return code, nil
+}
+
 func (m *SessionManager) disconnectAll() {
 	m.mu.RLock()
 	all := make([]*Session, 0, len(m.sessions))

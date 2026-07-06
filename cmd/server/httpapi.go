@@ -24,6 +24,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{sid}", s.handleSessionDelete)
 	mux.HandleFunc("POST /api/sessions/{sid}/logout", s.handleSessionLogout)
 	mux.HandleFunc("POST /api/sessions/{sid}/pair", s.handleSessionPair)
+	mux.HandleFunc("POST /api/sessions/{sid}/pair-code", s.handleSessionPairCode)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls", s.handleStartCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
@@ -75,6 +76,11 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/invite/revoke", s.handleGroupInviteRevoke)
 	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/announce", s.handleGroupAnnounce)
 	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/locked", s.handleGroupLocked)
+	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/approval", s.handleGroupApprovalMode)
+	mux.HandleFunc("PUT /api/sessions/{sid}/groups/{gid}/settings/add-mode", s.handleGroupAddMode)
+	mux.HandleFunc("GET /api/sessions/{sid}/groups/{gid}/requests", s.handleGroupRequests)
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/requests/approve", s.handleGroupRequestChange(whatsmeow.ParticipantChangeApprove))
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/requests/reject", s.handleGroupRequestChange(whatsmeow.ParticipantChangeReject))
 
 	// Canais / Newsletters (whatsmeow)
 	mux.HandleFunc("GET /api/sessions/{sid}/channels", s.handleListChannels)
@@ -92,6 +98,19 @@ func (s *server) routes() http.Handler {
 	// Perfil próprio
 	mux.HandleFunc("GET /api/sessions/{sid}/profile", s.handleGetProfile)
 	mux.HandleFunc("PUT /api/sessions/{sid}/profile/status", s.handleSetProfileStatus)
+	mux.HandleFunc("GET /api/sessions/{sid}/profile/qr", s.handleContactQR)
+
+	// Privacidade da conta
+	mux.HandleFunc("GET /api/sessions/{sid}/privacy", s.handleGetPrivacy)
+	mux.HandleFunc("PUT /api/sessions/{sid}/privacy", s.handleSetPrivacy)
+	mux.HandleFunc("GET /api/sessions/{sid}/privacy/status", s.handleGetStatusPrivacy)
+
+	// Mensagens temporárias (disappearing)
+	mux.HandleFunc("PUT /api/sessions/{sid}/disappearing", s.handleSetDefaultDisappearing)
+	mux.HandleFunc("PUT /api/sessions/{sid}/chats/{chatId}/disappearing", s.handleSetChatDisappearing)
+
+	// Perfil comercial (business) de um contato
+	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}/business", s.handleBusinessProfile)
 
 	// Status / Stories
 	mux.HandleFunc("POST /api/sessions/{sid}/status/text", s.handleStatusText)
@@ -270,6 +289,23 @@ func (s *server) handleSessionPair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/sessions/{sid}/pair-code {phone}  → pareamento por código (sem QR)
+func (s *server) handleSessionPairCode(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Phone string `json:"phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Phone) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone required"})
+		return
+	}
+	code, err := s.sessions.PairPhone(r.PathValue("sid"), normalizePhone(b.Phone))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"code": code})
 }
 
 func (s *server) handleStartCall(w http.ResponseWriter, r *http.Request) {

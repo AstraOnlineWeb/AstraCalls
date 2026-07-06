@@ -32,6 +32,7 @@ type AuthSnapshot struct {
 	State  string `json:"state"`
 	Paired bool   `json:"paired"`
 	QR     string `json:"qr,omitempty"`
+	Code   string `json:"code,omitempty"` // código de pareamento por telefone (8 dígitos)
 }
 
 type SessionInfo struct {
