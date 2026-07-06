@@ -10,7 +10,7 @@ import { submitPasskeyAssertion } from "@/services/sessions";
 import {
   isExtensionInstalled,
   runPasskeyAssertion,
-  EXTENSION_HELP_URL,
+  EXTENSION_DOWNLOAD_URL,
 } from "@/lib/passkey";
 import type { SessionInfo } from "@/types/session";
 
@@ -66,11 +66,20 @@ const PasskeyStep = ({ session }: { session: SessionInfo }) => {
         <div className="space-y-3">
           <Badge variant="destructive">Extensão AstraCalls Passkey não encontrada</Badge>
           <p className="text-sm text-muted-foreground">
-            Instale a extensão no navegador do dono da conta para autorizar a conexão.
+            Instale a extensão no navegador do dono da conta para autorizar a conexão:
           </p>
-          <Button asChild variant="outline">
-            <a href={EXTENSION_HELP_URL} target="_blank" rel="noreferrer">
-              Como instalar a extensão
+          <ol className="mx-auto max-w-xs space-y-1 text-left text-sm text-muted-foreground">
+            <li>1. Baixe e descompacte o arquivo abaixo</li>
+            <li>
+              2. Abra <code className="rounded bg-muted px-1">chrome://extensions</code> e ative o
+              <b> Modo do desenvolvedor</b>
+            </li>
+            <li>3. Clique em <b>Carregar sem compactação</b> e escolha a pasta</li>
+            <li>4. Volte aqui e reative a conexão</li>
+          </ol>
+          <Button asChild>
+            <a href={EXTENSION_DOWNLOAD_URL} download>
+              Baixar extensão (.zip)
             </a>
           </Button>
         </div>

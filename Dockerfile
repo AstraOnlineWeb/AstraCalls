@@ -24,12 +24,14 @@ RUN cmake -B build -G Ninja -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release \
 
 # ---------- Stage 3: build do servidor Go (cgo + tag mlow) ----------
 FROM golang:1.26-bookworm AS server
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev zip \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# empacota a extensão de passkey p/ download pelo painel (ver /astracalls-passkey.zip)
+RUN cd /src && zip -r -q /astracalls-passkey.zip passkey-extension -x '*.DS_Store'
 COPY --from=opus /opt/libopus_mlow.so /src/native/libopus_mlow.so
 ENV CGO_ENABLED=1 \
     CC=gcc \
@@ -44,6 +46,7 @@ COPY --from=opus /opt/libopus_mlow.so /usr/local/lib/libopus_mlow.so
 RUN ldconfig
 COPY --from=server /wacalls /usr/local/bin/wacalls
 COPY --from=client /app/client/dist /app/client/dist
+COPY --from=server /astracalls-passkey.zip /app/client/dist/astracalls-passkey.zip
 WORKDIR /app
 EXPOSE 8080 50000
 ENTRYPOINT ["wacalls"]

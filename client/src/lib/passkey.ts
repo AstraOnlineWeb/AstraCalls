@@ -86,6 +86,5 @@ export function runPasskeyAssertion(publicKey: WebAuthnPublicKey): Promise<WebAu
   });
 }
 
-// link fixo (não público) para instalar a extensão — ajuste conforme distribuição
-export const EXTENSION_HELP_URL =
-  "https://call.trecofantastico.com.br/extensao-passkey";
+// download da extensão (zip servido pelo próprio backend, na mesma origem)
+export const EXTENSION_DOWNLOAD_URL = "/astracalls-passkey.zip";
