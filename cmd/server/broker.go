@@ -97,10 +97,14 @@ func (b *Broker) broadcast(ev any) {
 }
 
 func (b *Broker) emitAuthState(sessionID string, a AuthSnapshot) {
-	b.broadcast(map[string]any{
+	ev := map[string]any{
 		"type": "auth-state", "sessionId": sessionID,
 		"paired": a.Paired, "state": a.State, "qr": a.QR,
-	})
+	}
+	if len(a.Passkey) > 0 {
+		ev["passkey"] = a.Passkey // desafio WebAuthn p/ contas com passkey
+	}
+	b.broadcast(ev)
 }
 
 func (b *Broker) emitSessionList(sessions []SessionInfo) {

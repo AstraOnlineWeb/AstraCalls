@@ -13,6 +13,8 @@ const dotClass: Record<SessionState, string> = {
   qr: "bg-amber-500",
   connecting: "bg-muted-foreground/50",
   logged_out: "bg-destructive",
+  pairing_code: "bg-amber-500",
+  passkey_request: "bg-sky-400",
 };
 
 export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {

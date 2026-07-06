@@ -24,6 +24,9 @@ export const logoutSession = (id: string) => postVoid(`/api/sessions/${id}/logou
 
 export const pairSession = (id: string) => postVoid(`/api/sessions/${id}/pair`);
 
+export const submitPasskeyAssertion = (id: string, assertion: unknown) =>
+  apiPost<{ ok: boolean }>(`/api/sessions/${id}/pair-passkey`, assertion);
+
 export const setRecording = async (id: string, enabled: boolean): Promise<void> => {
   const r = await fetch(apiUrl(`/api/sessions/${id}/recording`), {
     method: "PUT",

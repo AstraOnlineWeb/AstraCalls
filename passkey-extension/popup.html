@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        margin: 0;
+        width: 280px;
+        font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+        color: #233e4f;
+        background: #fff;
+      }
+      .head {
+        background: #233e4f;
+        color: #fff;
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .head img { width: 28px; height: 28px; border-radius: 8px; }
+      .head b { font-size: 15px; }
+      .body { padding: 16px; font-size: 13px; line-height: 1.55; color: #4b5a67; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #e8f6ff;
+        color: #1c6b8c;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 10px;
+      }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; }
+      code { background: #f0f4f7; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="head">
+      <img src="icons/icon48.png" alt="" />
+      <b>AstraCalls Passkey</b>
+    </div>
+    <div class="body">
+      <div class="pill"><span class="dot"></span> Extensão ativa <span id="ver"></span></div>
+      <p>
+        Esta extensão só entra em ação ao conectar uma conta do WhatsApp que exige
+        <b>passkey</b>. Quando isso acontecer, abriremos o
+        <code>web.whatsapp.com</code> e você confirma com sua biometria/PIN.
+      </p>
+      <p>Nada é lido da sua conta — apenas a autorização de conexão é encaminhada ao AstraCalls.</p>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

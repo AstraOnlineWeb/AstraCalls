@@ -14,6 +14,8 @@ const statusLabel: Record<SessionState, string> = {
   qr: "Ler QR",
   connecting: "Conectando…",
   logged_out: "Desconectado",
+  pairing_code: "Código de pareamento",
+  passkey_request: "Confirmar passkey",
 };
 
 const statusVariant: Record<SessionState, "success" | "secondary" | "muted" | "destructive"> = {
@@ -21,6 +23,8 @@ const statusVariant: Record<SessionState, "success" | "secondary" | "muted" | "d
   qr: "secondary",
   connecting: "muted",
   logged_out: "destructive",
+  pairing_code: "secondary",
+  passkey_request: "secondary",
 };
 
 export const SessionHeader = ({ session }: { session: SessionInfo }) => {

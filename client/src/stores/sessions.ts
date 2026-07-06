@@ -3,14 +3,16 @@ import { eventStream, type BrokerEvent } from "@/lib/event-stream";
 import { getClientId } from "@/lib/client-id";
 import { listSessions } from "@/services/sessions";
 import type { SessionInfo } from "@/types/session";
+import type { WebAuthnPublicKey } from "@/lib/passkey";
 
 type State = {
   sessions: SessionInfo[];
   qrs: Record<string, string>;
+  passkeys: Record<string, WebAuthnPublicKey>; // desafio WebAuthn pendente por sessão
   activeId: string | null;
 };
 
-export const useSessions = create<State>(() => ({ sessions: [], qrs: {}, activeId: null }));
+export const useSessions = create<State>(() => ({ sessions: [], qrs: {}, passkeys: {}, activeId: null }));
 
 export const setActiveSession = (id: string): void => useSessions.setState({ activeId: id });
 
@@ -47,7 +49,13 @@ export const ensureSessionsWired = (): void => {
         const qrs = { ...s.qrs };
         if (ev.paired) delete qrs[ev.sessionId];
         else if (ev.qr) qrs[ev.sessionId] = ev.qr;
-        return { sessions, qrs };
+        const passkeys = { ...s.passkeys };
+        if (ev.state === "passkey_request" && ev.passkey) {
+          passkeys[ev.sessionId] = ev.passkey as WebAuthnPublicKey;
+        } else {
+          delete passkeys[ev.sessionId];
+        }
+        return { sessions, qrs, passkeys };
       });
     }
   });
