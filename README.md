@@ -233,12 +233,12 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 
 ```bash
 # imagem oficial publicada no Docker Hub:
-#   astraonline/wacalls:develop
+#   astraonline/astracalls:develop   (ou uma tag estável, ex.: astraonline/astracalls:v0.0.2)
 # para usar direto, basta referenciá-la na stack (PullImage).
 
 # para buildar a sua própria a partir do código:
-docker build -t astraonline/wacalls:develop .
-docker push astraonline/wacalls:develop
+docker build -t astraonline/astracalls:develop .
+docker push astraonline/astracalls:develop
 
 # deploy da stack (Postgres + servidor em rede de host + proxy Traefik)
 docker stack deploy -c astracalls-stack.yml astracalls
