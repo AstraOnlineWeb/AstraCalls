@@ -48,6 +48,15 @@ type ChatwootConfig struct {
 	// autor). Channels: idem para CANAIS (newsletters).
 	Groups   bool `json:"groups"`
 	Channels bool `json:"channels"`
+	// SignMsg: quando true, toda mensagem de SAÍDA (agente → cliente) sai no WhatsApp
+	// com o nome do atendente prefixado (*Nome*\n...). O nome NÃO fica salvo na conversa
+	// do Chatwoot, é adicionado só na hora de enviar. Paridade com o signMsg da Evolution.
+	SignMsg bool `json:"sign_msg"`
+	// AlwaysOnline: mantém a presença da conta sempre como "online" (envia presença
+	// disponível a cada (re)conexão). ReadMessages: confirma leitura automática das
+	// mensagens recebidas (envia recibo de leitura ao receber).
+	AlwaysOnline bool `json:"always_online"`
+	ReadMessages bool `json:"read_messages"`
 }
 
 func (c ChatwootConfig) valid() bool {
@@ -522,6 +531,21 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	attachments := asList(body["attachments"])
 	ctx := r.Context()
 
+	// assinatura do atendente: prefixa *Nome*\n no texto e na legenda de mídia.
+	// O nome vem do sender do webhook (o agente). Ignora quando não há nome
+	// (ex.: automações/bot) pra não sair "undefined".
+	sign := func(text string) string { return text }
+	if sess.getChatwoot().SignMsg {
+		if name := chatwootSenderName(body); name != "" {
+			sign = func(text string) string {
+				if strings.TrimSpace(text) == "" {
+					return text
+				}
+				return "*" + name + "*\n" + text
+			}
+		}
+	}
+
 	// se o agente respondeu uma mensagem, monta o contexto de citação
 	quote := sess.quoteContext(ctx, body)
 
@@ -529,13 +553,14 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// texto (só envia separado se não houver exatamente 1 anexo)
 	if strings.TrimSpace(content) != "" && len(attachments) != 1 {
+		signed := sign(content)
 		var msg *waE2E.Message
 		if quote != nil {
 			msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text: proto.String(content), ContextInfo: quote,
+				Text: proto.String(signed), ContextInfo: quote,
 			}}
 		} else {
-			msg = &waE2E.Message{Conversation: proto.String(content)}
+			msg = &waE2E.Message{Conversation: proto.String(signed)}
 		}
 		if id, e := sess.sendAndMark(ctx, jid, msg); e == nil {
 			waMsgID = id
@@ -550,7 +575,7 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		caption := ""
 		if len(attachments) == 1 {
-			caption = content
+			caption = sign(content)
 		}
 		id, ferr := sess.sendChatwootFile(ctx, jid, asStr(a["file_type"]), url, caption, quote)
 		if ferr != nil {
@@ -566,6 +591,23 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// chatwootSenderName extrai o nome do atendente do webhook de saída. Retorna ""
+// quando não há remetente humano (automações/bot sem nome), pra não assinar.
+func chatwootSenderName(body map[string]any) string {
+	sender := asMap(body["sender"])
+	if sender == nil {
+		return ""
+	}
+	// só assina quando o remetente é um usuário/agente (não contato/bot sem nome)
+	if t := asStr(sender["type"]); t != "" && t != "user" && t != "agent" {
+		return ""
+	}
+	if n := strings.TrimSpace(asStr(sender["name"])); n != "" {
+		return n
+	}
+	return strings.TrimSpace(asStr(sender["available_name"]))
 }
 
 // quoteContext monta o ContextInfo de citação a partir do webhook do Chatwoot.

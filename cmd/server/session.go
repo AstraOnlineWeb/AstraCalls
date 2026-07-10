@@ -276,6 +276,24 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 	s.log.Info("inbound call rejected: session at capacity", "call_id", info.CallID)
 }
 
+// maybeMarkRead confirma leitura automática das mensagens recebidas quando
+// read_messages está ligado na config do Chatwoot (paridade com a Evolution).
+func (s *Session) maybeMarkRead(ctx context.Context, evt *events.Message) {
+	if !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
+		return
+	}
+	// não faz sentido/formato p/ newsletters e status/broadcast
+	if evt.Info.Chat.Server == types.NewsletterServer || evt.Info.Chat.Server == types.BroadcastServer {
+		return
+	}
+	go func() {
+		err := s.client.MarkRead(ctx, []types.MessageID{evt.Info.ID}, evt.Info.Timestamp, evt.Info.Chat, evt.Info.Sender)
+		if err != nil {
+			s.log.Debug("read_messages: mark read failed", "err", err)
+		}
+	}()
+}
+
 func (s *Session) handleEvent(rawEvt any) {
 	ctx := context.Background()
 	switch evt := rawEvt.(type) {
@@ -284,6 +302,10 @@ func (s *Session) handleEvent(rawEvt any) {
 			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
 		}
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
+		// always_online: mantém a presença sempre disponível (reenvia a cada reconexão).
+		if s.getChatwoot().AlwaysOnline {
+			go func() { _ = s.client.SendPresence(ctx, types.PresenceAvailable) }()
+		}
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	case *events.Message:
@@ -298,6 +320,7 @@ func (s *Session) handleEvent(rawEvt any) {
 			s.storeMessageEvent(evt)
 			s.dispatchWebhook("message", summarizeMessage(evt))
 			go s.chatwootPushIncoming(evt)
+			s.maybeMarkRead(ctx, evt)
 		}
 	case *events.UndecryptableMessage:
 		// visualização única chega como placeholder "unavailable" — o WhatsApp não
