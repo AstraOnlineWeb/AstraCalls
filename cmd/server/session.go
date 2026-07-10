@@ -322,6 +322,9 @@ func (s *Session) handleEvent(rawEvt any) {
 			go s.chatwootPushIncoming(evt)
 			s.maybeMarkRead(ctx, evt)
 		}
+	case *events.GroupInfo:
+		// entrou/saiu/promoveu no grupo -> webhook + nota no Chatwoot
+		go s.handleGroupSystemEvent(evt)
 	case *events.UndecryptableMessage:
 		// visualização única chega como placeholder "unavailable" — o WhatsApp não
 		// libera o conteúdo p/ dispositivos vinculados. Avisa o atendente/webhook.

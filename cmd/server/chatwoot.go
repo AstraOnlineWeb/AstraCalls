@@ -116,12 +116,17 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 		return
 	}
 	if evt.Info.IsFromMe {
-		// espelha as mensagens 1:1 que a conta enviou PELO APARELHO (como nota
-		// privada). Ignora as que saíram pela nossa API / pelo agente do Chatwoot.
+		// espelha as mensagens que a conta enviou PELO APARELHO (como nota privada).
+		// Ignora as que saíram pela nossa API / pelo agente do Chatwoot.
+		if s.isSelfSent(evt.Info.ID) {
+			return
+		}
 		switch evt.Info.Chat.Server {
 		case types.DefaultUserServer, types.HiddenUserServer:
-			if !s.isSelfSent(evt.Info.ID) {
-				s.chatwootMirrorOwn(cfg, evt)
+			s.chatwootMirrorOwn(cfg, evt)
+		case types.GroupServer:
+			if cfg.Groups {
+				s.chatwootMirrorOwnGroup(cfg, evt)
 			}
 		}
 		return
@@ -211,7 +216,36 @@ func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
 // prefixada com o nome/telefone de quem escreveu, já que a inbox tem 1 contato
 // por conversa.
 func (s *Session) chatwootPushGroup(cfg ChatwootConfig, evt *events.Message) {
-	group := evt.Info.Chat
+	convID, err := s.groupConversation(cfg, evt.Info.Chat)
+	if err != nil {
+		s.log.Error("chatwoot: ensure group conversation failed", "err", err)
+		return
+	}
+	author := evt.Info.PushName
+	if author == "" {
+		author = s.realPhone(evt.Info.Sender)
+	}
+	s.chatwootDeliver(cfg, convID, evt, "*"+author+"*:\n", false)
+}
+
+// chatwootMirrorOwnGroup espelha, como NOTA PRIVADA na conversa do grupo, uma
+// mensagem que a conta enviou PELO APARELHO dentro de um grupo — para o agente ver
+// no Chatwoot o que o dono da conta falou por fora. Não reenvia nada ao grupo.
+func (s *Session) chatwootMirrorOwnGroup(cfg ChatwootConfig, evt *events.Message) {
+	convID, err := s.groupConversation(cfg, evt.Info.Chat)
+	if err != nil {
+		s.log.Error("chatwoot: ensure group conversation (espelho) failed", "err", err)
+		return
+	}
+	author := s.client.Store.PushName
+	if author == "" {
+		author = "Você"
+	}
+	s.chatwootDeliver(cfg, convID, evt, "*"+author+" (você)*:\n", true)
+}
+
+// groupConversation acha/cria o contato "grupo" (JID @g.us) e sua conversa.
+func (s *Session) groupConversation(cfg ChatwootConfig, group types.JID) (int, error) {
 	chatID := group.String() // 1203...@g.us
 	name := chatID
 	if gi, err := s.client.GetGroupInfo(context.Background(), group); err == nil && gi.Name != "" {
@@ -223,19 +257,9 @@ func (s *Session) chatwootPushGroup(cfg ChatwootConfig, evt *events.Message) {
 	}
 	contactID, sourceID, err := cfg.ensureContact(chatID, "", name, avatar)
 	if err != nil {
-		s.log.Error("chatwoot: ensure group contact failed", "err", err)
-		return
+		return 0, err
 	}
-	convID, err := cfg.ensureConversation(contactID, sourceID)
-	if err != nil {
-		s.log.Error("chatwoot: ensure group conversation failed", "err", err)
-		return
-	}
-	author := evt.Info.PushName
-	if author == "" {
-		author = s.realPhone(evt.Info.Sender)
-	}
-	s.chatwootDeliver(cfg, convID, evt, "*"+author+"*:\n", false)
+	return cfg.ensureConversation(contactID, sourceID)
 }
 
 // chatwootPushChannel abre/atualiza uma conversa no Chatwoot para um CANAL

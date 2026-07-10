@@ -646,8 +646,9 @@ paths:
       summary: Define a URL de webhook (recebe os eventos da sessão)
       description: |
         Eventos enviados (POST JSON) no formato `{ session, event, timestamp, data }`.
-        `event` pode ser `message` (mensagem recebida, com `data.text`, `data.type`, `data.raw`...)
-        ou `receipt` (confirmações de entrega/leitura).
+        `event` pode ser `message` (mensagem recebida, com `data.text`, `data.type`, `data.raw`...),
+        `receipt` (confirmações de entrega/leitura) ou `group_participants` (entrada/saída/promoção
+        em grupo, com `data.group`, `data.actor` e as listas `data.joined`/`data.left`/`data.promoted`/`data.demoted`).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
