@@ -16,8 +16,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 RUN git clone --depth 1 https://github.com/edgardmessias/opus_mlow.git
 WORKDIR /build/opus_mlow
+# PORTABILIDADE: o fork força "-mavx" nos fontes do MLow (smpl_*), sem detecção de
+# CPU em runtime. Como o build roda num servidor com AVX, a lib sai com AVX embutido
+# e QUEBRA (SIGILL/SIGSEGV) em CPUs sem AVX (VPS/CPUs antigas). Os smpl_*.c são C puro
+# (zero intrínsecos), então baixamos p/ baseline SSE2 -> roda em qualquer x86-64.
+RUN sed -i 's/COMPILE_FLAGS -mavx/COMPILE_FLAGS -msse2/' CMakeLists.txt
 RUN cmake -B build -G Ninja -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release \
         -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_BUILD_TESTING=OFF \
+        -DOPUS_X86_PRESUME_AVX=OFF -DOPUS_X86_PRESUME_AVX2=OFF \
     && cmake --build build \
     && cp "$(readlink -f build/libopus.so)" /opt/libopus_mlow.so \
     && patchelf --set-soname libopus_mlow.so /opt/libopus_mlow.so

@@ -2,6 +2,25 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v0.0.4 — 2026-07-10
+
+### 🐛 Correções
+
+- **Codec de áudio portável (corrige crash em CPUs sem AVX):** o codec MLow
+  (`libopus_mlow.so`) era compilado com `-mavx` fixo, sem detecção de CPU em
+  tempo de execução. Em servidores cujo processador não tem **AVX** (VPS com CPU
+  restrita, processadores mais antigos), o AstraCalls **quebrava (SIGILL/SIGSEGV)**
+  ao iniciar uma chamada — a ligação não completava. Agora o codec é compilado em
+  baseline (SSE2), rodando em qualquer x86-64. Os fontes do MLow são C puro, sem
+  perda funcional.
+
+### ✨ Novidades
+
+- **`groups_skip_incoming`** na config do Chatwoot: com `groups: true`, não reflete
+  as mensagens dos outros membros do grupo (quando outra fonte já as traz pro mesmo
+  inbox), postando só as mensagens do próprio aparelho e os avisos de entrada/saída —
+  evita duplicação.
+
 ## v0.0.3 — 2026-07-10
 
 Melhorias na integração com o Chatwoot: paridade com a Evolution e cobertura de
