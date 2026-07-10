@@ -48,6 +48,12 @@ type ChatwootConfig struct {
 	// autor). Channels: idem para CANAIS (newsletters).
 	Groups   bool `json:"groups"`
 	Channels bool `json:"channels"`
+	// GroupsSkipIncoming: quando true (com Groups ligado), o AstraCalls NÃO reflete as
+	// mensagens dos OUTROS membros do grupo — só posta as peças que costumam faltar:
+	// as mensagens que a conta manda pelo aparelho (nota privada) e os avisos de
+	// entrada/saída/admin. Útil quando outra fonte já traz as mensagens do grupo pro
+	// mesmo inbox (evita duplicação).
+	GroupsSkipIncoming bool `json:"groups_skip_incoming"`
 	// SignMsg: quando true, toda mensagem de SAÍDA (agente → cliente) sai no WhatsApp
 	// com o nome do atendente prefixado (*Nome*\n...). O nome NÃO fica salvo na conversa
 	// do Chatwoot, é adicionado só na hora de enviar. Paridade com o signMsg da Evolution.
@@ -133,7 +139,7 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	}
 	switch evt.Info.Chat.Server {
 	case types.GroupServer:
-		if cfg.Groups {
+		if cfg.Groups && !cfg.GroupsSkipIncoming {
 			s.chatwootPushGroup(cfg, evt)
 		}
 	case types.NewsletterServer:
