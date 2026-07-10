@@ -2,6 +2,27 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v0.0.3 — 2026-07-10
+
+Melhorias na integração com o Chatwoot: paridade com a Evolution e cobertura de
+grupos. Todas as flags novas ficam na mesma config `POST /api/sessions/{sid}/chatwoot`.
+
+### ✨ Novidades
+
+**Assinatura do atendente e paridade com a Evolution**
+- `sign_msg` — prefixa `*Nome do atendente*` no texto e na legenda de mídia das
+  mensagens de saída (o nome vem do sender do webhook; não fica salvo na conversa)
+- `always_online` — mantém a presença da conta sempre como online
+- `read_messages` — confirma leitura automática das mensagens recebidas
+
+**Grupos no Chatwoot**
+- Mensagens que a conta envia **pelo aparelho** dentro de um grupo agora refletem
+  no Chatwoot como nota privada (antes só conversas 1:1 espelhavam)
+- Eventos de participantes de grupo (entrar, sair, virar/deixar de ser admin) —
+  os mesmos avisos que o WhatsApp mostra na janela do grupo:
+  - Novo evento de webhook `group_participants` (`group`, `actor`, `joined`, `left`, `promoted`, `demoted`)
+  - Nota informativa na conversa do grupo (➕ entrou / ➖ saiu / ⭐ admin)
+
 ## v0.0.2 — 2026-07-08
 
 Primeira versão estável desde a v0.0.1. Destaques: API completa estilo WAHA,
