@@ -210,6 +210,32 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+func (s *server) handleSendSticker(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b struct {
+		To, Base64, URL, Mimetype string
+		Animated                  bool
+	}
+	_ = json.NewDecoder(r.Body).Decode(&b)
+	// Figurinha precisa ser WebP pronto (512x512). Não convertemos aqui.
+	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaImage)
+	if !ok {
+		return
+	}
+	mime := b.Mimetype
+	if mime == "" {
+		mime = "image/webp"
+	}
+	s.send(sess, w, r, b.To, &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
+		Mimetype: proto.String(mime), IsAnimated: proto.Bool(b.Animated),
+		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+	}})
+}
+
 // ---- Handlers de configuração do webhook ----
 
 func (s *server) handleSetWebhook(w http.ResponseWriter, r *http.Request) {
