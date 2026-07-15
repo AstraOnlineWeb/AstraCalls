@@ -6,6 +6,8 @@ export type ChatwootConfig = {
   account_token?: string;
   inbox_id: number;
   inbox_identifier: string;
+  /** Reflete no Chatwoot (como nota privada) o que for enviado pela API. */
+  mirror_api?: boolean;
 };
 
 export const getChatwoot = (sid: string) =>

@@ -63,6 +63,11 @@ type ChatwootConfig struct {
 	// mensagens recebidas (envia recibo de leitura ao receber).
 	AlwaysOnline bool `json:"always_online"`
 	ReadMessages bool `json:"read_messages"`
+	// MirrorAPI: quando true, as mensagens enviadas pela API do AstraCalls (ex.: n8n)
+	// também aparecem no Chatwoot como NOTA PRIVADA — mesmo tratamento que as enviadas
+	// pelo aparelho. Assim o atendente vê o que foi disparado por fora. As mensagens
+	// do agente do Chatwoot nunca entram aqui (já estão na conversa).
+	MirrorAPI bool `json:"mirror_api"`
 }
 
 func (c ChatwootConfig) valid() bool {
@@ -116,15 +121,26 @@ func (s *Session) realPhone(jid types.JID) string {
 	return jid.User
 }
 
+// shouldMirrorOwn decide se uma mensagem from_me deve ser espelhada no Chatwoot
+// como nota privada. Espelha o que a conta enviou por fora do Chatwoot: sempre o
+// que sai do APARELHO, e o que sai da nossa API quando mirror_api está ligado. O
+// que o agente mandou pelo próprio Chatwoot nunca é espelhado — já está na
+// conversa, espelhar duplicaria.
+func (s *Session) shouldMirrorOwn(msgID string, cfg ChatwootConfig) bool {
+	origin, sent := s.selfSentOrigin(msgID)
+	if !sent {
+		return true // veio do aparelho
+	}
+	return origin == selfSentAPI && cfg.MirrorAPI
+}
+
 func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	cfg := s.getChatwoot()
 	if !cfg.valid() {
 		return
 	}
 	if evt.Info.IsFromMe {
-		// espelha as mensagens que a conta enviou PELO APARELHO (como nota privada).
-		// Ignora as que saíram pela nossa API / pelo agente do Chatwoot.
-		if s.isSelfSent(evt.Info.ID) {
+		if !s.shouldMirrorOwn(evt.Info.ID, cfg) {
 			return
 		}
 		switch evt.Info.Chat.Server {
@@ -941,7 +957,9 @@ func (s *server) handleSetChatwoot(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	var cfg ChatwootConfig
+	// parte da config atual: o que não vier no payload é preservado (senão salvar
+	// pelo painel zeraria flags como groups/sign_msg, que ele não envia).
+	cfg := sess.getChatwoot()
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return

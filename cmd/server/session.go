@@ -46,31 +46,52 @@ type Session struct {
 	recording bool   // grava as chamadas desta sessão (opt-in)
 	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)
 
-	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou (via API ou
-	// pelo agente do Chatwoot), para não espelhá-las como nota privada quando
-	// voltarem como evento from_me. msgID -> unixMilli.
+	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou, com a origem
+	// (API ou agente do Chatwoot), para decidir o que fazer quando voltarem como
+	// evento from_me. msgID -> selfSent.
 	sentIDs sync.Map
 }
 
+// Origem de uma mensagem enviada por nós. O agente do Chatwoot nunca é espelhado
+// (a mensagem já está na conversa); a API é espelhada quando o toggle mirror_api
+// da sessão está ligado.
+const (
+	selfSentAPI      = "api"
+	selfSentChatwoot = "chatwoot"
+)
+
+type selfSent struct {
+	origin string
+	ts     int64
+}
+
 // markSelfSent registra uma mensagem enviada por nós (com prune do que é antigo).
-func (s *Session) markSelfSent(id string) {
+func (s *Session) markSelfSent(id, origin string) {
 	if id == "" {
 		return
 	}
 	now := time.Now().UnixMilli()
-	s.sentIDs.Store(id, now)
+	s.sentIDs.Store(id, selfSent{origin: origin, ts: now})
 	s.sentIDs.Range(func(k, v any) bool {
-		if ts, ok := v.(int64); ok && now-ts > 10*60*1000 {
+		if e, ok := v.(selfSent); ok && now-e.ts > 10*60*1000 {
 			s.sentIDs.Delete(k)
 		}
 		return true
 	})
 }
 
-// isSelfSent diz se a mensagem foi enviada por nós (API/agente), não pelo aparelho.
-func (s *Session) isSelfSent(id string) bool {
-	_, ok := s.sentIDs.Load(id)
-	return ok
+// selfSentOrigin diz se a mensagem foi enviada por nós e por qual caminho
+// (selfSentAPI/selfSentChatwoot). ok=false => veio do aparelho.
+func (s *Session) selfSentOrigin(id string) (origin string, ok bool) {
+	v, found := s.sentIDs.Load(id)
+	if !found {
+		return "", false
+	}
+	e, cast := v.(selfSent)
+	if !cast {
+		return "", false
+	}
+	return e.origin, true
 }
 
 // sendAndMark envia uma mensagem, a registra como "enviada por nós" e devolve o
@@ -80,7 +101,7 @@ func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Mes
 	if err != nil {
 		return "", err
 	}
-	s.markSelfSent(resp.ID)
+	s.markSelfSent(resp.ID, selfSentChatwoot)
 	return resp.ID, nil
 }
 

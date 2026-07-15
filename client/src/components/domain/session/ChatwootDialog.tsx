@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { getChatwoot, setChatwoot, deleteChatwoot } from "@/services/chatwoot";
 
 const empty = { url: "", account_id: "", account_token: "", inbox_id: "", inbox_identifier: "" };
@@ -23,6 +24,7 @@ export const ChatwootDialog = ({ sid }: { sid: string }) => {
   const [enabled, setEnabled] = useState(false);
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({ ...empty });
+  const [mirrorApi, setMirrorApi] = useState(false);
 
   const webhookUrl = `${window.location.origin}/api/sessions/${sid}/chatwoot/webhook`;
 
@@ -32,6 +34,7 @@ export const ChatwootDialog = ({ sid }: { sid: string }) => {
       .then((r) => {
         setEnabled(r.enabled);
         const c = r.chatwoot || ({} as typeof r.chatwoot);
+        setMirrorApi(!!c.mirror_api);
         setForm({
           url: c.url || "",
           account_id: c.account_id ? String(c.account_id) : "",
@@ -55,6 +58,7 @@ export const ChatwootDialog = ({ sid }: { sid: string }) => {
         account_token: form.account_token.trim(),
         inbox_id: Number(form.inbox_id),
         inbox_identifier: form.inbox_identifier.trim(),
+        mirror_api: mirrorApi,
       });
       toast.success("Chatwoot conectado a esta sessão");
       setEnabled(true);
@@ -140,6 +144,21 @@ export const ChatwootDialog = ({ sid }: { sid: string }) => {
               </Button>
             </div>
           </div>
+
+          <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border p-3">
+            <span className="space-y-0.5">
+              <span className="block text-sm font-medium">Refletir mensagens enviadas pela API</span>
+              <span className="block text-xs text-muted-foreground">
+                O que for disparado pela API (ex.: n8n) aparece na conversa como nota privada, igual ao
+                que é enviado pelo aparelho. Não reenvia nada ao contato.
+              </span>
+            </span>
+            <Switch
+              checked={mirrorApi}
+              onCheckedChange={setMirrorApi}
+              aria-label="Refletir mensagens enviadas pela API"
+            />
+          </label>
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between">

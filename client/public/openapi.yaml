@@ -6,8 +6,12 @@ info:
     API HTTP do **AstraCalls** — chamadas de voz do WhatsApp pelo navegador.
 
     ## Autenticação
-    Não há login/senha. Todas as rotas aceitam o header **`X-Client-Id`** (qualquer
-    identificador estável), usado para marcar o "dono" das chamadas e filtrar eventos.
+    Não há login/senha. As rotas `/api/*` são protegidas por API key: envie o header
+    **`X-API-Key`** com o valor definido em `WACALLS_API_KEY` (ou `?apiKey=...` na query).
+    Se `WACALLS_API_KEY` estiver vazia, a autenticação fica desligada.
+
+    O header **`X-Client-Id`** é opcional e **não autentica nada** — é só um identificador
+    estável usado para marcar o "dono" das chamadas e filtrar eventos.
 
     > ⚠️ A API inicia/controla as chamadas (sinalização), mas o **áudio** exige um cliente
     > WebRTC (navegador) com captura de microfone — não é possível só com chamadas HTTP.
@@ -52,7 +56,9 @@ components:
       in: header
       required: false
       schema: { type: string, example: meuapp }
-      description: Identificador do cliente (dono da chamada / filtro de eventos).
+      description: >-
+        Opcional. Identificador do cliente (dono da chamada / filtro de eventos).
+        NÃO é autenticação — para autenticar use o header X-API-Key.
     Sid:
       name: sid
       in: path
@@ -703,6 +709,9 @@ paths:
         `inbox_id`, `inbox_identifier`, o `account_id` e um `account_token` (Access Token
         do perfil/agente). Depois aponte o **webhook da inbox** para
         `POST /api/sessions/{sid}/chatwoot/webhook` para as respostas dos agentes saírem no WhatsApp.
+
+        Os campos ausentes no payload **mantêm o valor atual** (não são zerados), então dá para
+        alterar só uma flag sem reenviar a configuração inteira. Para limpar tudo, use o `DELETE`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -725,6 +734,7 @@ paths:
                 sign_msg: { type: boolean, default: false, description: "Assinatura do atendente: prefixa *Nome*\\n no texto e na legenda de mídia das mensagens de SAÍDA (o nome vem do sender do webhook; não fica salvo na conversa do Chatwoot)" }
                 always_online: { type: boolean, default: false, description: "Mantém a presença da conta sempre como online (reenvia a cada reconexão)" }
                 read_messages: { type: boolean, default: false, description: "Confirma leitura automática das mensagens recebidas (envia recibo de leitura)" }
+                mirror_api: { type: boolean, default: false, description: "Reflete no Chatwoot, como NOTA PRIVADA, as mensagens enviadas por esta API (ex.: n8n) — mesmo tratamento das enviadas pelo aparelho, para o atendente ver o que foi disparado por fora. Não reenvia nada ao contato. As mensagens do agente do Chatwoot nunca são refletidas (já estão na conversa)" }
       responses:
         "200": { description: Conectado }
         "400": { description: Campos obrigatórios faltando }
