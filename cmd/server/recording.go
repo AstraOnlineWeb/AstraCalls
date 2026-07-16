@@ -76,7 +76,7 @@ func (s *Session) chatwootUploadRecording(cfg ChatwootConfig, peerJID, path stri
 		return
 	}
 	caption := "🎙️ Gravação da chamada · " + fmtDuration(seconds)
-	if err := cfg.postAttachment(convID, caption, filepath.Base(path), "audio/mpeg", data, true, "", ""); err != nil {
+	if err := cfg.postAttachment(convID, caption, filepath.Base(path), "audio/mpeg", data, cwPrivate, "", "", 0); err != nil {
 		s.log.Error("recording: upload no chatwoot falhou", "err", err)
 	}
 }

@@ -36,7 +36,7 @@ func (s *Session) handleUnavailableViewOnce(evt *events.UndecryptableMessage) {
 		return
 	}
 	notice := prefix + "👁️ _Visualização única_\n_O cliente enviou uma mídia de visualização única. O WhatsApp não libera esse conteúdo para dispositivos conectados (API), então não é possível exibi-la aqui._"
-	if err := cfg.postText(convID, notice, false, "", ""); err != nil {
+	if err := cfg.postText(convID, notice, cwIncoming, "", "", 0); err != nil {
 		s.log.Error("chatwoot: aviso de view-once falhou", "err", err)
 	}
 }

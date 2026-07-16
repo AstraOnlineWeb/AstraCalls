@@ -50,6 +50,14 @@ type Session struct {
 	// (API ou agente do Chatwoot), para decidir o que fazer quando voltarem como
 	// evento from_me. msgID -> selfSent.
 	sentIDs sync.Map
+
+	// importedMsgIDs deduplica a importação de histórico entre os chunks do
+	// HistorySync (e reconexões enquanto o processo vive). msgID -> struct{}.
+	importedMsgIDs sync.Map
+	// importMu serializa a importação de histórico: os chunks do HistorySync
+	// chegam em goroutines separadas e criariam contatos/conversas duplicados no
+	// Chatwoot se rodassem ensureContact/ensureConversation concorrentemente.
+	importMu sync.Mutex
 }
 
 // Origem de uma mensagem enviada por nós. O agente do Chatwoot nunca é espelhado
@@ -350,6 +358,9 @@ func (s *Session) handleEvent(rawEvt any) {
 			go s.chatwootPushIncoming(evt)
 			s.maybeMarkRead(ctx, evt)
 		}
+	case *events.HistorySync:
+		// conversas antigas que o WhatsApp envia ao parear -> importa pro Chatwoot
+		go s.importHistorySync(evt.Data)
 	case *events.GroupInfo:
 		// entrou/saiu/promoveu no grupo -> webhook + nota no Chatwoot
 		go s.handleGroupSystemEvent(evt)

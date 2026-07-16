@@ -68,7 +68,21 @@ type ChatwootConfig struct {
 	// pelo aparelho. Assim o atendente vê o que foi disparado por fora. As mensagens
 	// do agente do Chatwoot nunca entram aqui (já estão na conversa).
 	MirrorAPI bool `json:"mirror_api"`
+	// ImportHistory: ao (re)conectar a conta, importa para o Chatwoot o histórico de
+	// conversas 1:1 que o WhatsApp envia (HistorySync). As mensagens entram como NOTA
+	// PRIVADA, com a data original, reconstruindo a timeline sem reenviar nada ao
+	// contato. Só há HistorySync ao PAREAR o dispositivo — ligue antes de conectar.
+	// ImportHistoryDays limita a janela (0 = importHistoryDefaultDays).
+	ImportHistory     bool `json:"import_history"`
+	ImportHistoryDays int  `json:"import_history_days"`
 }
+
+// Limites da importação de histórico (evitam afogar a inbox do Chatwoot).
+const (
+	importHistoryDefaultDays = 30
+	importHistoryMaxDays     = 365
+	importHistoryMaxPerChat  = 500
+)
 
 func (c ChatwootConfig) valid() bool {
 	return c.URL != "" && c.AccountID != 0 && c.AccountToken != "" && c.InboxID != 0
@@ -334,7 +348,7 @@ func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Me
 		data, derr := s.client.Download(context.Background(), dl)
 		if derr == nil && len(data) > 0 {
 			fname, mime := mediaMeta(evt.Message)
-			if uerr := cfg.postAttachment(convID, prefix+text, fname, mime, data, private, sourceID, inReplyTo); uerr != nil {
+			if uerr := cfg.postAttachment(convID, prefix+text, fname, mime, data, dirFromPrivate(private), sourceID, inReplyTo, 0); uerr != nil {
 				s.log.Error("chatwoot: post attachment failed", "err", uerr)
 			}
 			return
@@ -343,7 +357,7 @@ func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Me
 	if strings.TrimSpace(text) == "" {
 		return
 	}
-	if err := cfg.postText(convID, prefix+text, private, sourceID, inReplyTo); err != nil {
+	if err := cfg.postText(convID, prefix+text, dirFromPrivate(private), sourceID, inReplyTo, 0); err != nil {
 		s.log.Error("chatwoot: post message failed", "err", err)
 	}
 }
@@ -472,18 +486,62 @@ func (c ChatwootConfig) ensureConversation(contactID int, sourceID string) (int,
 	return asInt(res["id"]), nil
 }
 
-func (c ChatwootConfig) postText(convID int, content string, private bool, sourceID, inReplyTo string) error {
-	body := map[string]any{"content": content, "message_type": "incoming", "content_type": "text"}
+// contentAttrs monta o content_attributes do Chatwoot a partir dos campos
+// opcionais. external_created_at guarda a data original da mensagem (importação);
+// o Chatwoot não a usa para exibir/ordenar — a timeline vem da ORDEM de inserção —
+// mas fica como metadado. Devolve nil quando não há nada a anexar.
+func contentAttrs(inReplyTo string, createdAt int64) map[string]any {
+	ca := map[string]any{}
+	if inReplyTo != "" {
+		ca["in_reply_to_external_id"] = inReplyTo
+	}
+	if createdAt > 0 {
+		ca["external_created_at"] = createdAt
+	}
+	if len(ca) == 0 {
+		return nil
+	}
+	return ca
+}
+
+// cwDir é a direção/tipo de uma mensagem postada no Chatwoot.
+type cwDir int
+
+const (
+	cwIncoming cwDir = iota // recebida (bolha à esquerda). Nunca reenvia.
+	cwOutgoing              // enviada (bolha à direita). Reenvio impedido pelo source_id.
+	cwPrivate               // nota privada (interna, à direita). Nunca reenvia.
+)
+
+// dirFromPrivate converte o antigo bool `private` no cwDir equivalente.
+func dirFromPrivate(private bool) cwDir {
 	if private {
-		// nota privada: registro interno p/ o agente, não reenvia ao contato
+		return cwPrivate
+	}
+	return cwIncoming
+}
+
+// applyDir grava message_type/private no body JSON conforme a direção.
+func (d cwDir) applyDir(body map[string]any) {
+	switch d {
+	case cwOutgoing:
+		body["message_type"] = "outgoing"
+	case cwPrivate:
 		body["message_type"] = "outgoing"
 		body["private"] = true
+	default:
+		body["message_type"] = "incoming"
 	}
+}
+
+func (c ChatwootConfig) postText(convID int, content string, dir cwDir, sourceID, inReplyTo string, createdAt int64) error {
+	body := map[string]any{"content": content, "content_type": "text"}
+	dir.applyDir(body)
 	if sourceID != "" {
 		body["source_id"] = sourceID // = ID da msg do WhatsApp (elo p/ resposta)
 	}
-	if inReplyTo != "" {
-		body["content_attributes"] = map[string]any{"in_reply_to_external_id": inReplyTo}
+	if ca := contentAttrs(inReplyTo, createdAt); ca != nil {
+		body["content_attributes"] = ca
 	}
 	_, code, e := c.req(http.MethodPost, fmt.Sprintf("/conversations/%d/messages", convID), body)
 	if e != nil {
@@ -496,13 +554,16 @@ func (c ChatwootConfig) postText(convID int, content string, private bool, sourc
 }
 
 // postAttachment sobe a mídia como anexo (multipart) numa mensagem incoming.
-func (c ChatwootConfig) postAttachment(convID int, content, filename, mime string, data []byte, private bool, sourceID, inReplyTo string) error {
+func (c ChatwootConfig) postAttachment(convID int, content, filename, mime string, data []byte, dir cwDir, sourceID, inReplyTo string, createdAt int64) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	if private {
+	switch dir {
+	case cwOutgoing:
+		_ = mw.WriteField("message_type", "outgoing")
+	case cwPrivate:
 		_ = mw.WriteField("message_type", "outgoing")
 		_ = mw.WriteField("private", "true")
-	} else {
+	default:
 		_ = mw.WriteField("message_type", "incoming")
 	}
 	if content != "" {
@@ -511,9 +572,9 @@ func (c ChatwootConfig) postAttachment(convID int, content, filename, mime strin
 	if sourceID != "" {
 		_ = mw.WriteField("source_id", sourceID)
 	}
-	if inReplyTo != "" {
-		ca, _ := json.Marshal(map[string]string{"in_reply_to_external_id": inReplyTo})
-		_ = mw.WriteField("content_attributes", string(ca))
+	if ca := contentAttrs(inReplyTo, createdAt); ca != nil {
+		j, _ := json.Marshal(ca)
+		_ = mw.WriteField("content_attributes", string(j))
 	}
 	h := make(map[string][]string)
 	h["Content-Disposition"] = []string{fmt.Sprintf(`form-data; name="attachments[]"; filename=%q`, filename)}
@@ -542,6 +603,24 @@ func (c ChatwootConfig) postAttachment(convID int, content, filename, mime strin
 
 // ---------- Chatwoot -> WhatsApp (saída via webhook) ----------
 
+// shouldRelayWebhook decide se um evento de webhook do Chatwoot deve ser
+// reenviado ao WhatsApp. Reenvia só mensagens de SAÍDA que o agente escreveu na
+// conversa: ignora eventos que não são de criação de mensagem, mensagens de
+// entrada, notas privadas, e — crucial — mensagens com source_id, que já existem
+// no WhatsApp (echo do aparelho ou histórico importado) e duplicariam se reenviadas.
+func shouldRelayWebhook(body map[string]any) bool {
+	if asStr(body["event"]) != "message_created" || asStr(body["message_type"]) != "outgoing" {
+		return false
+	}
+	if b, ok := body["private"].(bool); ok && b {
+		return false
+	}
+	if asStr(body["source_id"]) != "" {
+		return false
+	}
+	return true
+}
+
 func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {
@@ -552,12 +631,8 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
-	// só processa mensagens de saída do agente
-	if asStr(body["event"]) != "message_created" || asStr(body["message_type"]) != "outgoing" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if b, ok := body["private"].(bool); ok && b {
+	// só reenvia ao WhatsApp o que o agente realmente escreveu de novo no Chatwoot
+	if !shouldRelayWebhook(body) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}

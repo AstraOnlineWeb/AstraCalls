@@ -8,6 +8,10 @@ export type ChatwootConfig = {
   inbox_identifier: string;
   /** Reflete no Chatwoot (como nota privada) o que for enviado pela API. */
   mirror_api?: boolean;
+  /** Importa o histórico de conversas ao conectar a conta (HistorySync). */
+  import_history?: boolean;
+  /** Janela do histórico a importar, em dias (0 = padrão). */
+  import_history_days?: number;
 };
 
 export const getChatwoot = (sid: string) =>

@@ -33,7 +33,7 @@ func (s *Session) handleGroupSystemEvent(evt *events.GroupInfo) {
 		s.log.Error("chatwoot: group system event conversation failed", "err", err)
 		return
 	}
-	if err := cfg.postText(convID, strings.Join(lines, "\n"), true, "", ""); err != nil {
+	if err := cfg.postText(convID, strings.Join(lines, "\n"), cwPrivate, "", "", 0); err != nil {
 		s.log.Error("chatwoot: post group system note failed", "err", err)
 	}
 }

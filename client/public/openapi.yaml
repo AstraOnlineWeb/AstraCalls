@@ -735,6 +735,8 @@ paths:
                 always_online: { type: boolean, default: false, description: "Mantém a presença da conta sempre como online (reenvia a cada reconexão)" }
                 read_messages: { type: boolean, default: false, description: "Confirma leitura automática das mensagens recebidas (envia recibo de leitura)" }
                 mirror_api: { type: boolean, default: false, description: "Reflete no Chatwoot, como NOTA PRIVADA, as mensagens enviadas por esta API (ex.: n8n) — mesmo tratamento das enviadas pelo aparelho, para o atendente ver o que foi disparado por fora. Não reenvia nada ao contato. As mensagens do agente do Chatwoot nunca são refletidas (já estão na conversa)" }
+                import_history: { type: boolean, default: false, description: "Ao conectar a conta, importa para o Chatwoot o histórico de conversas 1:1 que o WhatsApp envia (HistorySync), reconstruindo a timeline com a direção real (recebidas/enviadas) e a data original no texto. Não reenvia nada ao contato (as enviadas levam source_id, que bloqueia o reenvio). ATENÇÃO: o histórico só chega ao PAREAR o dispositivo — ative antes de conectar a conta" }
+                import_history_days: { type: integer, default: 30, description: "Janela do histórico a importar, em dias (teto de 365). Também há um teto de 500 mensagens por conversa" }
       responses:
         "200": { description: Conectado }
         "400": { description: Campos obrigatórios faltando }
