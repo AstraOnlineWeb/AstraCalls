@@ -39,6 +39,7 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	broker := NewBroker()
 	mgr := newSessionManager(ctx, provider, broker, store, waLogger, log, maxCalls)
 	broker.SnapshotFn = mgr.snapshotEvents
+	broker.AccountForSession = mgr.accountIDForSession
 
 	return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
 }

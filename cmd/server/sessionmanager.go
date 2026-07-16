@@ -58,6 +58,20 @@ func (m *SessionManager) unregister(id string) {
 	m.mu.Unlock()
 }
 
+// accountIDForSession devolve o account_id do Chatwoot ligado a uma sessão, ou 0
+// se ela não tem Chatwoot configurado. Usado para escopar os eventos de chamada
+// recebida por conta (multi-tenant), para não tocar no widget de outra empresa.
+func (m *SessionManager) accountIDForSession(sessionID string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s, ok := m.sessions[sessionID]; ok {
+		if c := s.getChatwoot(); c.valid() {
+			return c.AccountID
+		}
+	}
+	return 0
+}
+
 func (m *SessionManager) sessionForChatwootAccount(accountID int) *Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

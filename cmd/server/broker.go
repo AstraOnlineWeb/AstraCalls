@@ -47,7 +47,11 @@ type SessionInfo struct {
 
 type subscriber struct {
 	clientID string
-	ch       chan []byte
+	// accountID é a conta do Chatwoot que este assinante representa. 0 = sem
+	// escopo (painel admin) e recebe TODOS os eventos; > 0 (widget de uma conta)
+	// recebe só os eventos de chamada das sessões daquela conta.
+	accountID int
+	ch        chan []byte
 }
 
 type Broker struct {
@@ -57,6 +61,9 @@ type Broker struct {
 	history []CallRecord
 
 	SnapshotFn func() []any
+	// AccountForSession resolve o account_id do Chatwoot de uma sessão (0 = nenhum).
+	// Injetado pelo server para escopar os eventos de chamada por conta.
+	AccountForSession func(sessionID string) int
 }
 
 func NewBroker() *Broker {
@@ -66,8 +73,8 @@ func NewBroker() *Broker {
 	}
 }
 
-func (b *Broker) subscribe(clientID string) *subscriber {
-	s := &subscriber{clientID: clientID, ch: make(chan []byte, 32)}
+func (b *Broker) subscribe(clientID string, accountID int) *subscriber {
+	s := &subscriber{clientID: clientID, accountID: accountID, ch: make(chan []byte, 32)}
 	b.mu.Lock()
 	b.subs[s] = struct{}{}
 	b.mu.Unlock()
@@ -89,6 +96,33 @@ func (b *Broker) broadcast(ev any) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
+}
+
+// broadcastForSession entrega um evento apenas aos assinantes com escopo compatível
+// com a conta da sessão que o originou: os sem escopo (accountID 0 = painel admin)
+// recebem sempre; um widget de conta só recebe se for a MESMA conta da sessão.
+// Corrige o vazamento em que a chamada recebida de uma empresa tocava no widget de
+// outra empresa que compartilha a mesma API key.
+func (b *Broker) broadcastForSession(sessionID string, ev any) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	acct := 0
+	if b.AccountForSession != nil {
+		acct = b.AccountForSession(sessionID)
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		if s.accountID != 0 && s.accountID != acct {
+			continue // widget de outra conta: não deve tocar/abrir
+		}
 		select {
 		case s.ch <- data:
 		default:
@@ -201,14 +235,15 @@ func (b *Broker) broadcastCallList() {
 }
 
 func (b *Broker) emitIncoming(sessionID, id, peer string, video bool) {
-	b.broadcast(map[string]any{
+	// escopado por conta: só toca no widget da empresa dona da sessão
+	b.broadcastForSession(sessionID, map[string]any{
 		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer,
 		"video": video, "offeredAt": time.Now().UnixMilli(),
 	})
 }
 
 func (b *Broker) emitIncomingClaimed(sessionID, id, owner string) {
-	b.broadcast(map[string]any{"type": "incoming-claimed", "sessionId": sessionID, "id": id, "owner": owner})
+	b.broadcastForSession(sessionID, map[string]any{"type": "incoming-claimed", "sessionId": sessionID, "id": id, "owner": owner})
 }
 
 func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
@@ -223,7 +258,7 @@ func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 	return rows
 }
 
-func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string) {
+func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string, accountID int) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -234,7 +269,7 @@ func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID strin
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	sub := b.subscribe(clientID)
+	sub := b.subscribe(clientID, accountID)
 	defer b.unsubscribe(sub)
 
 	if b.SnapshotFn != nil {

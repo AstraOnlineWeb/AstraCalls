@@ -246,11 +246,26 @@
   // aparece "Em chamada"; enquanto isso mostra "Chamando…".
   // SSE persistente: acompanha o estado da chamada ativa E detecta chamadas
   // recebidas (evento "incoming") pra abrir o widget no Chatwoot e tocar.
+  var esAccount = null; // conta do Chatwoot com que o SSE está conectado
+
+  // conta do Chatwoot atual, extraída da URL (/accounts/<N>/...). O widget SEMPRE
+  // declara sua conta no SSE para receber só as chamadas da própria empresa —
+  // sem isso o backend não teria como escopar e tocaria em todas.
+  function currentAccountId() {
+    var m = location.pathname.match(/accounts\/(\d+)/);
+    return m ? m[1] : null;
+  }
+
   function connectEvents() {
-    if (!BASE || globalES) return;
+    if (!BASE) return;
+    var acc = currentAccountId();
+    if (!acc) return; // fora de uma conta do Chatwoot: nada a escutar ainda
+    if (globalES && esAccount === acc) return; // já conectado nesta conta
+    if (globalES) { try { globalES.close(); } catch (e) {} globalES = null; }
+    esAccount = acc;
     try {
-      var url = BASE + "/api/events" + (KEY ? "?apiKey=" + encodeURIComponent(KEY) : "");
-      globalES = new EventSource(url);
+      var q = "?accountId=" + encodeURIComponent(acc) + (KEY ? "&apiKey=" + encodeURIComponent(KEY) : "");
+      globalES = new EventSource(BASE + "/api/events" + q);
       globalES.onmessage = function (ev) {
         var msg;
         try { msg = JSON.parse(ev.data); } catch (e) { return; }
@@ -514,8 +529,12 @@
     ensureButton();
   });
   obs.observe(document.body, { childList: true, subtree: true });
-  // verifica troca de conversa também por timer (a URL muda sem alterar o DOM às vezes)
-  setInterval(refreshBinding, 1000);
+  // verifica troca de conversa/conta também por timer (a URL muda sem alterar o DOM
+  // às vezes); connectEvents reconecta o SSE se o agente trocou de conta.
+  setInterval(function () {
+    refreshBinding();
+    connectEvents();
+  }, 1000);
   var tries = 0;
   (function retry() {
     refreshBinding();

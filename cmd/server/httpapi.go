@@ -228,7 +228,9 @@ func (s *server) sessionByID(w http.ResponseWriter, sid string) *Session {
 }
 
 func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	s.broker.serveSSE(w, r, clientID(r))
+	// accountId (opcional) escopa os eventos de chamada por conta do Chatwoot: o
+	// widget do Chatwoot passa a conta dele; o painel admin não passa e recebe tudo.
+	s.broker.serveSSE(w, r, clientID(r), asInt(r.URL.Query().Get("accountId")))
 }
 
 func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
