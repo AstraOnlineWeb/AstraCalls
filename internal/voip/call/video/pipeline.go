@@ -40,6 +40,11 @@ type Pipeline struct {
 	frameBuf []byte
 	lastAUAt time.Time
 
+	// Estado da extensão de vídeo do WhatsApp (perfil 0xDEBE) no envio.
+	frameNumber      uint16 // nº do frame (por access unit), começa em 1
+	transportSeq     uint16 // sequência transport (por pacote)
+	keyframeRequired bool   // o primeiro frame enviado precisa ser IDR
+
 	OnFrame func(au []byte)
 }
 
@@ -71,6 +76,10 @@ func (p *Pipeline) Setup(callID, ourDeviceJid, peerDeviceJid string, sendKM, rec
 	if p.depack == nil {
 		p.depack = &transport.H264Depacketizer{}
 	}
+	p.frameNumber = 1
+	p.transportSeq = 0
+	p.keyframeRequired = true
+	p.lastAUAt = time.Time{}
 	p.mu.Unlock()
 
 	p.relay.SetStreamSsrcs(selfSsrcs, peerSsrcs)
@@ -79,9 +88,42 @@ func (p *Pipeline) Setup(callID, ourDeviceJid, peerDeviceJid string, sendKM, rec
 	return nil
 }
 
+// videoExtProfile é o perfil da RTP header extension do vídeo do WhatsApp (0xDEBE,
+// NÃO 0xBEDE). O conteúdo (one-byte headers) traz MediaFrameInfo, InitialBandwidth,
+// ShortOffset e TransportSequence — não abs-send-time. Formato confirmado contra o
+// vídeo real do WhatsApp e o meowcaller/whatsapp-rust.
+const videoExtProfile = 0xDEBE
+
+const (
+	videoMediaFrameIDR   = 0x08 // frame é IDR/keyframe
+	videoMediaFrameDelta = 0x20 // frame delta
+)
+
+// buildWhatsappVideoExt monta o bloco da extensão 0xDEBE (padded a múltiplo de 4).
+// frameNumber só entra no PRIMEIRO pacote de cada access unit (ptr não-nil).
+func buildWhatsappVideoExt(mediaFrameInfo uint8, frameNumber *uint16, transportSeq uint16) []byte {
+	ext := make([]byte, 0, 16)
+	if frameNumber != nil {
+		ext = append(ext, 0x32, mediaFrameInfo, byte(*frameNumber>>8), byte(*frameNumber)) // id3, len3
+	} else {
+		ext = append(ext, 0x30, mediaFrameInfo) // id3, len1
+	}
+	ext = append(ext, 0x51, 0x00, 0x00)                                     // id5 InitialBandwidth=0
+	ext = append(ext, 0x61, 0x00, 0x00)                                     // id6 ShortOffset=0
+	ext = append(ext, 0x91, byte(transportSeq>>8), byte(transportSeq))      // id9 TransportSequence
+	for len(ext)%4 != 0 {
+		ext = append(ext, 0x00) // padding até fronteira de 4 bytes
+	}
+	return ext
+}
+
 func (p *Pipeline) FeedCaptured(au []byte) {
 	p.mu.Lock()
 	rtp, srtp := p.rtp, p.srtp
+	keyframeRequired := p.keyframeRequired
+	frameNum := p.frameNumber
+	tseq := p.transportSeq
+	first := p.lastAUAt.IsZero()
 	p.mu.Unlock()
 	if rtp == nil || srtp == nil || !p.relay.HasConnection() || len(au) == 0 {
 		return
@@ -90,30 +132,68 @@ func (p *Pipeline) FeedCaptured(au []byte) {
 	if len(nalus) == 0 {
 		return
 	}
+	idr := false
+	for _, n := range nalus {
+		if len(n) > 0 && n[0]&0x1f == 5 { // NAL tipo 5 = IDR
+			idr = true
+			break
+		}
+	}
+	// O primeiro frame enviado precisa ser keyframe, senão o peer não decodifica.
+	if keyframeRequired && !idr {
+		return
+	}
+	// Junta TODOS os NALUs (menos AUD tipo 9) num único access unit Annex-B e fragmenta
+	// como UM NAL — é assim que o WhatsApp manda o vídeo (não NALU a NALU).
+	var packed []byte
+	for _, n := range nalus {
+		if len(n) == 0 || n[0]&0x1f == 9 {
+			continue
+		}
+		if len(packed) > 0 {
+			packed = append(packed, 0, 0, 0, 1)
+		}
+		packed = append(packed, n...)
+	}
+	if len(packed) == 0 {
+		return
+	}
 	if p.relay.BufferedAmount() > congestionDropBytes {
 		return
 	}
-	var payloads [][]byte
-	for _, nalu := range nalus {
-		payloads = append(payloads, transport.PackageH264NALU(nalu)...)
-	}
-
-	p.mu.Lock()
-	first := p.lastAUAt.IsZero()
-	p.lastAUAt = time.Now()
-	p.mu.Unlock()
 	if !first {
 		rtp.AdvanceTimestamp(rtpStepSamples)
 	}
+	mediaFrameInfo := uint8(videoMediaFrameDelta)
+	if idr {
+		mediaFrameInfo = videoMediaFrameIDR
+	}
+	payloads := transport.PackageH264NALU(packed)
 	for i, payload := range payloads {
 		last := i == len(payloads)-1
-		pkt := rtp.CreatePacketWithDuration(payload, 0, last)
-		protected, err := srtp.Protect(pkt)
-		if err != nil {
-			continue
+		var fn *uint16
+		if i == 0 {
+			v := frameNum
+			fn = &v // FrameNumber só no primeiro pacote do access unit
 		}
-		p.relay.Broadcast(protected)
+		pkt := rtp.CreatePacketWithDuration(payload, 0, last)
+		pkt.Header.Extension = true
+		pkt.Header.ExtensionProfile = videoExtProfile
+		pkt.Header.ExtensionData = buildWhatsappVideoExt(mediaFrameInfo, fn, tseq)
+		tseq++
+		if protected, err := srtp.Protect(pkt); err == nil {
+			p.relay.Broadcast(protected)
+		}
 	}
+
+	p.mu.Lock()
+	p.lastAUAt = time.Now()
+	p.transportSeq = tseq
+	p.frameNumber = frameNum + 1
+	if idr {
+		p.keyframeRequired = false
+	}
+	p.mu.Unlock()
 }
 
 func (p *Pipeline) HandleRelayData(data []byte) {
@@ -163,5 +243,8 @@ func (p *Pipeline) Reset() {
 	p.depack = nil
 	p.frameBuf = nil
 	p.lastAUAt = time.Time{}
+	p.frameNumber = 1
+	p.transportSeq = 0
+	p.keyframeRequired = true
 	p.mu.Unlock()
 }
