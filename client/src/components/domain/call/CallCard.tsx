@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PhoneOff } from "lucide-react";
+import { PhoneOff, Video, VideoOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { attachMeter } from "@/lib/audio-meter";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
+import { useCallVideo } from "@/hooks/useCallVideo";
 import { formatCallDuration } from "@/utils/format";
 import type { CallStatus, CallSummary } from "@/types/call";
 
@@ -34,13 +35,15 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const conn = useCalls((s) => s.ownConnections.get(call.callId));
   const outDeviceId = useDevices((s) => s.outId);
   const endCall = useEndCall();
+  const video = useCallVideo(call);
   const [, force] = useState(0);
   const [micDb, setMicDb] = useState(-60);
   const [peerDb, setPeerDb] = useState(-60);
   const audioRef = useRef<HTMLAudioElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const hasVideo = !!(conn?.remoteVideoStream || conn?.localVideoStream);
+  const active = call.status === "connected";
+  const showVideo = video.state.peerVideo || video.state.localVideo;
 
   useEffect(() => {
     const t = setInterval(() => force((n) => n + 1), 1000);
@@ -74,15 +77,15 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
 
   useEffect(() => {
     if (!conn) return;
-    if (remoteVideoRef.current && conn.remoteVideoStream) {
+    if (remoteVideoRef.current && video.state.peerVideo) {
       remoteVideoRef.current.srcObject = conn.remoteVideoStream;
       remoteVideoRef.current.play().catch(() => {});
     }
-    if (localVideoRef.current && conn.localVideoStream) {
+    if (localVideoRef.current && video.state.localVideo && conn.localVideoStream) {
       localVideoRef.current.srcObject = conn.localVideoStream;
       localVideoRef.current.play().catch(() => {});
     }
-  }, [conn]);
+  }, [conn, video.state.peerVideo, video.state.localVideo]);
 
   return (
     <Card>
@@ -94,21 +97,59 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
               {formatCallDuration(call.startedAt, call.status)}
             </Badge>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="destructive"
-                size="icon"
-                onClick={() => endCall.mutate({ sid: call.sessionId, callId: call.callId })}
-                aria-label="End call"
-              >
-                <PhoneOff className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>End call</TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-2">
+            {active && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={video.state.localVideo ? "secondary" : "outline"}
+                    size="icon"
+                    disabled={video.busy}
+                    onClick={() => (video.state.localVideo ? video.disable() : video.enable())}
+                    aria-label={video.state.localVideo ? "Desligar vídeo" : "Ligar vídeo"}
+                  >
+                    {video.state.localVideo ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {video.state.localVideo ? "Desligar vídeo" : "Ativar vídeo"}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="destructive"
+                  size="icon"
+                  onClick={() => endCall.mutate({ sid: call.sessionId, callId: call.callId })}
+                  aria-label="End call"
+                >
+                  <PhoneOff className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Encerrar</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
-        {hasVideo && (
+
+        {video.state.upgradeIncoming && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-2">
+            <p className="text-sm">O cliente quer ativar o vídeo.</p>
+            <div className="flex gap-2">
+              <Button size="sm" disabled={video.busy} onClick={() => video.accept()}>
+                Aceitar
+              </Button>
+              <Button size="sm" variant="outline" disabled={video.busy} onClick={() => video.reject()}>
+                Recusar
+              </Button>
+            </div>
+          </div>
+        )}
+        {video.state.upgradeOutgoing && !video.state.peerVideo && (
+          <p className="text-xs text-muted-foreground">Aguardando o cliente aceitar o vídeo…</p>
+        )}
+
+        {showVideo && (
           <div className="relative overflow-hidden rounded-md bg-black">
             <video
               ref={remoteVideoRef}
@@ -116,13 +157,15 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
               playsInline
               className="aspect-video w-full bg-black object-cover"
             />
-            <video
-              ref={localVideoRef}
-              autoPlay
-              playsInline
-              muted
-              className="absolute bottom-2 right-2 w-24 rounded border border-white/20 object-cover"
-            />
+            {video.state.localVideo && (
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute bottom-2 right-2 w-24 rounded border border-white/20 object-cover"
+              />
+            )}
           </div>
         )}
         <Meter label="Mic" db={micDb} />

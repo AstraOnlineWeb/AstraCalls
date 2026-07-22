@@ -24,3 +24,10 @@ export const rejectCall = async (sid: string, callId: string): Promise<void> => 
 
 export const endCall = (sid: string, callId: string) =>
   apiDelete(`/api/sessions/${sid}/calls/${callId}`);
+
+export type VideoAction = "request" | "accept" | "reject" | "stop";
+
+// Negociação de vídeo mid-call: pedir upgrade, aceitar/recusar um pedido recebido
+// ou desligar o próprio vídeo (downgrade).
+export const callVideo = (sid: string, callId: string, action: VideoAction) =>
+  apiPost(`/api/sessions/${sid}/calls/${callId}/video/${action}`, {});

@@ -13,9 +13,19 @@ export type OpenCall = {
   micStream: MediaStream;
   remoteStream: MediaStream | null;
   localVideoStream: MediaStream | null;
-  remoteVideoStream: MediaStream | null;
+  remoteVideoStream: MediaStream;
+  // Liga/desliga a câmera no meio da chamada (upgrade/downgrade). Resolve para
+  // true se o vídeo ficou ligado, false caso contrário (ex.: WebCodecs ausente).
+  setLocalVideo: (on: boolean, camDeviceId?: string | null) => Promise<boolean>;
   close: () => void;
 };
+
+const cameraConstraints = (camDeviceId?: string | null): MediaTrackConstraints => ({
+  deviceId: camDeviceId ? { exact: camDeviceId } : undefined,
+  width: { ideal: VIDEO_WIDTH },
+  height: { ideal: VIDEO_HEIGHT },
+  frameRate: { ideal: VIDEO_FPS },
+});
 
 export const openCall = async (
   sid: string,
@@ -30,20 +40,12 @@ export const openCall = async (
 
   const localStream = await navigator.mediaDevices.getUserMedia({
     audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
-    video: wantVideo
-      ? {
-          deviceId: opts.camDeviceId ? { exact: opts.camDeviceId } : undefined,
-          width: { ideal: VIDEO_WIDTH },
-          height: { ideal: VIDEO_HEIGHT },
-          frameRate: { ideal: VIDEO_FPS },
-        }
-      : false,
+    video: wantVideo ? cameraConstraints(opts.camDeviceId) : false,
   });
   const pc = new RTCPeerConnection({ iceServers: [] });
 
-  // Audio: carried over an Opus RTP media track (our transport). Only the audio
-  // track is added to the peer connection; the camera track (if any) is handled
-  // by the video channel below, which encodes it with WebCodecs.
+  // Áudio: uma track RTP Opus (nosso transporte). Só a track de áudio entra no
+  // peer connection; a câmera é tratada pelo canal de vídeo (WebCodecs) abaixo.
   localStream.getAudioTracks().forEach((t) => pc.addTrack(t, localStream));
   pc.addTransceiver("audio", { direction: "recvonly" });
   const remoteHolder: { stream: MediaStream | null } = { stream: null };
@@ -51,8 +53,39 @@ export const openCall = async (
     if (ev.streams[0]) remoteHolder.stream = ev.streams[0];
   };
 
-  // Video: H264 access units over an out-of-order data channel (WebCodecs).
-  const video = setupVideoChannel(pc, localStream, wantVideo);
+  // Vídeo: H264 sobre datachannel out-of-order, SEMPRE aberto (mesmo em chamada
+  // de áudio) para permitir upgrade mid-call sem renegociar SDP.
+  const video = setupVideoChannel(pc);
+
+  // Estado da câmera local. Começa ligada só se a chamada nasceu em vídeo.
+  let camTrack: MediaStreamTrack | null = wantVideo ? localStream.getVideoTracks()[0] ?? null : null;
+  const local: { stream: MediaStream | null } = { stream: null };
+  if (camTrack) {
+    local.stream = new MediaStream([camTrack]);
+    video.startSender(camTrack);
+  }
+
+  const setLocalVideo = async (on: boolean, camDeviceId?: string | null): Promise<boolean> => {
+    if (on) {
+      if (camTrack) return true; // já ligada
+      if (!videoSupported()) return false;
+      const cam = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints(camDeviceId) });
+      camTrack = cam.getVideoTracks()[0] ?? null;
+      if (!camTrack) return false;
+      local.stream = new MediaStream([camTrack]);
+      video.startSender(camTrack);
+      return true;
+    }
+    video.stopSender();
+    if (camTrack) {
+      try {
+        camTrack.stop();
+      } catch {}
+    }
+    camTrack = null;
+    local.stream = null;
+    return false;
+  };
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -74,12 +107,18 @@ export const openCall = async (
     get remoteStream() {
       return remoteHolder.stream;
     },
-    localVideoStream: video.localVideoStream,
+    get localVideoStream() {
+      return local.stream;
+    },
     remoteVideoStream: video.remoteVideoStream,
+    setLocalVideo,
     close: () => {
       video.close();
       try {
         localStream.getTracks().forEach((t) => t.stop());
+      } catch {}
+      try {
+        if (camTrack) camTrack.stop();
       } catch {}
       try {
         pc.close();
