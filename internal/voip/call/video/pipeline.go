@@ -234,27 +234,36 @@ func (p *Pipeline) sendKeyframeRequest() {
 	pli[3] = 0x02 // length = 2 (3 palavras de 32 bits - 1)
 	binary.BigEndian.PutUint32(pli[4:8], selfSsrc)
 	binary.BigEndian.PutUint32(pli[8:12], peerSsrc)
-	if protected := srtcp.Protect(pli); protected != nil {
-		p.relay.Broadcast(protected)
+	protected := srtcp.Protect(pli)
+	if protected == nil {
+		p.log.Info("video: PLI não protegido (srtcp)", "peer_ssrc", peerSsrc)
+		return
 	}
+	p.relay.Broadcast(protected)
+	p.log.Info("video: PLI enviado", "peer_ssrc", peerSsrc, "bytes", len(protected))
 }
 
 func (p *Pipeline) HandleRelayData(data []byte) {
+	actualSsrc := media.RTPSsrc(data)
 	p.mu.Lock()
 	srtp, depack, selfSsrc := p.srtp, p.depack, p.selfSsrc
-	// Primeiro pacote de vídeo do peer -> pede keyframe (PLI) para o painel iniciar rápido.
-	needPli := !p.pliSent && p.srtcpSend != nil && p.peerVideoSsrc != 0
+	// No 1º pacote de vídeo do peer, usa o SSRC REAL dele (não o calculado) como alvo
+	// do PLI e pede keyframe para o painel iniciar rápido.
+	needPli := !p.pliSent && p.srtcpSend != nil && actualSsrc != 0 && actualSsrc != p.selfSsrc
 	if needPli {
 		p.pliSent = true
+		p.peerVideoSsrc = actualSsrc
 	}
 	p.mu.Unlock()
 	if needPli {
+		p.log.Info("video: primeiro pacote do peer, pedindo keyframe (PLI)",
+			"peer_ssrc", actualSsrc, "self_ssrc", selfSsrc)
 		go p.requestKeyframeBurst()
 	}
 	if srtp == nil || depack == nil {
 		return
 	}
-	if media.RTPSsrc(data) == selfSsrc {
+	if actualSsrc == selfSsrc {
 		return
 	}
 
