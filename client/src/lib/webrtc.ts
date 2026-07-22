@@ -13,7 +13,7 @@ export type OpenCall = {
   micStream: MediaStream;
   remoteStream: MediaStream | null;
   localVideoStream: MediaStream | null;
-  remoteVideoStream: MediaStream;
+  remoteVideoStream: MediaStream | null;
   // Liga/desliga a câmera no meio da chamada (upgrade/downgrade). Resolve para
   // true se o vídeo ficou ligado, false caso contrário (ex.: WebCodecs ausente).
   setLocalVideo: (on: boolean, camDeviceId?: string | null) => Promise<boolean>;

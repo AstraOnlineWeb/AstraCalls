@@ -77,7 +77,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
 
   useEffect(() => {
     if (!conn) return;
-    if (remoteVideoRef.current && video.state.peerVideo) {
+    if (remoteVideoRef.current && video.state.peerVideo && conn.remoteVideoStream) {
       remoteVideoRef.current.srcObject = conn.remoteVideoStream;
       remoteVideoRef.current.play().catch(() => {});
     }

@@ -10,9 +10,13 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+// Blobs de capability (ver=1) que o aparelho do peer lê para decidir tocar. Valores
+// alinhados ao WhatsApp Web atual (referência: meowcaller/whatsapp-rust). O byte 5
+// era 0xe4 (stale) — clientes atuais ignoravam a chamada em silêncio; passou a 0xe0.
 var (
-	capabilityOffer     = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x13}
-	capabilityPreaccept = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
+	capabilityOffer      = []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13}
+	capabilityVideoOffer = []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xfa, 0x13}
+	capabilityPreaccept  = []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x07}
 )
 
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, error) {
@@ -48,8 +52,11 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	)
 	capability := capabilityOffer
 	if isVideo {
+		// Formato atual do WhatsApp Web: enc "h.264" (com ponto), dec "H264" (maiúsc.),
+		// SEM o atributo legado "orientation". E capability de vídeo próprio.
+		capability = capabilityVideoOffer
 		offerContent = append(offerContent, waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
-			"enc": "h264", "dec": "h264", "orientation": "0",
+			"enc": "h.264", "dec": "H264",
 			"screen_width": "1920", "screen_height": "1080", "device_orientation": "0",
 		}})
 	}
