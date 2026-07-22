@@ -39,6 +39,7 @@ type Pipeline struct {
 	depack   *transport.H264Depacketizer
 	frameBuf []byte
 	lastAUAt time.Time
+	tccSeq   uint16 // sequência transport-cc da extensão RTP de vídeo
 
 	OnFrame func(au []byte)
 }
@@ -95,6 +96,12 @@ func (p *Pipeline) FeedCaptured(au []byte) {
 	}
 	var payloads [][]byte
 	for _, nalu := range nalus {
+		// O WhatsApp real nunca envia AUD (Access Unit Delimiter, tipo 9); o encoder
+		// WebCodecs do navegador prefixa um por frame e o decoder do WhatsApp descarta
+		// o access unit por causa dele. Remover espelha o peer.
+		if len(nalu) > 0 && nalu[0]&0x1f == 9 {
+			continue
+		}
 		payloads = append(payloads, transport.PackageH264NALU(nalu)...)
 	}
 
@@ -108,12 +115,40 @@ func (p *Pipeline) FeedCaptured(au []byte) {
 	for i, payload := range payloads {
 		last := i == len(payloads)-1
 		pkt := rtp.CreatePacketWithDuration(payload, 0, last)
+		// Extensão RTP 0xBEDE (RFC 5285), igual ao vídeo do WhatsApp: id3 = abs-send-time
+		// (3B) + id6 = transport-cc seq (2B). SEM isso o relay NÃO processa o nosso vídeo
+		// (o áudio é tolerado sem extensão) — o destino não recebe a imagem da câmera.
+		p.mu.Lock()
+		p.tccSeq++
+		seq := p.tccSeq
+		p.mu.Unlock()
+		pkt.Header.Extension = true
+		pkt.Header.ExtensionProfile = 0xBEDE
+		pkt.Header.ExtensionData = buildVideoRtpExt(seq)
 		protected, err := srtp.Protect(pkt)
 		if err != nil {
 			continue
 		}
 		p.relay.Broadcast(protected)
 	}
+}
+
+// buildVideoRtpExt monta o bloco de extensão one-byte (0xBEDE) do vídeo do WhatsApp:
+// id3 = abs-send-time (3 bytes, ponto fixo 6.18) + id6 = transport-cc seq (2 bytes).
+func buildVideoRtpExt(tccSeq uint16) []byte {
+	now := time.Now()
+	secs := float64(now.UnixNano()) / 1e9
+	abs := uint32(secs*262144.0) & 0xFFFFFF
+	ext := make([]byte, 8)
+	ext[0] = 0x32 // id=3, len=3
+	ext[1] = byte(abs >> 16)
+	ext[2] = byte(abs >> 8)
+	ext[3] = byte(abs)
+	ext[4] = 0x61 // id=6, len=2
+	ext[5] = byte(tccSeq >> 8)
+	ext[6] = byte(tccSeq)
+	ext[7] = 0x00 // padding
+	return ext
 }
 
 func (p *Pipeline) HandleRelayData(data []byte) {
