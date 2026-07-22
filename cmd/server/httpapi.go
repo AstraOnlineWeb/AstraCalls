@@ -30,6 +30,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/video/{action}", s.handleCallVideo)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 
@@ -340,6 +341,41 @@ func (s *server) handleEndCall(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
 		s.doEndCall(sess, w, r)
 	}
+}
+
+// handleCallVideo controla a negociação de vídeo mid-call numa chamada ativa.
+// action ∈ {request, accept, reject, stop}: pedir upgrade p/ vídeo, aceitar/recusar
+// um pedido recebido, ou desligar o vídeo (downgrade p/ áudio).
+func (s *server) handleCallVideo(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	id := r.PathValue("id")
+	ac, ok := sess.reg.get(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	var err error
+	switch action := r.PathValue("action"); action {
+	case "request":
+		err = ac.cm.RequestVideoUpgrade(r.Context())
+	case "accept":
+		err = ac.cm.AcceptVideoUpgrade(r.Context())
+	case "reject":
+		err = ac.cm.RejectVideoUpgrade(r.Context())
+	case "stop":
+		err = ac.cm.StopVideo(r.Context())
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown video action"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {

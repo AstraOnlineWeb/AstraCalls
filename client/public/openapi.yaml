@@ -520,6 +520,31 @@ paths:
       responses:
         "200": { description: Rejeitada }
 
+  /api/sessions/{sid}/calls/{id}/video/{action}:
+    post:
+      tags: [Chamadas]
+      summary: Negociação de vídeo no meio de uma chamada ativa (upgrade/downgrade)
+      description: >
+        Controla o vídeo durante uma chamada de áudio já ativa.
+        `action`:
+        `request` pede à outra ponta um upgrade de áudio→vídeo;
+        `accept` aceita um pedido de upgrade recebido (liga a câmera);
+        `reject` recusa o pedido recebido;
+        `stop` desliga o próprio vídeo (downgrade para áudio).
+        O evento SSE `video-state` avisa a UI sobre pedidos recebidos e a câmera do peer.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - name: action
+          in: path
+          required: true
+          schema: { type: string, enum: [request, accept, reject, stop] }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200": { description: Ação aplicada }
+        "404": { description: Chamada inexistente }
+        "409": { description: Não há chamada ativa para negociar vídeo }
+
   /api/sessions/{sid}/calls/{id}:
     delete:
       tags: [Chamadas]

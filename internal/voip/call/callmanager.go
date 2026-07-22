@@ -50,6 +50,9 @@ type CallManager struct {
 	OnEnded       func(*CallInfo)
 	OnPeerAudio   func([]float32)
 	OnPeerVideo   func([]byte)
+
+	OnVideoUpgradeRequest func(*CallInfo) // o peer pediu um upgrade p/ vídeo
+	OnVideoStateChanged   func(*CallInfo) // qualquer mudança no estado de vídeo
 }
 
 func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {

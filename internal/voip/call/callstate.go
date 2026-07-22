@@ -16,6 +16,11 @@ type CallStateData struct {
 	Silenced     bool
 	EndReason    core.EndCallReason
 	DurationSecs int
+
+	// Negociação de vídeo mid-call (só relevante com a call ativa).
+	PeerVideoOn          bool // câmera do peer está ligada
+	VideoUpgradeIncoming bool // o peer pediu upgrade e aguarda nossa decisão
+	VideoUpgradeOutgoing bool // nós pedimos upgrade e aguardamos o peer
 }
 
 type CallInfo struct {

@@ -264,6 +264,14 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		}
 		_ = ac.bridge.WriteVideo(au)
 	}
+	cm.OnVideoUpgradeRequest = func(c *call.CallInfo) {
+		s.mgr.broker.emitVideoState(s.id, c.CallID, "upgrade-request", c.StateData.PeerVideoOn,
+			!c.StateData.VideoOff, c.StateData.VideoUpgradeIncoming, c.StateData.VideoUpgradeOutgoing)
+	}
+	cm.OnVideoStateChanged = func(c *call.CallInfo) {
+		s.mgr.broker.emitVideoState(s.id, c.CallID, "state", c.StateData.PeerVideoOn,
+			!c.StateData.VideoOff, c.StateData.VideoUpgradeIncoming, c.StateData.VideoUpgradeOutgoing)
+	}
 }
 
 func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
@@ -394,6 +402,23 @@ func (s *Session) handleEvent(rawEvt any) {
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
 			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
 		}
+	case *events.UnknownCallEvent:
+		// stanzas de call sem evento tipado no whatsmeow — hoje o que nos interessa é
+		// o <video state=N> de upgrade/downgrade mid-call.
+		s.handleUnknownCall(ctx, evt)
+	}
+}
+
+func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCallEvent) {
+	if evt.Node == nil {
+		return
+	}
+	callID := callIDFromNode(evt.Node)
+	if callID == "" {
+		return
+	}
+	if ac, ok := s.reg.get(callID); ok {
+		ac.cm.HandleVideoState(ctx, evt.Node)
 	}
 }
 
