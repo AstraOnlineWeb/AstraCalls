@@ -187,6 +187,12 @@ func (s *RtpSession) AdvanceTimestamp(samples uint32) {
 	s.timestamp += samples
 }
 
+// SSRC devolve o SSRC da sessão (usado no RTCP Sender Report do vídeo).
+func (s *RtpSession) SSRC() uint32 { return s.ssrc }
+
+// Timestamp devolve o timestamp RTP atual (usado no RTCP Sender Report do vídeo).
+func (s *RtpSession) Timestamp() uint32 { return s.timestamp }
+
 func RTPSsrc(data []byte) uint32 {
 	return uint32(data[8])<<24 | uint32(data[9])<<16 | uint32(data[10])<<8 | uint32(data[11])
 }
