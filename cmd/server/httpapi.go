@@ -31,6 +31,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/video/{action}", s.handleCallVideo)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/hold", s.handleHold)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/resume", s.handleResume)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 
@@ -378,6 +380,52 @@ func (s *server) handleCallVideo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleHold coloca uma chamada ativa em espera. Body opcional {"moh": true} liga a
+// música de espera para o interlocutor (padrão: true). O leg segue vivo.
+func (s *server) handleHold(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	id := r.PathValue("id")
+	ac, ok := sess.reg.get(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	moh := true // por padrão toca música de espera
+	var body struct {
+		MOH *bool `json:"moh"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) == nil && body.MOH != nil {
+		moh = *body.MOH
+	}
+	if err := ac.cm.Hold(moh); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "held": true, "moh": moh})
+}
+
+// handleResume tira uma chamada da espera e volta a enviar/receber o áudio.
+func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	id := r.PathValue("id")
+	ac, ok := sess.reg.get(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	if err := ac.cm.Resume(); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "held": false})
+}
+
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(sess.id, 50)})
@@ -475,10 +523,9 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 		return
 	}
 	owner := clientID(r)
-	if other := s.broker.ownerActiveCall(owner); other != "" && other != id {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "operator already on a call"})
-		return
-	}
+	// Antes bloqueávamos o operador de aceitar uma 2ª chamada com uma já ativa. Agora
+	// permitimos "atender em espera": o painel coloca a atual em hold e aceita a nova.
+	// Mantemos só a reivindicação de dono (evita dois clientes pegarem a mesma chamada).
 	if !s.broker.setOwner(id, owner) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "claimed by another client"})
 		return

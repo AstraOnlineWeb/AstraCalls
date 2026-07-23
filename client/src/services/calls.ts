@@ -25,6 +25,14 @@ export const rejectCall = async (sid: string, callId: string): Promise<void> => 
 export const endCall = (sid: string, callId: string) =>
   apiDelete(`/api/sessions/${sid}/calls/${callId}`);
 
+// Espera (hold): coloca a chamada em espera mantendo o leg vivo. moh=true toca música
+// de espera para o interlocutor (padrão no backend). resumeCall tira da espera.
+export const holdCall = (sid: string, callId: string, moh = true) =>
+  apiPost(`/api/sessions/${sid}/calls/${callId}/hold`, { moh });
+
+export const resumeCall = (sid: string, callId: string) =>
+  apiPost(`/api/sessions/${sid}/calls/${callId}/resume`, {});
+
 export type VideoAction = "request" | "accept" | "reject" | "stop";
 
 // Negociação de vídeo mid-call: pedir upgrade, aceitar/recusar um pedido recebido

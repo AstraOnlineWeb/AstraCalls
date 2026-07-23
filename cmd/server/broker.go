@@ -24,6 +24,7 @@ type CallRecord struct {
 	Peer      string     `json:"peer"`
 	StartedAt int64      `json:"startedAt"`
 	Status    CallStatus `json:"status"`
+	Held      bool       `json:"held"`
 	EndedAt   *int64     `json:"endedAt,omitempty"`
 	EndReason string     `json:"endReason,omitempty"`
 }
@@ -157,7 +158,7 @@ func (b *Broker) upsertCall(r CallRecord) {
 	b.broadcastCallList()
 	b.broadcast(map[string]any{
 		"type": "call-status", "sessionId": r.SessionID, "id": r.CallID, "owner": r.Owner,
-		"status": r.Status, "peer": r.Peer, "startedAt": r.StartedAt,
+		"status": r.Status, "peer": r.Peer, "startedAt": r.StartedAt, "held": r.Held,
 	})
 }
 

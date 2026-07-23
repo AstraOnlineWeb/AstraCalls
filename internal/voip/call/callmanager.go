@@ -41,6 +41,13 @@ type CallManager struct {
 	captureBuf   []float32
 	sendLoopStop chan struct{}
 
+	// Estado de espera (hold). Enquanto held, o áudio do atendente não é enviado:
+	// no lugar vai música de espera (mohEnabled) ou silêncio, e o áudio do peer não
+	// é encaminhado ao navegador. O leg segue vivo (media-level, sem sinalizar mute).
+	held       bool
+	mohEnabled bool
+	mohPos     int
+
 	audioTimelineSet   bool
 	audioBaseTs        uint32
 	audioPlayedSamples uint64
@@ -81,6 +88,42 @@ func (m *CallManager) CurrentCall() *CallInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.currentCall
+}
+
+// Hold coloca a chamada ativa em espera. O leg permanece vivo: paramos de enviar o
+// áudio do atendente (enviando música de espera se moh=true, senão silêncio) e de
+// encaminhar o áudio do peer ao navegador. Não sinaliza mute ao WhatsApp de propósito,
+// para o interlocutor continuar recebendo mídia (a música).
+func (m *CallManager) Hold(moh bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.currentCall == nil {
+		return &CallError{"no active call"}
+	}
+	if err := m.currentCall.ApplyTransition(Transition{Type: TransitionHold}); err != nil {
+		return err
+	}
+	m.held = true
+	m.mohEnabled = moh
+	m.mohPos = 0
+	m.emitState()
+	return nil
+}
+
+// Resume tira a chamada da espera e volta a enviar/receber o áudio normalmente.
+func (m *CallManager) Resume() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.currentCall == nil {
+		return &CallError{"no active call"}
+	}
+	if err := m.currentCall.ApplyTransition(Transition{Type: TransitionResume}); err != nil {
+		return err
+	}
+	m.held = false
+	m.mohEnabled = false
+	m.emitState()
+	return nil
 }
 
 func (m *CallManager) emitState() {

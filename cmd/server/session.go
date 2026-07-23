@@ -229,6 +229,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		rec := CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: dir, Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: mapStatus(c.StateData.State),
+			Held: c.StateData.State == core.CallStateOnHold,
 		}
 		if existing != nil {
 			rec.Owner = existing.Owner
@@ -615,8 +616,8 @@ func (s *Session) shutdown() {
 
 func mapStatus(state core.CallState) CallStatus {
 	switch state {
-	case core.CallStateActive:
-		return StatusConnected
+	case core.CallStateActive, core.CallStateOnHold:
+		return StatusConnected // em espera ainda é uma chamada conectada (flag held à parte)
 	case core.CallStateEnded:
 		return StatusEnded
 	case core.CallStateInitiating:

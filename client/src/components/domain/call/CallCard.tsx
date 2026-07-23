@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PhoneOff, Video, VideoOff } from "lucide-react";
+import { PhoneOff, Pause, Play, Video, VideoOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { attachMeter } from "@/lib/audio-meter";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
+import { useCallHold } from "@/hooks/useCallHold";
 import { useCallVideo } from "@/hooks/useCallVideo";
 import { formatCallDuration } from "@/utils/format";
 import type { CallStatus, CallSummary } from "@/types/call";
@@ -35,7 +36,9 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const conn = useCalls((s) => s.ownConnections.get(call.callId));
   const outDeviceId = useDevices((s) => s.outId);
   const endCall = useEndCall();
+  const hold = useCallHold();
   const video = useCallVideo(call);
+  const held = call.held ?? false;
   const [, force] = useState(0);
   const [micDb, setMicDb] = useState(-60);
   const [peerDb, setPeerDb] = useState(-60);
@@ -69,6 +72,13 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
     };
   }, [conn]);
 
+  // Em espera: silencia o mic local (o backend já não envia o áudio do atendente, mas
+  // isto zera o medidor e evita uplink à toa) e retoma ao sair da espera.
+  useEffect(() => {
+    if (!conn) return;
+    for (const t of conn.micStream.getAudioTracks()) t.enabled = !held;
+  }, [conn, held]);
+
   useEffect(() => {
     const el = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
     if (!el || !outDeviceId || typeof el.setSinkId !== "function") return;
@@ -93,12 +103,33 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate font-medium">{call.peer}</p>
-            <Badge variant={statusVariant[call.status]} className="mt-1">
-              {formatCallDuration(call.startedAt, call.status)}
-            </Badge>
+            <div className="mt-1 flex items-center gap-2">
+              <Badge variant={held ? "secondary" : statusVariant[call.status]}>
+                {formatCallDuration(call.startedAt, call.status)}
+              </Badge>
+              {held && <Badge variant="muted">Em espera</Badge>}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {active && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={held ? "secondary" : "outline"}
+                    size="icon"
+                    disabled={hold.isPending}
+                    onClick={() =>
+                      hold.mutate({ sid: call.sessionId, callId: call.callId, hold: !held })
+                    }
+                    aria-label={held ? "Retomar" : "Colocar em espera"}
+                  >
+                    {held ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{held ? "Retomar" : "Colocar em espera"}</TooltipContent>
+              </Tooltip>
+            )}
+            {active && !held && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

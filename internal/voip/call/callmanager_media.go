@@ -75,7 +75,14 @@ func (m *CallManager) startMediaSendLoopLocked() {
 				continue
 			}
 			frame := silence
-			if len(m.captureBuf) >= frameSize {
+			switch {
+			case m.held:
+				// Em espera: não envia o mic do atendente. Toca música de espera
+				// (ou silêncio) para o interlocutor manter o leg vivo.
+				if m.mohEnabled {
+					frame = m.nextMohFrameLocked(frameSize)
+				}
+			case len(m.captureBuf) >= frameSize:
 				frame = make([]float32, frameSize)
 				copy(frame, m.captureBuf[:frameSize])
 				m.captureBuf = m.captureBuf[frameSize:]
@@ -86,6 +93,23 @@ func (m *CallManager) startMediaSendLoopLocked() {
 			m.mu.Unlock()
 		}
 	}()
+}
+
+// nextMohFrameLocked devolve o próximo quadro (frameSize amostras) do loop de música
+// de espera, avançando a posição. Deve ser chamado com m.mu travado.
+func (m *CallManager) nextMohFrameLocked(frameSize int) []float32 {
+	frame := make([]float32, frameSize)
+	if len(mohLoop) == 0 {
+		return frame
+	}
+	for i := 0; i < frameSize; i++ {
+		frame[i] = mohLoop[m.mohPos]
+		m.mohPos++
+		if m.mohPos >= len(mohLoop) {
+			m.mohPos = 0
+		}
+	}
+	return frame
 }
 
 func (m *CallManager) onRelayData(data []byte) {
@@ -127,6 +151,7 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	}
 	srtp := m.srtpSession
 	codec := m.codec
+	held := m.held
 	m.mu.Unlock()
 
 	pkt, err := srtp.Unprotect(data)
@@ -139,6 +164,10 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	}
 	pcm, err := codec.Decode(pkt.Payload)
 	if err != nil || len(pcm) == 0 {
+		return
+	}
+	if held {
+		// Em espera: não encaminha o áudio do peer ao navegador do atendente.
 		return
 	}
 	if m.OnPeerAudio != nil {
