@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PhoneOff, Pause, Play, Video, VideoOff } from "lucide-react";
+import { PhoneOff, PhoneForwarded, Pause, Play, Video, VideoOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
 import { useCallHold } from "@/hooks/useCallHold";
+import { useTransferCall } from "@/hooks/useTransferCall";
 import { useCallVideo } from "@/hooks/useCallVideo";
 import { formatCallDuration } from "@/utils/format";
 import type { CallStatus, CallSummary } from "@/types/call";
@@ -37,6 +38,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const outDeviceId = useDevices((s) => s.outId);
   const endCall = useEndCall();
   const hold = useCallHold();
+  const transfer = useTransferCall();
   const video = useCallVideo(call);
   const held = call.held ?? false;
   const [, force] = useState(0);
@@ -127,6 +129,22 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{held ? "Retomar" : "Colocar em espera"}</TooltipContent>
+              </Tooltip>
+            )}
+            {active && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={transfer.isPending}
+                    onClick={() => transfer.mutate({ sid: call.sessionId, callId: call.callId })}
+                    aria-label="Transferir"
+                  >
+                    <PhoneForwarded className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Transferir para outro atendente</TooltipContent>
               </Tooltip>
             )}
             {active && !held && (

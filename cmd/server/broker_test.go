@@ -24,3 +24,30 @@ func TestOwnerActiveCall(t *testing.T) {
 		t.Fatalf("op-A's call ended, expected empty, got %q", got)
 	}
 }
+
+func TestReassignOwner(t *testing.T) {
+	b := NewBroker()
+	b.upsertCall(CallRecord{SessionID: "s1", CallID: "c1", Owner: ownerPtr("op-A"), Status: StatusConnected})
+
+	// libera o dono (transferência oferecida)
+	if !b.reassignOwner("c1", nil) {
+		t.Fatal("reassignOwner deveria achar c1")
+	}
+	if c, ok := b.getCall("c1"); !ok || c.Owner != nil {
+		t.Fatalf("esperava owner nil após liberar, got %+v", c)
+	}
+
+	// fixa novo dono (pickup)
+	b.reassignOwner("c1", ownerPtr("op-B"))
+	if c, ok := b.getCall("c1"); !ok || c.Owner == nil || *c.Owner != "op-B" {
+		t.Fatalf("esperava owner op-B após pickup, got %+v", c)
+	}
+	if got := b.ownerActiveCall("op-B"); got != "c1" {
+		t.Fatalf("op-B deveria ser dono de c1, got %q", got)
+	}
+
+	// chamada inexistente
+	if b.reassignOwner("nao-existe", ownerPtr("x")) {
+		t.Fatal("reassignOwner de callID inexistente deveria falhar")
+	}
+}

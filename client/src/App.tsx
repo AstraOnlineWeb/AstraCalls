@@ -7,6 +7,7 @@ import { CallsPage } from "@/pages/CallsPage";
 import { SessionPairing } from "@/components/domain/session/SessionPairing";
 import { SessionHeader } from "@/components/domain/session/SessionHeader";
 import { IncomingCallModal } from "@/components/domain/call/IncomingCallModal";
+import { TransferOfferModal } from "@/components/domain/call/TransferOfferModal";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ensureSessionsWired, useSessions } from "@/stores/sessions";
 import { ensureCallsWired } from "@/stores/calls";
@@ -43,6 +44,7 @@ export const App = () => {
         )}
       </AppShell>
       <IncomingCallModal />
+      <TransferOfferModal />
       <Toaster theme={theme} position="top-right" richColors closeButton />
     </TooltipProvider>
   );

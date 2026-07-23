@@ -33,6 +33,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/video/{action}", s.handleCallVideo)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/hold", s.handleHold)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/resume", s.handleResume)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/transfer", s.handleTransfer)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/pickup", s.handlePickup)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 
@@ -424,6 +426,63 @@ func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "held": false})
+}
+
+// handleTransfer faz uma transferência CEGA de uma chamada ativa para outro atendente:
+// põe a chamada em espera com música (o interlocutor não fica no silêncio), libera o
+// dono e re-oferece a chamada. Body opcional {"to":"<clientId>"} mira um atendente
+// específico; sem ele, a oferta vai a todos os atendentes da conta (fila).
+// O leg do WhatsApp NÃO é tocado — só muda quem tem a ponte de áudio.
+func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	id := r.PathValue("id")
+	ac, ok := sess.reg.get(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	var body struct {
+		To string `json:"to"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	// Melhor esforço: coloca em espera com música. Se já estiver em espera, tudo bem.
+	_ = ac.cm.Hold(true)
+
+	from := clientID(r)
+	s.broker.reassignOwner(id, nil) // libera o dono para o alvo poder assumir
+	peer := ""
+	if cr, ok := s.broker.getCall(id); ok && cr != nil {
+		peer = cr.Peer
+	}
+	s.broker.emitTransferOffer(sess.id, id, peer, from, strings.TrimSpace(body.To))
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": strings.TrimSpace(body.To)})
+}
+
+// handlePickup assume uma chamada transferida: fixa o novo dono SEM re-aceitar no
+// WhatsApp (a chamada já está ativa). Em seguida o navegador do atendente chama
+// .../webrtc (abre a ponte, que troca automaticamente) e depois .../resume para tirar
+// da espera.
+func (s *server) handlePickup(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if _, ok := sess.reg.get(id); !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	owner := clientID(r)
+	if !s.broker.reassignOwner(id, &owner) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	s.broker.emitTransferClaimed(sess.id, id, owner)
+	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": id}})
 }
 
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {

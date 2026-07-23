@@ -33,6 +33,15 @@ export const holdCall = (sid: string, callId: string, moh = true) =>
 export const resumeCall = (sid: string, callId: string) =>
   apiPost(`/api/sessions/${sid}/calls/${callId}/resume`, {});
 
+// Transferência cega para outro atendente. to opcional = clientId do atendente alvo;
+// sem ele, a oferta vai para todos os atendentes da conta (fila). pickupCall assume
+// uma chamada transferida (fixa o novo dono; não re-aceita no WhatsApp).
+export const transferCall = (sid: string, callId: string, to?: string) =>
+  apiPost(`/api/sessions/${sid}/calls/${callId}/transfer`, to ? { to } : {});
+
+export const pickupCall = (sid: string, callId: string) =>
+  apiPost<{ call: { callId: string } }>(`/api/sessions/${sid}/calls/${callId}/pickup`, {});
+
 export type VideoAction = "request" | "accept" | "reject" | "stop";
 
 // Negociação de vídeo mid-call: pedir upgrade, aceitar/recusar um pedido recebido

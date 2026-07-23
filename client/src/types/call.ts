@@ -12,3 +12,5 @@ export type CallSummary = {
 };
 
 export type IncomingPayload = { sessionId: string; callId: string; peer: string; video: boolean; offeredAt: number };
+
+export type TransferOfferPayload = { sessionId: string; callId: string; peer: string; from: string; offeredAt: number };

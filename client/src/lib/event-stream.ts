@@ -24,6 +24,8 @@ export type BrokerEvent =
   | { type: "call-ended"; sessionId: string; id: string; owner: string | null; reason: string; endedAt: number }
   | { type: "incoming"; sessionId: string; id: string; peer: string; video: boolean; offeredAt: number }
   | { type: "incoming-claimed"; sessionId: string; id: string; owner: string }
+  | { type: "call-transfer-offer"; sessionId: string; id: string; peer: string; from: string; offeredAt: number }
+  | { type: "call-transfer-claimed"; sessionId: string; id: string; owner: string }
   | {
       type: "video-state";
       sessionId: string;

@@ -93,7 +93,14 @@ type Bridge struct {
 	OnBrowserVideo func(au []byte)
 	// OnTerminalICE fires when the peer connection fails or closes.
 	OnTerminalICE func()
+	// terminateDisabled silencia o OnTerminalICE. Usado ao TROCAR a ponte (ex.:
+	// renegociação ou transferência): fechar a ponte antiga não deve encerrar a
+	// chamada, pois a nova ponte assume o mesmo leg.
+	terminateDisabled atomic.Bool
 }
+
+// DisableTerminate impede que o fechamento desta ponte dispare OnTerminalICE.
+func (b *Bridge) DisableTerminate() { b.terminateDisabled.Store(true) }
 
 func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
 	pc, err := getBrowserAPI(log).NewPeerConnection(webrtc.Configuration{})
@@ -150,7 +157,7 @@ func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
 	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
 		log.Debug("browser ice state", "state", s.String())
 		if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed {
-			if br.OnTerminalICE != nil {
+			if br.OnTerminalICE != nil && !br.terminateDisabled.Load() {
 				br.OnTerminalICE()
 			}
 		}

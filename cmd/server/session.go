@@ -534,6 +534,9 @@ func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {
 		return
 	}
 	if oldB != nil {
+		// A ponte nova assume o mesmo leg: fechar a antiga NÃO pode encerrar a chamada
+		// (senão o swap de renegociação/transferência derruba tudo via OnTerminalICE).
+		oldB.DisableTerminate()
 		oldB.Close()
 	}
 	if oldOC != nil {

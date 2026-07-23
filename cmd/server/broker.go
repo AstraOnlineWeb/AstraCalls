@@ -131,6 +131,53 @@ func (b *Broker) broadcastForSession(sessionID string, ev any) {
 	}
 }
 
+// broadcastForSessionTargeted é como broadcastForSession, mas se targetClientID != ""
+// entrega o evento SÓ ao assinante daquele navegador (dentro do escopo de conta). Usado
+// para direcionar a oferta de transferência a um atendente específico.
+func (b *Broker) broadcastForSessionTargeted(sessionID, targetClientID string, ev any) {
+	if targetClientID == "" {
+		b.broadcastForSession(sessionID, ev)
+		return
+	}
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	acct := 0
+	if b.AccountForSession != nil {
+		acct = b.AccountForSession(sessionID)
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		if s.accountID != 0 && s.accountID != acct {
+			continue
+		}
+		if s.clientID != targetClientID {
+			continue
+		}
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
+}
+
+// emitTransferOffer avisa o(s) painel(is) que uma chamada ativa foi transferida e está
+// disponível para atender (pickup). Se target != "", só o navegador alvo recebe.
+func (b *Broker) emitTransferOffer(sessionID, id, peer, from, target string) {
+	b.broadcastForSessionTargeted(sessionID, target, map[string]any{
+		"type": "call-transfer-offer", "sessionId": sessionID, "id": id, "peer": peer,
+		"from": from, "offeredAt": time.Now().UnixMilli(),
+	})
+}
+
+// emitTransferClaimed some com a oferta de transferência nos outros painéis quando
+// alguém atende.
+func (b *Broker) emitTransferClaimed(sessionID, id, owner string) {
+	b.broadcastForSession(sessionID, map[string]any{"type": "call-transfer-claimed", "sessionId": sessionID, "id": id, "owner": owner})
+}
+
 func (b *Broker) emitAuthState(sessionID string, a AuthSnapshot) {
 	ev := map[string]any{
 		"type": "auth-state", "sessionId": sessionID,
@@ -184,6 +231,27 @@ func (b *Broker) setOwner(id, owner string) bool {
 		return false
 	}
 	c.Owner = &owner
+	return true
+}
+
+// reassignOwner troca (ou limpa, com owner=nil) o dono de uma chamada sem as travas
+// do setOwner, e re-emite call-list/call-status para os painéis refletirem. Usado na
+// transferência: liberar o dono ao ofertar e fixar o novo dono no pickup.
+func (b *Broker) reassignOwner(id string, owner *string) bool {
+	b.mu.Lock()
+	c, ok := b.calls[id]
+	if !ok {
+		b.mu.Unlock()
+		return false
+	}
+	c.Owner = owner
+	rec := *c
+	b.mu.Unlock()
+	b.broadcastCallList()
+	b.broadcast(map[string]any{
+		"type": "call-status", "sessionId": rec.SessionID, "id": rec.CallID, "owner": rec.Owner,
+		"status": rec.Status, "peer": rec.Peer, "startedAt": rec.StartedAt, "held": rec.Held,
+	})
 	return true
 }
 

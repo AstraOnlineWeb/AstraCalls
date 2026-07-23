@@ -3,7 +3,7 @@ import { eventStream, type BrokerEvent } from "@/lib/event-stream";
 import { getClientId } from "@/lib/client-id";
 import { queryClient, queryKeys } from "@/lib/query";
 import type { OpenCall } from "@/lib/webrtc";
-import type { CallSummary, IncomingPayload } from "@/types/call";
+import type { CallSummary, IncomingPayload, TransferOfferPayload } from "@/types/call";
 
 // Estado de negociação de vídeo por chamada. peerVideo e os flags de upgrade vêm
 // do backend (SSE video-state); localVideo é dirigido pela câmera do próprio
@@ -27,6 +27,7 @@ type State = {
   ownConnections: Map<string, OpenCall>;
   videoStates: Map<string, CallVideoState>;
   incoming: IncomingPayload | null;
+  transferOffer: TransferOfferPayload | null;
 };
 
 export const useCalls = create<State>(() => ({
@@ -34,6 +35,7 @@ export const useCalls = create<State>(() => ({
   ownConnections: new Map(),
   videoStates: new Map(),
   incoming: null,
+  transferOffer: null,
 }));
 
 const patchVideo = (id: string, patch: Partial<CallVideoState>): void => {
@@ -72,6 +74,7 @@ export const ensureCallsWired = (): void => {
           ownConnections: next,
           videoStates: nextVideo,
           incoming: s.incoming?.callId === ev.id ? null : s.incoming,
+          transferOffer: s.transferOffer?.callId === ev.id ? null : s.transferOffer,
         };
       });
       void queryClient.invalidateQueries({ queryKey: queryKeys.history });
@@ -79,6 +82,15 @@ export const ensureCallsWired = (): void => {
       useCalls.setState({ incoming: { sessionId: ev.sessionId, callId: ev.id, peer: ev.peer, video: ev.video, offeredAt: ev.offeredAt } });
     } else if (ev.type === "incoming-claimed") {
       useCalls.setState((s) => (s.incoming?.callId === ev.id ? { incoming: null } : s));
+    } else if (ev.type === "call-transfer-offer") {
+      // Não mostra a oferta para quem iniciou a transferência.
+      if (ev.from !== getClientId()) {
+        useCalls.setState({
+          transferOffer: { sessionId: ev.sessionId, callId: ev.id, peer: ev.peer, from: ev.from, offeredAt: ev.offeredAt },
+        });
+      }
+    } else if (ev.type === "call-transfer-claimed") {
+      useCalls.setState((s) => (s.transferOffer?.callId === ev.id ? { transferOffer: null } : s));
     } else if (ev.type === "video-state") {
       // localVideo é do cliente: não sobrescreve com o valor do backend.
       patchVideo(ev.id, {
@@ -105,3 +117,5 @@ export const registerOwnConnection = (id: string, conn: OpenCall, initialVideo =
 export const setLocalVideoState = (id: string, on: boolean): void => patchVideo(id, { localVideo: on });
 
 export const clearIncoming = (): void => useCalls.setState({ incoming: null });
+
+export const clearTransferOffer = (): void => useCalls.setState({ transferOffer: null });
