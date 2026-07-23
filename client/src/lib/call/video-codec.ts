@@ -68,7 +68,7 @@ export class VideoSender {
 }
 
 export class VideoReceiver {
-  private decoder!: VideoDecoder;
+  private decoder: VideoDecoder;
   private writer: WritableStreamDefaultWriter<VideoFrame>;
   private ts = 0;
   private started = false;
@@ -79,10 +79,6 @@ export class VideoReceiver {
     const generator = new MediaStreamTrackGenerator({ kind: "video" });
     this.writer = generator.writable.getWriter();
     this.stream = new MediaStream([generator]);
-    this.initDecoder();
-  }
-
-  private initDecoder(): void {
     this.decoder = new VideoDecoder({
       output: (frame) => {
         if (this.writing) {
@@ -97,25 +93,14 @@ export class VideoReceiver {
             this.writing = false;
           });
       },
-      // Um keyframe corrompido (perda de pacote no canal não confiável) mata o
-      // decoder. Em vez de travar para sempre, marca para recriar e re-esperar
-      // um keyframe novo — o vídeo do peer volta assim que chegar um íntegro.
-      error: (e) => {
-        console.error("video decoder error", e);
-        this.started = false;
-      },
+      error: (e) => console.error("video decoder error", e),
     });
     this.decoder.configure({ codec: VIDEO_CODEC, optimizeForLatency: true });
-    this.started = false;
   }
 
   decode(data: ArrayBuffer): void {
     const bytes = new Uint8Array(data);
     const key = isAnnexBKeyframe(bytes);
-    // Se o decoder morreu (keyframe ruim), recria e só retoma num keyframe novo.
-    if (this.decoder.state === "closed") {
-      this.initDecoder();
-    }
     if (!this.started && !key) return;
     this.started = true;
     const chunk = new EncodedVideoChunk({
@@ -128,7 +113,6 @@ export class VideoReceiver {
       this.decoder.decode(chunk);
     } catch (e) {
       console.error("video decode error", e);
-      this.started = false; // força re-esperar um keyframe
     }
   }
 
