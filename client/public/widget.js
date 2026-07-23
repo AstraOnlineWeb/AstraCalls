@@ -24,6 +24,14 @@
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/></svg>';
   var ICON_WARN =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  var ICON_VIDEO =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>';
+  var ICON_VIDEO_OFF =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+  // Parâmetros do vídeo (espelham client/src/constants/video.ts). O transporte é um
+  // datachannel "h264" out-of-order com WebCodecs; o backend já trata isso.
+  var VIDEO = { LABEL: "h264", CODEC: "avc1.42E01F", W: 160, H: 120, FPS: 15, BITRATE: 50000, KF: 15 };
 
   function api(path, opts) {
     opts = opts || {};
@@ -64,7 +72,11 @@
     "#wacalls-panel .cw-mute.on{background:#e5484d;color:#fff}" +
     "#wacalls-panel .cw-mute svg{width:19px;height:19px}" +
     "#wacalls-panel .cw-warn{width:44px;height:44px;margin:0 auto 12px;border-radius:50%;background:#fff7c2;color:#9e6c00;display:flex;align-items:center;justify-content:center}" +
-    "#wacalls-panel .cw-warn svg{width:24px;height:24px}";
+    "#wacalls-panel .cw-warn svg{width:24px;height:24px}" +
+    "#wacalls-panel .cw-video{position:relative;margin:14px 0 2px;border-radius:10px;overflow:hidden;background:#000;aspect-ratio:4/3}" +
+    "#wacalls-panel .cw-video .cw-remote-v{width:100%;height:100%;object-fit:cover;display:block;background:#000}" +
+    "#wacalls-panel .cw-video .cw-local-v{position:absolute;right:8px;bottom:8px;width:72px;border-radius:6px;border:1px solid rgba(255,255,255,.25);object-fit:cover;background:#111}" +
+    "#wacalls-panel .cw-cam.on{background:#2781F6;color:#fff}";
   document.head.appendChild(style);
 
   // ---------- estado ----------
@@ -144,8 +156,12 @@
       body =
         '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
+        '<div class="cw-video" id="wacalls-video" style="display:none">' +
+        '<video class="cw-remote-v" id="wacalls-remote-v" autoplay playsinline></video>' +
+        '<video class="cw-local-v" id="wacalls-local-v" autoplay playsinline muted style="display:none"></video></div>' +
         '<div class="cw-st" id="wacalls-st">' + (state.status || "") + "</div>" +
         '<div class="cw-row"><button class="cw-act cw-mute" id="wacalls-mute" title="Mudo">' + ICON_MIC + "</button>" +
+        '<button class="cw-act cw-mute cw-cam" id="wacalls-cam" title="Ativar vídeo">' + ICON_VIDEO_OFF + "</button>" +
         '<button class="cw-act cw-hang" id="wacalls-hang" title="Encerrar">' + ICON_PHONE_OFF + "</button></div>" +
         '<audio id="wacalls-audio" autoplay></audio></div>';
     } else if (state.incoming) {
@@ -175,6 +191,10 @@
       p.querySelector("#wacalls-mute").onclick = function () {
         toggleMute(this);
       };
+    if (p.querySelector("#wacalls-cam"))
+      p.querySelector("#wacalls-cam").onclick = function () {
+        toggleCam(this);
+      };
   }
 
   function esc(s) {
@@ -197,6 +217,180 @@
     });
   }
 
+  // ---------- vídeo (WebCodecs H264 sobre datachannel) ----------
+  function videoSupported() {
+    return (
+      typeof window !== "undefined" &&
+      "VideoEncoder" in window &&
+      "VideoDecoder" in window &&
+      "MediaStreamTrackProcessor" in window &&
+      "MediaStreamTrackGenerator" in window
+    );
+  }
+
+  function isAnnexBKeyframe(b) {
+    for (var i = 0; i + 4 < b.length; i++) {
+      if (b[i] !== 0 || b[i + 1] !== 0) continue;
+      var sc = 0;
+      if (b[i + 2] === 1) sc = 3;
+      else if (b[i + 2] === 0 && b[i + 3] === 1) sc = 4;
+      if (sc === 0) continue;
+      var t = b[i + sc] & 0x1f;
+      if (t === 5 || t === 7) return true;
+      i += sc;
+    }
+    return false;
+  }
+
+  // Encoda a câmera e entrega cada access unit (Annex-B) via send().
+  function createVideoSender(track, send) {
+    var frameCount = 0, closed = false;
+    var encoder = new VideoEncoder({
+      output: function (chunk) {
+        var buf = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(buf);
+        send(buf.buffer);
+      },
+      error: function (e) { console.error("video encoder error", e); },
+    });
+    encoder.configure({
+      codec: VIDEO.CODEC, width: VIDEO.W, height: VIDEO.H, bitrate: VIDEO.BITRATE,
+      framerate: VIDEO.FPS, latencyMode: "realtime", avc: { format: "annexb" },
+    });
+    var reader = new MediaStreamTrackProcessor({ track: track }).readable.getReader();
+    function pump() {
+      reader.read().then(function (res) {
+        if (closed) return;
+        var frame = res.value;
+        if (res.done || !frame) return;
+        if (encoder.encodeQueueSize < 2) {
+          encoder.encode(frame, { keyFrame: frameCount % VIDEO.KF === 0 });
+          frameCount++;
+        }
+        frame.close();
+        pump();
+      }).catch(function () {});
+    }
+    pump();
+    return { close: function () { closed = true; try { reader.cancel(); } catch (e) {} try { encoder.close(); } catch (e) {} } };
+  }
+
+  // Decoda os access units recebidos e expõe um MediaStream para um <video>.
+  function createVideoReceiver() {
+    var generator = new MediaStreamTrackGenerator({ kind: "video" });
+    var writer = generator.writable.getWriter();
+    var stream = new MediaStream([generator]);
+    var ts = 0, started = false, writing = false;
+    var decoder = new VideoDecoder({
+      output: function (frame) {
+        if (writing) { frame.close(); return; }
+        writing = true;
+        writer.write(frame).catch(function () { frame.close(); }).finally(function () { writing = false; });
+      },
+      error: function (e) { console.error("video decoder error", e); },
+    });
+    decoder.configure({ codec: VIDEO.CODEC, optimizeForLatency: true });
+    return {
+      stream: stream,
+      decode: function (data) {
+        var bytes = new Uint8Array(data);
+        var key = isAnnexBKeyframe(bytes);
+        if (!started && !key) return; // espera o primeiro keyframe
+        started = true;
+        var chunk = new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: ts, data: bytes });
+        ts += 1000000 / VIDEO.FPS;
+        try { decoder.decode(chunk); } catch (e) { console.error("video decode error", e); }
+      },
+      close: function () { try { decoder.close(); } catch (e) {} try { writer.close(); } catch (e) {} },
+    };
+  }
+
+  var NO_VIDEO = { remoteVideoStream: null, startSender: function () {}, stopSender: function () {}, close: function () {} };
+
+  // Abre o datachannel "h264" (out-of-order) SEMPRE — mesmo em chamada de áudio —
+  // para permitir vídeo mid-call sem renegociar SDP. Nunca derruba o áudio se falhar.
+  function setupVideoChannel(pc) {
+    if (!videoSupported()) return NO_VIDEO;
+    try {
+      var receiver = createVideoReceiver();
+      var dc = pc.createDataChannel(VIDEO.LABEL, { ordered: false, maxRetransmits: 0 });
+      dc.binaryType = "arraybuffer";
+      dc.onmessage = function (e) { receiver.decode(e.data); };
+      var sender = null, pending = null, open = false;
+      function startNow(track) {
+        if (sender) sender.close();
+        sender = createVideoSender(track, function (au) { if (dc.readyState === "open") dc.send(au); });
+      }
+      dc.onopen = function () { open = true; if (pending) { startNow(pending); pending = null; } };
+      return {
+        remoteVideoStream: receiver.stream,
+        startSender: function (track) { if (open) startNow(track); else pending = track; },
+        stopSender: function () { try { if (sender) sender.close(); } catch (e) {} sender = null; pending = null; },
+        close: function () { try { if (sender) sender.close(); } catch (e) {} try { receiver.close(); } catch (e) {} },
+      };
+    } catch (e) {
+      console.warn("video channel setup failed; audio-only call", e);
+      return NO_VIDEO;
+    }
+  }
+
+  // Liga a câmera do widget e pede upgrade para o peer; ou desliga (downgrade).
+  async function toggleCam(btn) {
+    if (!call || !call.video) return;
+    if (call.localVideo) {
+      api("/api/sessions/" + call.session + "/calls/" + call.callId + "/video/stop", { method: "POST", body: {} }).catch(function () {});
+      call.video.stopSender();
+      if (call.camTrack) { try { call.camTrack.stop(); } catch (e) {} }
+      call.camTrack = null;
+      call.localVideo = false;
+      updateVideoUI();
+      return;
+    }
+    if (!videoSupported()) { setStatus("Vídeo não suportado neste navegador"); return; }
+    try {
+      var cam = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: VIDEO.W }, height: { ideal: VIDEO.H }, frameRate: { ideal: VIDEO.FPS } },
+      });
+      call.camTrack = cam.getVideoTracks()[0] || null;
+      if (!call.camTrack) return;
+      call.video.startSender(call.camTrack);
+      call.localVideo = true;
+      updateVideoUI();
+      await api("/api/sessions/" + call.session + "/calls/" + call.callId + "/video/request", { method: "POST", body: {} });
+    } catch (e) {
+      setStatus("Erro na câmera: " + (e.message || e));
+    }
+  }
+
+  // Reflete o estado do vídeo na UI: mostra/oculta a área, anexa os streams,
+  // atualiza o botão de câmera.
+  function updateVideoUI() {
+    if (!call) return;
+    var area = document.getElementById("wacalls-video");
+    var show = call.localVideo || call.peerVideo;
+    if (area) area.style.display = show ? "block" : "none";
+    var rv = document.getElementById("wacalls-remote-v");
+    if (rv && call.video && call.video.remoteVideoStream && rv.srcObject !== call.video.remoteVideoStream) {
+      rv.srcObject = call.video.remoteVideoStream;
+      rv.play().catch(function () {});
+    }
+    var lv = document.getElementById("wacalls-local-v");
+    if (lv) {
+      lv.style.display = call.localVideo ? "block" : "none";
+      var want = call.localVideo && call.camTrack ? call.camTrack : null;
+      if (want && (!lv.srcObject || lv.srcObject.getVideoTracks()[0] !== want)) {
+        lv.srcObject = new MediaStream([want]);
+        lv.play().catch(function () {});
+      }
+    }
+    var cam = document.getElementById("wacalls-cam");
+    if (cam) {
+      cam.innerHTML = call.localVideo ? ICON_VIDEO : ICON_VIDEO_OFF;
+      cam.classList.toggle("on", call.localVideo);
+      cam.title = call.localVideo ? "Desligar vídeo" : "Ativar vídeo";
+    }
+  }
+
   async function startCall(state) {
     render({ inCall: true, name: state.name, phone: state.phone, status: "Conectando…" });
     try {
@@ -213,6 +407,7 @@
           a.play().catch(function () {});
         }
       };
+      var video = setupVideoChannel(pc); // canal h264 sempre aberto (permite vídeo mid-call)
       var r = await api("/api/sessions/" + state.session + "/calls", {
         method: "POST",
         body: { phone: state.phone, duration_ms: 300000, record: false },
@@ -226,7 +421,8 @@
         body: { sdp_offer: pc.localDescription.sdp },
       });
       await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
-      call = { pc: pc, mic: mic, callId: callId, session: state.session, t0: null, timer: null, es: null, answered: false };
+      call = { pc: pc, mic: mic, callId: callId, session: state.session, t0: null, timer: null, es: null, answered: false, video: video, localVideo: false, peerVideo: false, camTrack: null };
+      updateVideoUI();
       setStatus("Chamando…");
       pc.onconnectionstatechange = function () {
         // NÃO usar a conexão do navegador como "atendida" — ela conecta na hora
@@ -279,7 +475,14 @@
     // chamada ativa (saída, ou entrada já aceita): controla cronômetro/fim
     if (call && msg.id === call.callId) {
       if (msg.type === "call-ended" || msg.status === "ended") hangup();
-      else if (msg.type === "call-status") {
+      else if (msg.type === "video-state") {
+        call.peerVideo = !!msg.peerVideo;
+        // o peer pediu vídeo: aceita para receber (câmera nossa só se o usuário ligar)
+        if (msg.upgradeIncoming) {
+          api("/api/sessions/" + call.session + "/calls/" + call.callId + "/video/accept", { method: "POST", body: {} }).catch(function () {});
+        }
+        updateVideoUI();
+      } else if (msg.type === "call-status") {
         if (msg.status === "connected") markAnswered();
         else if (!call.answered) setStatus("Chamando…");
       }
@@ -289,7 +492,7 @@
     if (msg.type === "incoming") {
       if (call) return; // já em chamada
       if (incoming && incoming.callId === msg.id) return; // já tocando esta chamada
-      incoming = { sessionId: msg.sessionId, callId: msg.id, peer: msg.peer || "" };
+      incoming = { sessionId: msg.sessionId, callId: msg.id, peer: msg.peer || "", video: !!msg.video };
       render({ incoming: true, phone: incoming.peer });
       playRing();
       return;
@@ -319,13 +522,17 @@
         var a = document.getElementById("wacalls-audio");
         if (a && ev.streams[0]) { a.srcObject = ev.streams[0]; a.play().catch(function () {}); }
       };
+      var video = setupVideoChannel(pc); // canal h264 sempre aberto
       var offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await iceComplete(pc);
       var ans = await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/webrtc", { method: "POST", body: { sdp_offer: pc.localDescription.sdp } });
       await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
-      call = { pc: pc, mic: mic, callId: inc.callId, session: inc.sessionId, t0: null, timer: null, es: null, answered: false };
-      markAnswered(); // nós atendemos → conta o tempo
+      call = { pc: pc, mic: mic, callId: inc.callId, session: inc.sessionId, t0: null, timer: null, es: null, answered: false, video: video, localVideo: false, peerVideo: !!inc.video, camTrack: null };
+      markAnswered();
+      updateVideoUI();
+      // Se a chamada recebida já é de vídeo, liga a câmera automaticamente.
+      if (inc.video) toggleCam(document.getElementById("wacalls-cam")); // nós atendemos → conta o tempo
     } catch (e) {
       setStatus("Erro: " + (e.message || e));
       try { await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId, { method: "DELETE" }); } catch (_) {}
@@ -384,6 +591,8 @@
         t.stop();
       });
     } catch (e) {}
+    try { if (c.video) c.video.close(); } catch (e) {}
+    try { if (c.camTrack) c.camTrack.stop(); } catch (e) {}
     try {
       c.pc.close();
     } catch (e) {}
