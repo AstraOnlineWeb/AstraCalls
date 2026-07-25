@@ -10,17 +10,29 @@ RUN npm run build
 
 # ---------- Stage 2: compila o codec MLow (libopus_mlow.so) ----------
 FROM debian:bookworm AS opus
+# TARGETARCH é injetado automaticamente pelo buildx (amd64 | arm64). Num `docker
+# build` comum (sem buildx) ele vem vazio -> usamos `uname -m` como fallback.
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git cmake ninja-build gcc g++ patchelf ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 RUN git clone --depth 1 https://github.com/edgardmessias/opus_mlow.git
 WORKDIR /build/opus_mlow
-# PORTABILIDADE: o fork força "-mavx" nos fontes do MLow (smpl_*), sem detecção de
-# CPU em runtime. Como o build roda num servidor com AVX, a lib sai com AVX embutido
-# e QUEBRA (SIGILL/SIGSEGV) em CPUs sem AVX (VPS/CPUs antigas). Os smpl_*.c são C puro
-# (zero intrínsecos), então baixamos p/ baseline SSE2 -> roda em qualquer x86-64.
-RUN sed -i 's/COMPILE_FLAGS -mavx/COMPILE_FLAGS -msse2/' CMakeLists.txt
+# PORTABILIDADE DO SIMD: o fork força "-mavx" nos fontes do MLow (smpl_*), sem
+# detecção de CPU em runtime. Os smpl_*.c são C puro (zero intrínsecos), então
+# ajustamos o flag por arquitetura:
+#  - x86-64: baixamos p/ baseline SSE2. Sem isso a lib sai com AVX embutido e
+#            QUEBRA (SIGILL/SIGSEGV) em CPUs/VPS sem AVX. Roda em qualquer x86-64.
+#  - arm64 : "-mavx"/"-msse2" nem existem no gcc ARM; trocamos por "-O2" (NEON é
+#            baseline no ARMv8, não precisa de flag) -> compila e roda nativo.
+RUN if [ "$TARGETARCH" = "arm64" ] || [ "$(uname -m)" = "aarch64" ]; then \
+        sed -i 's/COMPILE_FLAGS -mavx/COMPILE_FLAGS -O2/' CMakeLists.txt; \
+    else \
+        sed -i 's/COMPILE_FLAGS -mavx/COMPILE_FLAGS -msse2/' CMakeLists.txt; \
+    fi
+# As opções OPUS_X86_PRESUME_* só existem no ramo x86 do cmake do opus; em arm64
+# são inofensivas (variáveis não usadas), então mantê-las não quebra o build.
 RUN cmake -B build -G Ninja -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release \
         -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_BUILD_TESTING=OFF \
         -DOPUS_X86_PRESUME_AVX=OFF -DOPUS_X86_PRESUME_AVX2=OFF \
