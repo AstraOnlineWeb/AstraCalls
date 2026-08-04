@@ -254,7 +254,7 @@ func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []flo
 		fail("número inválido")
 		return
 	}
-	callID, err := s.startOutgoing(s.mgr.appCtx, peer, false)
+	callID, err := s.startOutgoing(s.mgr.appCtx, peer, false, false)
 	if err != nil {
 		fail(err.Error())
 		return

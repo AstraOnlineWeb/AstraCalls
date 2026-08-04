@@ -27,6 +27,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/pair-code", s.handleSessionPairCode)
 	mux.HandleFunc("POST /api/sessions/{sid}/pair-passkey", s.handlePairPasskey)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls", s.handleStartCall)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/fake", s.handleFakeCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
@@ -48,6 +49,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/location", s.handleSendLocation)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/contact", s.handleSendContact)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll", s.handleSendPoll)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/pix", s.handleSendPix)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/product", s.handleSendProduct)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/product-native", s.handleSendProductNative)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/link-preview", s.handleSendLinkPreview)
 	mux.HandleFunc("PUT /api/sessions/{sid}/messages/react", s.handleReact)
 	mux.HandleFunc("PUT /api/sessions/{sid}/messages/edit", s.handleEditMessage)
@@ -171,7 +175,7 @@ func (s *server) routes() http.Handler {
 	}
 	var handler http.Handler = mux
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
-		handler = withAuth(handler, key)
+		handler = withAuth(handler, key, os.Getenv("WACALLS_WIDGET_KEY"))
 	}
 	return withCORS(handler)
 }
@@ -192,7 +196,14 @@ func withCORS(h http.Handler) http.Handler {
 // withAuth protege as rotas /api/* com uma API key (header X-API-Key ou ?apiKey=).
 // Exceções: o webhook do Chatwoot (chamado externamente pelo próprio Chatwoot)
 // e os arquivos estáticos do painel (precisam carregar a tela de login).
-func withAuth(h http.Handler, key string) http.Handler {
+//
+// Segurança (issue #10): a chave-MESTRA (key) libera tudo; a chave de WIDGET
+// (widgetKey, opcional) libera SÓ a superfície que o widget do Chatwoot precisa
+// (resolve, eventos SSE e operações de chamada). Como o widget expõe a chave no
+// data-api-key/URL do EventSource, usar a de widget limita o estrago se ela
+// vazar: quem a pega NÃO consegue listar/apagar sessões, mandar mensagens nem
+// mexer na config do Chatwoot.
+func withAuth(h http.Handler, key, widgetKey string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook")
@@ -201,13 +212,31 @@ func withAuth(h http.Handler, key string) http.Handler {
 			if got == "" {
 				got = r.URL.Query().Get("apiKey")
 			}
-			if got != key {
+			ok := got == key || (widgetKey != "" && got == widgetKey && widgetAllowed(r))
+			if !ok {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+// widgetAllowed diz se a rota faz parte da superfície mínima do widget do
+// Chatwoot — a única coisa que a chave de widget (WACALLS_WIDGET_KEY) autoriza.
+func widgetAllowed(r *http.Request) bool {
+	p := r.URL.Path
+	switch {
+	case p == "/api/events": // SSE de chamadas
+		return true
+	case r.Method == http.MethodGet && p == "/api/chatwoot/resolve": // nome/telefone do contato
+		return true
+	// operações de chamada: iniciar, atender/recusar, webrtc, vídeo, encerrar
+	// (/api/sessions/{sid}/calls e abaixo). Não abre a gestão de sessões em si.
+	case strings.HasPrefix(p, "/api/sessions/") && strings.Contains(p, "/calls"):
+		return true
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -320,6 +349,12 @@ func (s *server) handleSessionPairCode(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleStartCall(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
 		s.doStartCall(sess, w, r)
+	}
+}
+
+func (s *server) handleFakeCall(w http.ResponseWriter, r *http.Request) {
+	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
+		s.doFakeCall(sess, w, r)
 	}
 }
 
@@ -515,7 +550,7 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 	}
 	peer := types.NewJID(normalizePhone(body.Phone), types.DefaultUserServer)
 
-	callID, err := sess.startOutgoing(r.Context(), peer, body.Video)
+	callID, err := sess.startOutgoing(r.Context(), peer, body.Video, body.Record)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -525,6 +560,43 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": callID}})
+}
+
+// doFakeCall dispara um "toque fantasma": faz o aparelho do destinatário tocar por
+// alguns segundos (offer) e encerra (terminate), sem estabelecer áudio/vídeo. Serve
+// só para chamar atenção. Corpo: {phone, video?, duration_ms?}. duration_ms default
+// 3000, teto 30000 (evita virar chamada real longa).
+func (s *server) doFakeCall(sess *Session, w http.ResponseWriter, r *http.Request) {
+	if sess.client.Store.ID == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not paired"})
+		return
+	}
+	var body struct {
+		Phone      string  `json:"phone"`
+		Video      bool    `json:"video"`
+		DurationMs flexInt `json:"duration_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Phone) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone required"})
+		return
+	}
+	dur := 3 * time.Second
+	if body.DurationMs.Int() > 0 {
+		dur = time.Duration(body.DurationMs.Int()) * time.Millisecond
+	}
+	if dur > 30*time.Second {
+		dur = 30 * time.Second
+	}
+	peer := types.NewJID(normalizePhone(body.Phone), types.DefaultUserServer)
+	callID, err := sess.fakeCall(r.Context(), peer, body.Video, dur)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"call":       map[string]string{"callId": callID},
+		"durationMs": dur.Milliseconds(),
+	})
 }
 
 func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request) {

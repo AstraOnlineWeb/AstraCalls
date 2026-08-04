@@ -28,6 +28,12 @@ const (
 	recChanCap = 512
 	// Chamadas muito curtas não têm conteúdo útil — não geram arquivo.
 	recMinSeconds = 3
+	// Limiar de ressincronização do posicionamento na timeline: dentro dele,
+	// frames de um mesmo lado são emendados em sequência (jitter de rede não
+	// vira buraco nem sobreposição); acima dele o lado reancora no relógio de
+	// chegada (silêncio real: mute, DTX, perda prolongada ou navegador que só
+	// conecta depois do início da chamada).
+	recResyncSamples = recSampleRate * 3 / 10 // 300 ms
 )
 
 // recordingDir é onde os MP3s finalizados ficam até serem baixados/enviados.
@@ -59,6 +65,17 @@ type callRecorder struct {
 
 	frames chan recFrame
 	mixed  []float32
+
+	// Posicionamento na timeline (só a goroutine de mixagem toca nisso): cada
+	// lado tem um cursor de amostras que avança com o próprio áudio, então o
+	// stream é emendado contínuo e o jitter de chegada não abre buracos nem
+	// sobrepõe frames do mesmo lado. O offset desconta o setup/toque anterior
+	// ao primeiro frame gravado — a duração do MP3 passa a bater com a da
+	// conversa de fato.
+	cursors   [2]int
+	cursorSet [2]bool
+	offset    int
+	offsetSet bool
 
 	// sendMu protege frames contra "send em canal fechado": writes tomam RLock
 	// (concorrentes), o fechamento toma Lock (exclusivo) e marca closed.
@@ -125,16 +142,49 @@ func (r *callRecorder) closeFrames() {
 func (r *callRecorder) mixLoop() {
 	defer close(r.doneMix)
 	for frame := range r.frames {
-		r.mixed = mixFrameInto(r.mixed, frame.at, frame.pcm)
+		r.place(frame)
 	}
 }
 
-// mixFrameInto posiciona um frame na timeline pela sua marca de chegada e o soma
-// (com clamp) ao buffer, crescendo-o conforme necessário.
-func mixFrameInto(buf []float32, at time.Duration, pcm []float32) []float32 {
+// place decide ONDE o frame entra na timeline. O relógio de chegada só ancora o
+// primeiro frame de cada lado e os casos em que a deriva do cursor passa do
+// limiar (silêncio real); no regime normal cada lado é um stream contínuo e os
+// frames são emendados em sequência — o mesmo papel do jitter buffer que o
+// navegador e o WhatsApp usam na reprodução ao vivo. Posicionar pelo relógio de
+// chegada (comportamento anterior) fazia frame atrasado virar buraco de zeros e
+// rajada pós-jitter virar soma sobreposta (distorção/clipping) na gravação.
+func (r *callRecorder) place(f recFrame) {
 	// O instante de chegada cobre o FIM do frame, então recuamos len(pcm)
 	// amostras para achar onde ele começa.
-	startIdx := int(at.Seconds()*float64(recSampleRate)) - len(pcm)
+	wall := int(f.at.Seconds()*float64(recSampleRate)) - len(f.pcm)
+	if wall < 0 {
+		wall = 0
+	}
+	side := int(f.side)
+	idx := r.cursors[side]
+	drift := wall - idx
+	if !r.cursorSet[side] || drift > recResyncSamples || drift < -recResyncSamples {
+		idx = wall
+		r.cursorSet[side] = true
+	}
+	r.cursors[side] = idx + len(f.pcm)
+	if !r.offsetSet {
+		// O primeiro frame gravado define o zero da timeline: o toque/setup
+		// antes de haver áudio não entra como silêncio no arquivo.
+		r.offset = idx
+		r.offsetSet = true
+	}
+	rel := idx - r.offset
+	if rel < 0 {
+		rel = 0 // âncora anterior ao zero (jitter na largada): cola no início
+	}
+	r.mixed = mixFrameInto(r.mixed, rel, f.pcm)
+}
+
+// mixFrameInto soma o frame (com clamp) ao buffer na posição dada, crescendo-o
+// conforme necessário. A soma existe para mixar os DOIS lados numa trilha mono;
+// sobreposição do mesmo lado não acontece mais (cursor sequencial em place).
+func mixFrameInto(buf []float32, startIdx int, pcm []float32) []float32 {
 	if startIdx < 0 {
 		startIdx = 0
 	}

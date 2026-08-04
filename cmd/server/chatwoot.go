@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,6 +137,66 @@ func (s *Session) realPhone(jid types.JID) string {
 	return jid.User
 }
 
+// resolvePeer converte o JID cru do peer de uma chamada (que costuma vir como
+// LID) no telefone real (PN) e, quando o contato é conhecido, no nome — para a
+// UI/widget mostrarem algo legível em vez de "123@lid" (issue #9).
+func (s *Session) resolvePeer(jidStr string) (phone, name string) {
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		return jidStr, ""
+	}
+	phone = s.realPhone(jid)
+	// tenta o nome tanto pelo JID original quanto pelo JID de telefone (os
+	// contatos costumam estar indexados pelo PN, não pelo LID).
+	lookup := []types.JID{jid}
+	if phone != "" {
+		lookup = append(lookup, types.NewJID(phone, types.DefaultUserServer))
+	}
+	for _, j := range lookup {
+		ci, err := s.client.Store.Contacts.GetContact(context.Background(), j)
+		if err != nil || !ci.Found {
+			continue
+		}
+		switch {
+		case ci.FullName != "":
+			return phone, ci.FullName
+		case ci.PushName != "":
+			return phone, ci.PushName
+		case ci.BusinessName != "":
+			return phone, ci.BusinessName
+		}
+	}
+	return phone, ""
+}
+
+// cwSystemContactID identifica o "contato de sistema" do AstraCalls no Chatwoot —
+// usado para postar avisos operacionais (ex.: sessão do WhatsApp desconectada).
+const cwSystemContactID = "astracalls-system"
+
+// chatwootAlert posta um AVISO do sistema na inbox do Chatwoot como mensagem
+// RECEBIDA (bolha à esquerda, não-lida) para chamar a atenção do atendente. É
+// usado quando algo operacional precisa de ação humana — hoje, quando a sessão
+// do WhatsApp cai e precisa reconectar. Best-effort: falha só loga.
+func (s *Session) chatwootAlert(text string) {
+	cfg := s.getChatwoot()
+	if !cfg.valid() {
+		return
+	}
+	contactID, sourceID, err := cfg.ensureContact(cwSystemContactID, "", "AstraCalls (sistema)", "")
+	if err != nil {
+		s.log.Error("chatwoot: alerta — ensure contact falhou", "err", err)
+		return
+	}
+	convID, err := cfg.ensureConversation(contactID, sourceID)
+	if err != nil {
+		s.log.Error("chatwoot: alerta — ensure conversation falhou", "err", err)
+		return
+	}
+	if err := cfg.postText(convID, text, cwIncoming, sourceID, "", 0); err != nil {
+		s.log.Error("chatwoot: alerta — post falhou", "err", err)
+	}
+}
+
 // shouldMirrorOwn decide se uma mensagem from_me deve ser espelhada no Chatwoot
 // como nota privada. Espelha o que a conta enviou por fora do Chatwoot: sempre o
 // que sai do APARELHO, e o que sai da nossa API quando mirror_api está ligado. O
@@ -181,6 +243,11 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	}
 }
 
+// mirrorDeviceTitle é o título colado antes de toda mensagem espelhada que a
+// conta enviou pelo APARELHO (fora do Chatwoot), para o atendente identificar a
+// origem na nota privada.
+const mirrorDeviceTitle = "📲 Enviado pelo aparelho:\n"
+
 // chatwootMirrorOwn espelha, como NOTA PRIVADA, uma mensagem 1:1 que a conta
 // enviou pelo aparelho — para o agente ver no Chatwoot o que foi dito por fora.
 // Não é reenviado ao contato (nota privada não dispara o webhook de saída).
@@ -209,7 +276,7 @@ func (s *Session) chatwootMirrorOwn(cfg ChatwootConfig, evt *events.Message) {
 		s.log.Error("chatwoot: ensure conversation (espelho) failed", "err", err)
 		return
 	}
-	s.chatwootDeliver(cfg, convID, evt, "", true)
+	s.chatwootDeliver(cfg, convID, evt, mirrorDeviceTitle, true)
 }
 
 // chatwootPushDirect trata a conversa 1:1 (comportamento original).
@@ -277,7 +344,7 @@ func (s *Session) chatwootMirrorOwnGroup(cfg ChatwootConfig, evt *events.Message
 	if author == "" {
 		author = "Você"
 	}
-	s.chatwootDeliver(cfg, convID, evt, "*"+author+" (você)*:\n", true)
+	s.chatwootDeliver(cfg, convID, evt, mirrorDeviceTitle+"*"+author+" (você)*:\n", true)
 }
 
 // groupConversation acha/cria o contato "grupo" (JID @g.us) e sua conversa.
@@ -698,7 +765,11 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		if len(attachments) == 1 {
 			caption = sign(content)
 		}
-		id, ferr := sess.sendChatwootFile(ctx, jid, asStr(a["file_type"]), url, caption, quote)
+		// Chatwoot já entrega mimetype e nome reais no anexo; sem isso o Android
+		// mostra documento como ".bin" (assume application/octet-stream).
+		nameHint := firstNonEmptyOf(asStr(a["file_name"]), asStr(a["filename"]))
+		mimeHint := firstNonEmptyOf(asStr(a["content_type"]), asStr(a["mimetype"]))
+		id, ferr := sess.sendChatwootFile(ctx, jid, asStr(a["file_type"]), url, caption, nameHint, mimeHint, quote)
 		if ferr != nil {
 			s.log.Error("chatwoot->wa: send file failed", "err", ferr)
 		} else if waMsgID == "" {
@@ -801,12 +872,14 @@ func (c ChatwootConfig) messageSourceID(convID, msgID int) string {
 }
 
 // sendChatwootFile baixa o anexo do Chatwoot e envia pelo WhatsApp (com citação opcional).
-func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType, url, caption string, quote *waE2E.ContextInfo) (string, error) {
+// nameHint/mimeHint vêm do payload do Chatwoot (file_name/content_type); são usados
+// no envio de documento para o WhatsApp Android não exibir o arquivo como ".bin".
+func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType, url, caption, nameHint, mimeHint string, quote *waE2E.ContextInfo) (string, error) {
 	data, err := fetchMedia("", url)
 	if err != nil {
 		return "", err
 	}
-	filename := url[strings.LastIndex(url, "/")+1:]
+	filename := firstNonEmptyOf(nameHint, fileNameFromURL(url))
 	switch fileType {
 	case "image":
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaImage)
@@ -855,9 +928,14 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 		if e != nil {
 			return "", e
 		}
+		// Resolve mimetype/nome reais: hint do Chatwoot > extensão do arquivo >
+		// fallback genérico. Garante que o nome carregue a extensão (Android usa
+		// isso para exibir o tipo em vez de ".bin").
+		mime := firstNonEmptyOf(mimeHint, mimeByFileName(filename), "application/octet-stream")
+		filename = ensureFileExt(filename, mime)
 		return s.sendAndMark(ctx, jid, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
 			FileName: proto.String(filename), Title: proto.String(filename),
-			Mimetype: proto.String("application/octet-stream"),
+			Mimetype: proto.String(mime),
 			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 			ContextInfo: quote,
@@ -1164,6 +1242,53 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// fileNameFromURL extrai o nome do arquivo do último segmento da URL, sem
+// query string nem fragmento (data_url do Chatwoot já traz o nome real).
+func fileNameFromURL(u string) string {
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	name := u[strings.LastIndex(u, "/")+1:]
+	if dec, err := url.PathUnescape(name); err == nil {
+		name = dec
+	}
+	return name
+}
+
+// mimeByFileName deduz o mimetype pela extensão do nome (ex.: .pdf ->
+// application/pdf). Devolve "" se não reconhecer.
+func mimeByFileName(name string) string {
+	ext := filepath.Ext(name)
+	if ext == "" {
+		return ""
+	}
+	if t := mime.TypeByExtension(ext); t != "" {
+		if i := strings.IndexByte(t, ';'); i >= 0 { // remove "; charset=..."
+			t = t[:i]
+		}
+		return strings.TrimSpace(t)
+	}
+	return ""
+}
+
+// ensureFileExt garante que o nome tenha extensão; se faltar, deriva do mimetype
+// (o WhatsApp Android usa a extensão do nome para exibir o tipo do documento).
+func ensureFileExt(name, mimeType string) string {
+	if name == "" {
+		name = "arquivo"
+	}
+	if filepath.Ext(name) != "" {
+		return name
+	}
+	if i := strings.IndexByte(mimeType, ';'); i >= 0 {
+		mimeType = mimeType[:i]
+	}
+	if exts, _ := mime.ExtensionsByType(strings.TrimSpace(mimeType)); len(exts) > 0 {
+		return name + exts[0]
+	}
+	return name
 }
 
 // downloadableOf devolve a parte de mídia da mensagem (ou nil se for texto).

@@ -46,6 +46,10 @@ type Session struct {
 	recording bool   // grava as chamadas desta sessão (opt-in)
 	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)
 
+	// downAlerted evita repetir o aviso de "sessão desconectada" no Chatwoot
+	// enquanto ela segue caída; volta a false ao reconectar (events.Connected).
+	downAlerted bool
+
 	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou, com a origem
 	// (API ou agente do Chatwoot), para decidir o que fazer quando voltarem como
 	// evento from_me. msgID -> selfSent.
@@ -196,11 +200,13 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 	return s
 }
 
-func (s *Session) createCall(callID string) *call.CallManager {
+// createCall monta a chamada. record liga a gravação nesta chamada específica —
+// o chamador combina o opt-in por sessão (getRecording) com o flag por chamada.
+func (s *Session) createCall(callID string, record bool) *call.CallManager {
 	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
 	s.wireCall(cm, callID)
 	ac := &activeCall{cm: cm}
-	if s.getRecording() {
+	if record {
 		ac.recorder = newCallRecorder(callID, s.log, time.Now())
 	}
 	s.reg.add(callID, ac)
@@ -209,11 +215,15 @@ func (s *Session) createCall(callID string) *call.CallManager {
 
 func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	cm.OnIncoming = func(c *call.CallInfo) {
+		// numa chamada o PeerJid quase sempre vem como LID (123@lid); resolve pro
+		// telefone real (PN) e, se der, pro nome do contato — senão a UI/widget
+		// mostra o LID cru (issue #9).
+		phone, name := s.resolvePeer(c.PeerJid)
 		s.mgr.broker.upsertCall(CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
-		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, c.MediaType == core.CallMediaTypeVideo)
+		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, name, c.MediaType == core.CallMediaTypeVideo)
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {
@@ -275,14 +285,23 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 }
 
-func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
+func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo, record bool) (string, error) {
 	callID := signaling.GenerateCallID()
-	cm := s.createCall(callID)
+	// grava se a sessão está em modo gravação OU se esta chamada pediu (flag record)
+	cm := s.createCall(callID, record || s.getRecording())
 	if err := cm.StartCall(ctx, callID, peer, isVideo); err != nil {
 		s.removeCall(callID)
 		return "", err
 	}
 	return callID, nil
+}
+
+// fakeCall dispara um toque fantasma (offer + terminate após dur) sem estabelecer
+// mídia. Usa um CallManager transiente NÃO registrado no reg: é fire-and-forget e
+// não deve ocupar o slot de chamada real da sessão.
+func (s *Session) fakeCall(ctx context.Context, peer types.JID, isVideo bool, dur time.Duration) (string, error) {
+	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
+	return cm.FakeCall(ctx, peer, isVideo, dur)
 }
 
 func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall, bool) {
@@ -303,7 +322,7 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 		s.rejectOffer(ctx, node, evt.From)
 		return
 	}
-	cm := s.createCall(callID)
+	cm := s.createCall(callID, s.getRecording())
 	cm.HandleCallOffer(ctx, node, evt.From)
 }
 
@@ -347,12 +366,27 @@ func (s *Session) handleEvent(rawEvt any) {
 			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
 		}
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
+		// reconectou: rearma o aviso de queda para a próxima desconexão real.
+		s.mu.Lock()
+		s.downAlerted = false
+		s.mu.Unlock()
 		// always_online: mantém a presença sempre disponível (reenvia a cada reconexão).
 		if s.getChatwoot().AlwaysOnline {
 			go func() { _ = s.client.SendPresence(ctx, types.PresenceAvailable) }()
 		}
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+		go s.notifyDisconnected("desconectada (o aparelho desvinculou este dispositivo)",
+			"Reconecte lendo o QR no painel do AstraCalls para voltar a enviar e receber.")
+	case *events.StreamReplaced:
+		go s.notifyDisconnected("substituída por outra conexão do mesmo número",
+			"Se não foi proposital, reconecte pelo painel do AstraCalls.")
+	case *events.TemporaryBan:
+		go s.notifyDisconnected("bloqueada temporariamente pelo WhatsApp ("+evt.String()+")",
+			"Aguarde o fim do bloqueio e evite disparos em massa.")
+	case *events.ClientOutdated:
+		go s.notifyDisconnected("recusada pelo WhatsApp: cliente desatualizado",
+			"É necessário atualizar o AstraCalls. Avise o suporte técnico.")
 	case *events.Message:
 		switch {
 		case evt.Message.GetPollUpdateMessage() != nil:
@@ -510,6 +544,28 @@ func (s *Session) setAuth(a AuthSnapshot) {
 	s.mu.Unlock()
 	s.mgr.broker.emitAuthState(s.id, a)
 	s.mgr.broker.emitSessionList(s.mgr.infos())
+}
+
+// notifyDisconnected avisa — UMA vez por queda — que a sessão do WhatsApp caiu:
+// dispara o webhook "session_status" e posta um alerta na inbox do Chatwoot para
+// o atendente ver que precisa reconectar. reason descreve o que houve; action é a
+// instrução. O guard downAlerted (resetado em events.Connected) evita repetição.
+func (s *Session) notifyDisconnected(reason, action string) {
+	s.mu.Lock()
+	if s.downAlerted {
+		s.mu.Unlock()
+		return
+	}
+	s.downAlerted = true
+	s.mu.Unlock()
+
+	s.log.Warn("sessão do WhatsApp desconectada — avisando", "reason", reason)
+	s.dispatchWebhook("session_status", map[string]any{
+		"status": "disconnected", "reason": reason, "session": s.id, "name": s.name,
+	})
+	text := "⚠️ *AstraCalls — WhatsApp desconectado*\n" +
+		"A sessão *" + s.name + "* foi " + reason + ".\n" + action
+	s.chatwootAlert(text)
 }
 
 func (s *Session) info() SessionInfo {

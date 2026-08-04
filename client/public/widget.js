@@ -1,7 +1,13 @@
 /*
  * AstraCalls — widget de chamada para o Chatwoot.
  * Carregue no Chatwoot (super_admin > app_config > internal), no campo de scripts:
- *   <script src="https://SEU-WACALLS/widget.js" data-api-key="SUA_API_KEY"></script>
+ *   <script src="https://SEU-WACALLS/widget.js" data-api-key="SUA_WIDGET_KEY"></script>
+ * IMPORTANTE (segurança, issue #10): use aqui a CHAVE DE WIDGET
+ * (WACALLS_WIDGET_KEY), NÃO a chave-mestra (WACALLS_API_KEY). A chave fica
+ * visível no DOM/rede pra todo agente; a de widget só autoriza resolver contato,
+ * receber eventos e operar chamadas — nunca listar/apagar sessões ou mandar
+ * mensagens. Se WACALLS_WIDGET_KEY não estiver configurada, a mestra ainda
+ * funciona (compatível), mas aí a chave exposta tem acesso total — evite.
  * Injeta um ícone de telefone ao lado do botão de excluir ticket; ao clicar,
  * abre um painel flutuante e liga para o contato via WhatsApp (WebRTC).
  */
@@ -492,8 +498,10 @@
     if (msg.type === "incoming") {
       if (call) return; // já em chamada
       if (incoming && incoming.callId === msg.id) return; // já tocando esta chamada
-      incoming = { sessionId: msg.sessionId, callId: msg.id, peer: msg.peer || "", video: !!msg.video };
-      render({ incoming: true, phone: incoming.peer });
+      // phone/name resolvidos pelo backend (issue #9); peer (LID cru) só como último fallback
+      var incPhone = msg.phone || msg.peer || "";
+      incoming = { sessionId: msg.sessionId, callId: msg.id, peer: incPhone, name: msg.name || "", video: !!msg.video };
+      render({ incoming: true, phone: incoming.name ? incoming.name + " · " + incPhone : incPhone });
       playRing();
       return;
     }

@@ -44,7 +44,7 @@ func TestEmitIncomingEscopadoPorConta(t *testing.T) {
 	widget5 := b.subscribe("w5", 5)    // widget da conta 5
 	widget9 := b.subscribe("w9", 9)    // widget da conta 9
 
-	b.emitIncoming("sess-da-conta-5", "call-1", "5511999999999", false)
+	b.emitIncoming("sess-da-conta-5", "call-1", "5511999999999@lid", "5511999999999", "", false)
 
 	if !hasType(drain(admin), "incoming") {
 		t.Error("painel admin deveria receber a chamada recebida")
@@ -66,7 +66,7 @@ func TestEmitIncomingSessaoSemChatwoot(t *testing.T) {
 	admin := b.subscribe("painel", 0)
 	widget := b.subscribe("w7", 7)
 
-	b.emitIncoming("sess-sem-cw", "call-x", "peer", false)
+	b.emitIncoming("sess-sem-cw", "call-x", "peer", "", "", false)
 
 	if !hasType(drain(admin), "incoming") {
 		t.Error("painel admin deveria receber")
@@ -83,7 +83,7 @@ func TestEmitIncomingSemResolvedor(t *testing.T) {
 	admin := b.subscribe("painel", 0)
 	widget := b.subscribe("w1", 1)
 
-	b.emitIncoming("qualquer", "c1", "p", false)
+	b.emitIncoming("qualquer", "c1", "p", "", "", false)
 
 	if !hasType(drain(admin), "incoming") {
 		t.Error("admin deveria receber mesmo sem resolvedor")
