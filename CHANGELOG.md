@@ -2,6 +2,70 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v0.0.5 — 2026-08-10
+
+Atualização grande: chamadas de vídeo, controles de chamada (espera e
+transferência), entrega resiliente ao Chatwoot e vários novos envios.
+
+### 📞 Chamadas de voz e vídeo
+
+- **Chamada de vídeo (H264)** — envio e recebimento, no formato de extensão RTP
+  atual do WhatsApp.
+- **Sinalização de chamada corrigida** para o WhatsApp atual — antes a chamada
+  não tocava no destino.
+- **Upgrade/downgrade de vídeo no meio da chamada** (painel +
+  `POST /api/sessions/{sid}/calls/{id}/video/{action}`).
+- **Espera (hold/resume)** com música de espera e **atender em espera**.
+- **Transferência cega** entre atendentes (troca de dono + ponte, sem tocar a
+  perna do WhatsApp).
+- **Toque fantasma** (fake call) — `POST /api/sessions/{sid}/calls/fake`.
+- **Gravação:** flag `record` por chamada no start (além do opt-in da sessão) e
+  correção do **áudio picotado** (mixagem por cursor de amostras, resync só em
+  drift > 300 ms).
+- Chamada recebida mostra **nome/telefone reais** (resolve LID → PN) em vez de
+  `@lid`.
+- Transporte: desliga mDNS e limita relays discados/abertos por chamada.
+
+### 💬 Integração com o Chatwoot
+
+- **Fila de reentrega durável:** mensagens recebidas não se perdem se o Chatwoot
+  ficar indisponível — retry com backoff exponencial, persistente (sobrevive a
+  restart do serviço) e idempotente por `source_id` (não duplica).
+- **Legenda de documento na entrada:** PDF/arquivo com legenda chegava com o
+  texto vazio → corrigido.
+- **Documento como ".bin" no Android:** passa a usar mimetype e nome reais do
+  anexo, com fallback por extensão.
+- **Importa o histórico** de conversas para o Chatwoot ao conectar a conta.
+- **Espelha mensagens enviadas pela API** (toggle `mirror_api`).
+- Mensagens enviadas **pelo aparelho** entram como nota privada ("Enviado pelo
+  aparelho").
+- **Aviso de sessão desconectada** no Chatwoot (LoggedOut / StreamReplaced /
+  TemporaryBan / ClientOutdated) via contato de sistema + webhook.
+- **Chamada recebida escopada por conta** (multi-tenant) — não vaza para o widget
+  de outra empresa.
+- **Vídeo no widget do Chatwoot** (WebCodecs H264 sobre datachannel).
+
+### 📤 Envios (API)
+
+- **Documento com legenda:** o texto agora vai junto com o arquivo — no envio pelo
+  Chatwoot e na API (novo campo `caption`), embrulhado em
+  `documentWithCaptionMessage` (formato oficial do WhatsApp).
+- **Figurinha** (sticker WebP).
+- **Pix** (BR Code).
+- **Produto** (imagem + legenda) e **produto nativo** (catálogo).
+- Helper `flexFloat`: aceita numérico como string (compatibilidade com n8n).
+
+### 🔒 Segurança
+
+- **Chave de widget escopada** (`WACALLS_WIDGET_KEY`): o widget só acessa o
+  necessário (`/api/events`, resolução de contato e endpoints de chamada); o
+  painel segue com a chave mestre.
+
+### 🖥️ Painel & Build
+
+- Exibe o **ID da sessão** no cabeçalho, com botão de copiar.
+- **Dockerfile arch-aware:** habilita o build **ARM64** do codec MLow.
+
 ## v0.0.4 — 2026-07-10
 
 ### 🐛 Correções
