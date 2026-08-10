@@ -1342,6 +1342,7 @@ func ensureFileExt(name, mimeType string) string {
 // downloadableOf devolve a parte de mídia da mensagem (ou nil se for texto).
 func downloadableOf(m *waE2E.Message) whatsmeow.DownloadableMessage {
 	m, _ = unwrapViewOnce(m)
+	m = unwrapDocCaption(m)
 	switch {
 	case m.GetImageMessage() != nil:
 		return m.GetImageMessage()
@@ -1365,6 +1366,7 @@ func downloadableOf(m *waE2E.Message) whatsmeow.DownloadableMessage {
 // mediaMeta devolve (filename, mimetype) p/ a mídia recebida.
 func mediaMeta(m *waE2E.Message) (string, string) {
 	m, _ = unwrapViewOnce(m)
+	m = unwrapDocCaption(m)
 	switch {
 	case m.GetImageMessage() != nil:
 		return "image.jpg", firstNonEmpty(m.GetImageMessage().GetMimetype(), "image/jpeg")

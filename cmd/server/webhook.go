@@ -87,10 +87,23 @@ func unwrapViewOnce(m *waE2E.Message) (*waE2E.Message, bool) {
 	return m, false
 }
 
+// unwrapDocCaption desembrulha o documentWithCaptionMessage (wrapper que o
+// WhatsApp usa p/ documento COM legenda), devolvendo o documentMessage interno
+// (que carrega o Caption). O whatsmeow já faz isso nos eventos ao vivo
+// (evt.UnwrapRaw), mas o HistorySync entrega a mensagem crua — então garantimos
+// aqui para não perder o arquivo/legenda na importação.
+func unwrapDocCaption(m *waE2E.Message) *waE2E.Message {
+	if inner := m.GetDocumentWithCaptionMessage().GetMessage(); inner != nil {
+		return inner
+	}
+	return m
+}
+
 // messageContextInfo devolve o ContextInfo da mensagem (onde fica o StanzaID da
 // mensagem citada, quando é uma resposta). Nil se não houver.
 func messageContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
 	m, _ = unwrapViewOnce(m)
+	m = unwrapDocCaption(m)
 	switch {
 	case m.GetExtendedTextMessage() != nil:
 		return m.GetExtendedTextMessage().GetContextInfo()
@@ -114,6 +127,7 @@ func messageContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
 
 func messageText(m *waE2E.Message) string {
 	m, _ = unwrapViewOnce(m)
+	m = unwrapDocCaption(m)
 	switch {
 	case m.GetConversation() != "":
 		return m.GetConversation()
@@ -123,6 +137,11 @@ func messageText(m *waE2E.Message) string {
 		return m.GetImageMessage().GetCaption()
 	case m.GetVideoMessage() != nil:
 		return m.GetVideoMessage().GetCaption()
+	case m.GetDocumentMessage() != nil:
+		// documento COM legenda: o WhatsApp manda documentWithCaptionMessage, mas o
+		// whatsmeow já desembrulha p/ documentMessage (evt.UnwrapRaw), deixando a
+		// legenda no Caption. Sem este caso, a legenda do PDF/arquivo se perdia.
+		return m.GetDocumentMessage().GetCaption()
 	case m.GetProductMessage() != nil:
 		return productText(m.GetProductMessage())
 	case m.GetOrderMessage() != nil:
@@ -143,6 +162,7 @@ func messageText(m *waE2E.Message) string {
 
 func messageType(m *waE2E.Message) string {
 	m, _ = unwrapViewOnce(m)
+	m = unwrapDocCaption(m)
 	switch {
 	case m.GetConversation() != "" || m.GetExtendedTextMessage() != nil:
 		return "text"
