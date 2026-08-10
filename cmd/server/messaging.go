@@ -182,13 +182,27 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+// documentWithCaption monta a mensagem de documento, embrulhando-a em
+// documentWithCaptionMessage quando há legenda. É o formato que o WhatsApp oficial
+// usa para exibir a legenda do arquivo; um documentMessage.Caption "solto" muitas
+// vezes não aparece no destino. Sem legenda, envia o documentMessage puro.
+func documentWithCaption(doc *waE2E.DocumentMessage, caption string) *waE2E.Message {
+	if caption != "" {
+		doc.Caption = proto.String(caption)
+		return &waE2E.Message{DocumentWithCaptionMessage: &waE2E.FutureProofMessage{
+			Message: &waE2E.Message{DocumentMessage: doc},
+		}}
+	}
+	return &waE2E.Message{DocumentMessage: doc}
+}
+
 func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 	sess := s.pairedSession(w, r.PathValue("sid"))
 	if sess == nil {
 		return
 	}
 	var b struct {
-		To, Base64, URL, FileName, Mimetype string
+		To, Base64, URL, FileName, Mimetype, Caption string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaDocument)
@@ -203,11 +217,11 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "file"
 	}
-	s.send(sess, w, r, b.To, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+	s.send(sess, w, r, b.To, documentWithCaption(&waE2E.DocumentMessage{
 		FileName: proto.String(name), Title: proto.String(name), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-	}})
+	}, b.Caption))
 }
 
 func (s *server) handleSendSticker(w http.ResponseWriter, r *http.Request) {

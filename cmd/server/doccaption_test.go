@@ -60,6 +60,35 @@ func TestDocumentWithCaptionWrapper(t *testing.T) {
 	}
 }
 
+// SAÍDA: documento com legenda vira documentWithCaptionMessage (formato oficial);
+// sem legenda, documentMessage puro. E o que enviamos precisa ser lido de volta
+// pelo extrator (mirror/eco no Chatwoot).
+func TestDocumentWithCaptionBuilder(t *testing.T) {
+	doc := &waE2E.DocumentMessage{
+		FileName: proto.String("nota.pdf"), Mimetype: proto.String("application/pdf"),
+	}
+	m := documentWithCaption(doc, "segue a nota")
+	if m.GetDocumentWithCaptionMessage() == nil {
+		t.Fatal("com legenda deveria embrulhar em documentWithCaptionMessage")
+	}
+	if c := m.GetDocumentWithCaptionMessage().GetMessage().GetDocumentMessage().GetCaption(); c != "segue a nota" {
+		t.Fatalf("caption interno = %q, esperava 'segue a nota'", c)
+	}
+	// round-trip: o extrator de entrada (mirror/eco) lê a legenda de volta.
+	if txt := messageText(m); txt != "segue a nota" {
+		t.Fatalf("messageText do enviado = %q, esperava a legenda", txt)
+	}
+
+	// sem legenda: documentMessage puro, sem wrapper.
+	plain := documentWithCaption(&waE2E.DocumentMessage{FileName: proto.String("x.pdf")}, "")
+	if plain.GetDocumentWithCaptionMessage() != nil {
+		t.Fatal("sem legenda não deveria embrulhar")
+	}
+	if plain.GetDocumentMessage() == nil {
+		t.Fatal("sem legenda deveria ser documentMessage puro")
+	}
+}
+
 // documento SEM legenda: texto vazio (só o arquivo é entregue).
 func TestDocumentNoCaption(t *testing.T) {
 	m := &waE2E.Message{

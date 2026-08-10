@@ -981,13 +981,15 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 		// isso para exibir o tipo em vez de ".bin").
 		mime := firstNonEmptyOf(mimeHint, mimeByFileName(filename), "application/octet-stream")
 		filename = ensureFileExt(filename, mime)
-		return s.sendAndMark(ctx, jid, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+		// documento COM legenda: repassa o content do Chatwoot como caption, no mesmo
+		// tratamento de imagem/vídeo (embrulhado em documentWithCaptionMessage).
+		return s.sendAndMark(ctx, jid, documentWithCaption(&waE2E.DocumentMessage{
 			FileName: proto.String(filename), Title: proto.String(filename),
 			Mimetype: proto.String(mime),
 			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 			ContextInfo: quote,
-		}})
+		}, caption))
 	}
 }
 
