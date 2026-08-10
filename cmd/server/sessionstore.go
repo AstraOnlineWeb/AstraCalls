@@ -59,6 +59,25 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages (session_id, chat_jid, ts DESC)`)
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_session_ts ON messages (session_id, ts DESC)`)
 
+	// Fila de reentrega das entradas do Chatwoot (ver chatwoot_outbox.go). Sobrevive
+	// a restart do AstraCalls: se o Chatwoot cai, a mensagem fica aqui e é reentregue
+	// com backoff em vez de se perder.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS chatwoot_outbox (
+		id         BIGSERIAL PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		source_id  TEXT NOT NULL,
+		payload    JSONB NOT NULL,
+		attempts   INT NOT NULL DEFAULT 0,
+		next_at    BIGINT NOT NULL,
+		created_at BIGINT NOT NULL,
+		last_error TEXT,
+		dead       BOOLEAN NOT NULL DEFAULT false,
+		UNIQUE (session_id, source_id)
+	)`); err != nil {
+		return nil, err
+	}
+	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS chatwoot_outbox_due ON chatwoot_outbox (dead, next_at)`)
+
 	return &sessionStore{db: db}, nil
 }
 

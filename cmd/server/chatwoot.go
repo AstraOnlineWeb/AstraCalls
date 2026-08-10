@@ -261,22 +261,16 @@ func (s *Session) chatwootMirrorOwn(cfg ChatwootConfig, evt *events.Message) {
 			phone = s.realPhone(chat)
 		}
 	}
-	chatID := phone + "@" + types.DefaultUserServer
 	avatar := ""
 	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), chat, nil); perr == nil && pp != nil {
 		avatar = pp.URL
 	}
-	contactID, sourceID, err := cfg.ensureContact(chatID, phone, phone, avatar)
-	if err != nil {
-		s.log.Error("chatwoot: ensure contact (espelho) failed", "err", err)
-		return
-	}
-	convID, err := cfg.ensureConversation(contactID, sourceID)
-	if err != nil {
-		s.log.Error("chatwoot: ensure conversation (espelho) failed", "err", err)
-		return
-	}
-	s.chatwootDeliver(cfg, convID, evt, mirrorDeviceTitle, true)
+	j := deliverContent(evt, mirrorDeviceTitle, true)
+	j.ChatID = phone + "@" + types.DefaultUserServer
+	j.Phone = phone
+	j.Name = phone
+	j.Avatar = avatar
+	s.chatwootSend(cfg, j)
 }
 
 // chatwootPushDirect trata a conversa 1:1 (comportamento original).
@@ -291,27 +285,20 @@ func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
 			phone = s.realPhone(chat)
 		}
 	}
-	chatID := phone + "@" + types.DefaultUserServer
 	name := evt.Info.PushName
 	if name == "" {
 		name = phone
 	}
-
 	avatar := ""
 	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), evt.Info.Chat, nil); perr == nil && pp != nil {
 		avatar = pp.URL
 	}
-	contactID, sourceID, err := cfg.ensureContact(chatID, phone, name, avatar)
-	if err != nil {
-		s.log.Error("chatwoot: ensure contact failed", "err", err)
-		return
-	}
-	convID, err := cfg.ensureConversation(contactID, sourceID)
-	if err != nil {
-		s.log.Error("chatwoot: ensure conversation failed", "err", err)
-		return
-	}
-	s.chatwootDeliver(cfg, convID, evt, "", false)
+	j := deliverContent(evt, "", false)
+	j.ChatID = phone + "@" + types.DefaultUserServer
+	j.Phone = phone
+	j.Name = name
+	j.Avatar = avatar
+	s.chatwootSend(cfg, j)
 }
 
 // chatwootPushGroup abre/atualiza uma conversa no Chatwoot para um GRUPO. O
@@ -319,45 +306,53 @@ func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
 // prefixada com o nome/telefone de quem escreveu, já que a inbox tem 1 contato
 // por conversa.
 func (s *Session) chatwootPushGroup(cfg ChatwootConfig, evt *events.Message) {
-	convID, err := s.groupConversation(cfg, evt.Info.Chat)
-	if err != nil {
-		s.log.Error("chatwoot: ensure group conversation failed", "err", err)
-		return
-	}
+	chatID, name, avatar := s.groupJobTarget(evt.Info.Chat)
 	author := evt.Info.PushName
 	if author == "" {
 		author = s.realPhone(evt.Info.Sender)
 	}
-	s.chatwootDeliver(cfg, convID, evt, "*"+author+"*:\n", false)
+	j := deliverContent(evt, "*"+author+"*:\n", false)
+	j.ChatID = chatID
+	j.Name = name
+	j.Avatar = avatar
+	s.chatwootSend(cfg, j)
 }
 
 // chatwootMirrorOwnGroup espelha, como NOTA PRIVADA na conversa do grupo, uma
 // mensagem que a conta enviou PELO APARELHO dentro de um grupo — para o agente ver
 // no Chatwoot o que o dono da conta falou por fora. Não reenvia nada ao grupo.
 func (s *Session) chatwootMirrorOwnGroup(cfg ChatwootConfig, evt *events.Message) {
-	convID, err := s.groupConversation(cfg, evt.Info.Chat)
-	if err != nil {
-		s.log.Error("chatwoot: ensure group conversation (espelho) failed", "err", err)
-		return
-	}
+	chatID, name, avatar := s.groupJobTarget(evt.Info.Chat)
 	author := s.client.Store.PushName
 	if author == "" {
 		author = "Você"
 	}
-	s.chatwootDeliver(cfg, convID, evt, mirrorDeviceTitle+"*"+author+" (você)*:\n", true)
+	j := deliverContent(evt, mirrorDeviceTitle+"*"+author+" (você)*:\n", true)
+	j.ChatID = chatID
+	j.Name = name
+	j.Avatar = avatar
+	s.chatwootSend(cfg, j)
+}
+
+// groupJobTarget resolve a identidade do "contato grupo" no Chatwoot (identifier,
+// nome e avatar) a partir do JID do grupo. Só fala com o WhatsApp — nada de
+// Chatwoot —, então serve tanto para a entrega imediata quanto para montar o job
+// de reentrega.
+func (s *Session) groupJobTarget(group types.JID) (chatID, name, avatar string) {
+	chatID = group.String() // 1203...@g.us
+	name = chatID
+	if gi, err := s.client.GetGroupInfo(context.Background(), group); err == nil && gi.Name != "" {
+		name = gi.Name
+	}
+	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), group, nil); perr == nil && pp != nil {
+		avatar = pp.URL
+	}
+	return
 }
 
 // groupConversation acha/cria o contato "grupo" (JID @g.us) e sua conversa.
 func (s *Session) groupConversation(cfg ChatwootConfig, group types.JID) (int, error) {
-	chatID := group.String() // 1203...@g.us
-	name := chatID
-	if gi, err := s.client.GetGroupInfo(context.Background(), group); err == nil && gi.Name != "" {
-		name = gi.Name
-	}
-	avatar := ""
-	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), group, nil); perr == nil && pp != nil {
-		avatar = pp.URL
-	}
+	chatID, name, avatar := s.groupJobTarget(group)
 	contactID, sourceID, err := cfg.ensureContact(chatID, "", name, avatar)
 	if err != nil {
 		return 0, err
@@ -375,22 +370,36 @@ func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
 	if ni, err := s.client.GetNewsletterInfo(context.Background(), channel); err == nil && ni.ThreadMeta.Name.Text != "" {
 		name = ni.ThreadMeta.Name.Text
 	}
-	contactID, sourceID, err := cfg.ensureContact(chatID, "", "📢 "+name, "")
-	if err != nil {
-		s.log.Error("chatwoot: ensure channel contact failed", "err", err)
-		return
-	}
-	convID, err := cfg.ensureConversation(contactID, sourceID)
-	if err != nil {
-		s.log.Error("chatwoot: ensure channel conversation failed", "err", err)
-		return
-	}
-	s.chatwootDeliver(cfg, convID, evt, "", false)
+	j := deliverContent(evt, "", false)
+	j.ChatID = chatID
+	j.Name = "📢 " + name
+	s.chatwootSend(cfg, j)
 }
 
-// chatwootDeliver baixa a mídia (se houver) e posta a mensagem na conversa.
-// prefix é acrescentado ao texto (usado em grupos p/ identificar o autor).
-func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Message, prefix string, private bool) {
+// cwJob é um "recibo" auto-contido de uma entrega ao Chatwoot: carrega tudo que o
+// executor precisa para (re)postar a mensagem sem depender de mais nada além do
+// cliente do WhatsApp (usado apenas para re-baixar a mídia). É o que persiste na
+// fila de reentrega quando o Chatwoot está fora do ar.
+type cwJob struct {
+	ChatID    string          `json:"chatId"`    // identifier do contato no Chatwoot (telefone@..., JID de grupo/canal)
+	Phone     string          `json:"phone"`     // telefone p/ busca do contato (vazio em grupo/canal)
+	Name      string          `json:"name"`      // nome do contato
+	Avatar    string          `json:"avatar"`    // URL do avatar (best-effort)
+	Prefix    string          `json:"prefix"`    // prefixo colado antes do texto (autor em grupo, título de espelho)
+	Private   bool            `json:"private"`   // nota privada (espelho do que saiu por fora)
+	Text      string          `json:"text"`      // texto final já formatado
+	SourceID  string          `json:"sourceId"`  // = ID da msg do WhatsApp; idempotência no Chatwoot (dedup na reentrega)
+	InReplyTo string          `json:"inReplyTo"` // ID da msg citada (resposta)
+	MsgRaw    json.RawMessage `json:"msg,omitempty"` // protojson da mensagem; presente só quando há mídia p/ re-baixar
+}
+
+func (j cwJob) hasMedia() bool { return len(j.MsgRaw) > 0 }
+
+// deliverContent monta a parte de CONTEÚDO do job a partir do evento (texto já
+// formatado, source_id, citação e, se houver mídia, o proto da mensagem para
+// re-download). O chamador completa a identidade do contato (ChatID/Phone/Name/
+// Avatar) antes de despachar.
+func deliverContent(evt *events.Message, prefix string, private bool) cwJob {
 	text := messageText(evt.Message)
 	// visualização única: sinaliza pro atendente (a mídia baixa e sobe normal)
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
@@ -404,29 +413,68 @@ func (s *Session) chatwootDeliver(cfg ChatwootConfig, convID int, evt *events.Me
 	if evt.Message.GetEventMessage() != nil && evt.Info.ID != "" {
 		text += "\n_EID: " + evt.Info.ID + "_"
 	}
-	// resposta com citação: source_id = ID da msg do WhatsApp; in_reply_to = a msg citada
-	sourceID := evt.Info.ID
-	inReplyTo := ""
+	j := cwJob{Prefix: prefix, Private: private, Text: text, SourceID: evt.Info.ID}
+	// resposta com citação: in_reply_to = a msg citada
 	if ci := messageContextInfo(evt.Message); ci != nil {
-		inReplyTo = ci.GetStanzaID()
+		j.InReplyTo = ci.GetStanzaID()
 	}
-	// mídia: baixa do WhatsApp e sobe pro Chatwoot como anexo
-	if dl := downloadableOf(evt.Message); dl != nil {
-		data, derr := s.client.Download(context.Background(), dl)
-		if derr == nil && len(data) > 0 {
-			fname, mime := mediaMeta(evt.Message)
-			if uerr := cfg.postAttachment(convID, prefix+text, fname, mime, data, dirFromPrivate(private), sourceID, inReplyTo, 0); uerr != nil {
-				s.log.Error("chatwoot: post attachment failed", "err", uerr)
-			}
-			return
+	// mídia: guarda o proto p/ re-baixar do WhatsApp na hora de postar (a fila fica
+	// leve — só metadados, o binário não é persistido).
+	if downloadableOf(evt.Message) != nil {
+		if raw, err := protojson.Marshal(evt.Message); err == nil {
+			j.MsgRaw = raw
 		}
 	}
-	if strings.TrimSpace(text) == "" {
-		return
+	return j
+}
+
+// chatwootSend tenta entregar o job imediatamente; se falhar (ex.: Chatwoot fora
+// do ar, timeout, 5xx), enfileira para reentrega com backoff em vez de descartar
+// a mensagem. É o antídoto para "mensagem recebida enquanto o Chatwoot reiniciava
+// se perde".
+func (s *Session) chatwootSend(cfg ChatwootConfig, j cwJob) {
+	if err := s.execChatwootJob(cfg, j); err != nil {
+		s.log.Warn("chatwoot: entrega falhou; enfileirando p/ reentrega", "err", err, "source", j.SourceID)
+		s.enqueueChatwoot(j)
 	}
-	if err := cfg.postText(convID, prefix+text, dirFromPrivate(private), sourceID, inReplyTo, 0); err != nil {
-		s.log.Error("chatwoot: post message failed", "err", err)
+}
+
+// execChatwootJob roda a entrega inteira (contato -> conversa -> post). É a
+// unidade retryável: qualquer passo que fale com o Chatwoot pode falhar aqui e o
+// job volta pra fila. Só re-baixa mídia do WhatsApp quando o job carrega uma.
+func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
+	contactID, sourceID, err := cfg.ensureContact(j.ChatID, j.Phone, j.Name, j.Avatar)
+	if err != nil {
+		return fmt.Errorf("ensure contact: %w", err)
 	}
+	convID, err := cfg.ensureConversation(contactID, sourceID)
+	if err != nil {
+		return fmt.Errorf("ensure conversation: %w", err)
+	}
+	// mídia: re-baixa do WhatsApp e sobe como anexo. Se o download falhar (mídia
+	// expirada, etc.), cai para o texto — mantém o comportamento antigo.
+	if j.hasMedia() {
+		var msg waE2E.Message
+		if uerr := protojson.Unmarshal(j.MsgRaw, &msg); uerr == nil {
+			if dl := downloadableOf(&msg); dl != nil {
+				data, derr := s.client.Download(context.Background(), dl)
+				if derr == nil && len(data) > 0 {
+					fname, mime := mediaMeta(&msg)
+					if perr := cfg.postAttachment(convID, j.Prefix+j.Text, fname, mime, data, dirFromPrivate(j.Private), j.SourceID, j.InReplyTo, 0); perr != nil {
+						return fmt.Errorf("post attachment: %w", perr)
+					}
+					return nil
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(j.Text) == "" {
+		return nil
+	}
+	if err := cfg.postText(convID, j.Prefix+j.Text, dirFromPrivate(j.Private), j.SourceID, j.InReplyTo, 0); err != nil {
+		return fmt.Errorf("post message: %w", err)
+	}
+	return nil
 }
 
 // avatarSynced evita re-sincronizar a foto a cada mensagem (1x por contato/processo).
