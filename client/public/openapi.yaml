@@ -1709,3 +1709,643 @@ paths:
         - { name: raw, in: query, schema: { type: boolean } }
       responses:
         "200": { $ref: "#/components/responses/MessageList" }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Pareamento por código / passkey
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/pair-code:
+    post:
+      tags: [Sessões]
+      summary: Inicia o pareamento por CÓDIGO (sem QR)
+      description: >
+        Vincula o número digitando um código de 8 caracteres no WhatsApp
+        (Aparelhos conectados → Conectar aparelho → Conectar com número de telefone).
+        Troca o device da sessão; só funciona em conta não pareada. A conexão de fato é
+        confirmada depois via SSE `auth-state` (paired:true) em `/api/events`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { type: string, example: "5561999999999", description: "DDI+DDD+número (só dígitos)" }
+      responses:
+        "200":
+          description: Código gerado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, example: "ABCD1234", description: "Código de 8 caracteres p/ digitar no WhatsApp" }
+        "400": { description: "phone obrigatório ou conta já pareada" }
+
+  /api/sessions/{sid}/pair-passkey:
+    post:
+      tags: [Sessões]
+      summary: Envia a asserção WebAuthn (contas com passkey)
+      description: >
+        Para contas protegidas por passkey, envia a asserção WebAuthn coletada pela extensão.
+        O desafio chega via SSE `auth-state` (state=passkey_request).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assertion: { type: object, description: "Asserção WebAuthn (publicKeyCredential serializado)" }
+      responses:
+        "200": { description: Asserção aceita }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Chamadas: toque fantasma, sinalização e controle
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/calls/fake:
+    post:
+      tags: [Chamadas]
+      summary: Toque fantasma (faz o número tocar e desliga)
+      description: Dispara uma chamada que só faz o destino tocar, encerrando sozinha.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { type: string, example: "5561999999999" }
+                video: { type: boolean, example: false }
+                duration_ms: { type: integer, example: 3000, description: "Aceita número ou string" }
+      responses:
+        "200":
+          description: Chamada fantasma disparada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  call: { type: object, properties: { callId: { type: string } } }
+        "503": { description: Conta não pareada }
+
+  /api/sessions/{sid}/calls/{id}/webrtc:
+    post:
+      tags: [Chamadas]
+      summary: Sinalização WebRTC (troca de SDP)
+      description: >
+        Envia o offer SDP do navegador e recebe o answer. Transporte padrão de áudio
+        (UDP direto). Uma única troca offer/answer; sem STUN/TURN nem trickle ICE.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sdp_offer]
+              properties:
+                sdp_offer: { type: string, description: "SDP offer do RTCPeerConnection" }
+      responses:
+        "200":
+          description: SDP answer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sdp_answer: { type: string }
+        "404": { description: Chamada inexistente }
+
+  /api/sessions/{sid}/calls/{id}/ws:
+    get:
+      tags: [Chamadas]
+      summary: Transporte de áudio por WebSocket (fallback a proxy que bloqueia UDP)
+      description: >
+        Upgrade WebSocket (subprotocolo `pcm16`) para trafegar o áudio como PCM Int16 LE
+        16 kHz mono sobre WSS/443 — atravessa proxy reverso HTTP (Cloudflare, Nginx) quando o
+        UDP do WebRTC está bloqueado. Áudio-only (sem vídeo). Autentique com `?apiKey=`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "101": { description: Conexão WebSocket estabelecida }
+        "404": { description: Chamada inexistente }
+
+  /api/sessions/{sid}/calls/{id}/hold:
+    post:
+      tags: [Chamadas]
+      summary: Coloca a chamada em espera (hold)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                moh: { type: boolean, default: true, description: "Tocar música de espera para o interlocutor" }
+      responses:
+        "200":
+          description: Em espera
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  held: { type: boolean, example: true }
+                  moh: { type: boolean }
+
+  /api/sessions/{sid}/calls/{id}/resume:
+    post:
+      tags: [Chamadas]
+      summary: Tira a chamada da espera (resume)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: Retomada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  held: { type: boolean, example: false }
+
+  /api/sessions/{sid}/calls/{id}/transfer:
+    post:
+      tags: [Chamadas]
+      summary: Transferência cega para outro atendente
+      description: >
+        Passa a chamada para outro atendente (troca de dono + ponte), sem tocar o leg do
+        WhatsApp. Com `to` = clientId do atendente alvo; sem ele, a oferta vai para todos.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                to: { type: string, description: "clientId do atendente alvo (opcional = fila)" }
+      responses:
+        "200":
+          description: Transferida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  transferred: { type: boolean, example: true }
+                  to: { type: string }
+
+  /api/sessions/{sid}/calls/{id}/pickup:
+    post:
+      tags: [Chamadas]
+      summary: Assume uma chamada transferida
+      description: Fixa o novo dono de uma chamada transferida (não re-atende no WhatsApp).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: Assumida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  call: { type: object, properties: { callId: { type: string } } }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Envios especiais
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/messages/sticker:
+    post:
+      tags: [Mensagens]
+      summary: Envia um sticker (figurinha)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MediaBody" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/pix:
+    post:
+      tags: [Mensagens]
+      summary: Envia cobrança Pix (Copia e Cola / BR Code)
+      description: >
+        Monta o "Pix Copia e Cola" (BR Code EMV do Banco Central) e envia como TEXTO.
+        NÃO é o Pix nativo (interactiveMessage) — o WhatsApp bloqueia esse para clientes
+        não-oficiais. Informe `key` (gera o código) OU `code` (BR Code pronto). Se houver
+        `description`, ela vai numa mensagem antes do código.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                key: { type: string, example: "raphael@email.com", description: "Chave Pix (obrigatória se não enviar code)" }
+                amount: { type: number, example: 49.90, description: "Valor; ≤0/ausente = sem valor. Aceita número ou string" }
+                merchantName: { type: string, example: "Astra Online", description: "máx 25, vira ASCII maiúsculo" }
+                merchantCity: { type: string, example: "Sao Paulo", description: "máx 15" }
+                txid: { type: string, example: "PEDIDO123", description: "máx 25" }
+                description: { type: string, example: "Cobrança do plano" }
+                code: { type: string, description: "BR Code pronto (ignora key/amount/etc.)" }
+      responses:
+        "200":
+          description: Pix enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ids: { type: array, items: { type: string }, description: "IDs das mensagens (descrição + código)" }
+                  code: { type: string, description: "O BR Code enviado" }
+        "400": { description: "key ou code obrigatório" }
+
+  /api/sessions/{sid}/messages/product:
+    post:
+      tags: [Mensagens]
+      summary: Envia um produto (imagem + legenda formatada)
+      description: >
+        Card de produto simulado: foto (opcional) + legenda com título, preço e link.
+        Sem foto, vira texto com preview de link. Funciona em qualquer conta (não exige Business).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, title]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                title: { type: string, example: "Camiseta Astra" }
+                description: { type: string }
+                price: { type: number, example: 79.90, description: "Aceita número ou string" }
+                salePrice: { type: number, description: "Preço promocional (opcional)" }
+                currency: { type: string, example: "R$" }
+                url: { type: string, description: "Link do produto" }
+                productId: { type: string }
+                footer: { type: string }
+                image: { type: string, description: "Foto em base64 (opcional)" }
+                imageUrl: { type: string, description: "Ou por URL (opcional)" }
+                mimetype: { type: string, example: "image/jpeg" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+        "400": { description: "title obrigatório" }
+
+  /api/sessions/{sid}/messages/product-native:
+    post:
+      tags: [Mensagens]
+      summary: Envia produto NATIVO (catálogo do WhatsApp Business)
+      description: >
+        Mensagem de produto nativa via catálogo. Exige conta WhatsApp Business e um produto
+        no catálogo (productId/businessJid).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string }
+                productId: { type: string }
+                businessJid: { type: string }
+                title: { type: string }
+                description: { type: string }
+                price: { type: number, description: "Aceita número ou string" }
+                salePrice: { type: number }
+                currency: { type: string, example: "BRL" }
+                retailerId: { type: string }
+                url: { type: string }
+                image: { type: string, description: "base64" }
+                imageUrl: { type: string }
+                mimetype: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Grupos: solicitações de entrada e configurações
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/groups/{gid}/requests:
+    get:
+      tags: [Grupos]
+      summary: Lista solicitações de entrada pendentes
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: Solicitações
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        jid: { type: string }
+                        requestedAt: { type: integer, format: int64 }
+
+  /api/sessions/{sid}/groups/{gid}/requests/approve:
+    post:
+      tags: [Grupos]
+      summary: Aprova solicitações de entrada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody: { $ref: "#/components/requestBodies/Participants" }
+      responses:
+        "200": { description: Aprovadas }
+
+  /api/sessions/{sid}/groups/{gid}/requests/reject:
+    post:
+      tags: [Grupos]
+      summary: Rejeita solicitações de entrada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody: { $ref: "#/components/requestBodies/Participants" }
+      responses:
+        "200": { description: Rejeitadas }
+
+  /api/sessions/{sid}/groups/{gid}/settings/approval:
+    put:
+      tags: [Grupos]
+      summary: Liga/desliga aprovação de novos membros
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean, description: "true = novos membros precisam de aprovação de admin" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  enabled: { type: boolean }
+
+  /api/sessions/{sid}/groups/{gid}/settings/add-mode:
+    put:
+      tags: [Grupos]
+      summary: Define quem pode adicionar membros
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [admin_add, all_member_add], description: "quem pode adicionar participantes" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  mode: { type: string }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Perfil, privacidade e mensagens temporárias
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/profile/qr:
+    get:
+      tags: [Presença & Perfil]
+      summary: Link/QR do próprio contato
+      description: Retorna o link de contato do próprio número. `?revoke=true` gera um novo.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: revoke, in: query, schema: { type: boolean }, description: "true = revoga o link atual e gera outro" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: Link do contato
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  link: { type: string, example: "https://wa.me/qr/XXXXXXXX" }
+
+  /api/sessions/{sid}/privacy:
+    get:
+      tags: [Presença & Perfil]
+      summary: Configurações de privacidade da conta
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: Privacidade
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groupAdd: { type: string }
+                  lastSeen: { type: string }
+                  status: { type: string }
+                  profile: { type: string }
+                  readReceipts: { type: string }
+                  callAdd: { type: string }
+                  online: { type: string }
+                  messages: { type: string }
+    put:
+      tags: [Presença & Perfil]
+      summary: Altera uma configuração de privacidade
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, value]
+              properties:
+                name: { type: string, enum: [groupadd, last, status, profile, readreceipts, online, calladd, messages] }
+                value: { type: string, enum: [all, contacts, contact_blacklist, none, known, match_last_seen] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  settings: { type: object }
+
+  /api/sessions/{sid}/privacy/status:
+    get:
+      tags: [Presença & Perfil]
+      summary: Quem pode ver o seu status/stories
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: Privacidade do status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statusPrivacy: { type: object }
+
+  /api/sessions/{sid}/disappearing:
+    put:
+      tags: [Presença & Perfil]
+      summary: Mensagens temporárias PADRÃO (novas conversas)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seconds: { type: integer, enum: [0, 86400, 604800, 7776000], description: "0=desliga, 86400=24h, 604800=7d, 7776000=90d" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  seconds: { type: integer }
+
+  /api/sessions/{sid}/chats/{chatId}/disappearing:
+    put:
+      tags: [Presença & Perfil]
+      summary: Mensagens temporárias de UMA conversa
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ChatId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seconds: { type: integer, description: "0=desliga. Ex.: 86400, 604800, 7776000" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  chat: { type: string }
+                  seconds: { type: integer }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Contatos: perfil Business
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/contacts/{jid}/business:
+    get:
+      tags: [Contatos]
+      summary: Perfil comercial (Business) de um contato
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Jid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: Perfil Business (campos conforme disponível)
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Chatwoot
+  # ─────────────────────────────────────────────────────────────────
+  /api/chatwoot/resolve:
+    get:
+      tags: [Chatwoot]
+      summary: Resolve a sessão a partir de uma conversa do Chatwoot
+      description: Mapeia account_id/conversation_id do Chatwoot para a sessão/telefone correspondente.
+      parameters:
+        - { name: account_id, in: query, required: true, schema: { type: integer } }
+        - { name: conversation_id, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Dados resolvidos }
