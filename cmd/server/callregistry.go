@@ -10,6 +10,7 @@ import (
 type activeCall struct {
 	cm          *call.CallManager
 	bridge      *Bridge
+	wsBridge    *wsBridge // ponte WebSocket (alternativa ao pion WebRTC para proxies HTTP)
 	browserOpus media.Codec
 	recorder    *callRecorder // nil quando a gravação está desligada na sessão
 }
@@ -63,6 +64,18 @@ func (r *callRegistry) setBridge(callID string, b *Bridge, oc media.Codec) (*Bri
 	oldB, oldOC := ac.bridge, ac.browserOpus
 	ac.bridge, ac.browserOpus = b, oc
 	return oldB, oldOC, true
+}
+
+func (r *callRegistry) setWSBridge(callID string, b *wsBridge, oc media.Codec) (*wsBridge, *Bridge, media.Codec, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ac, ok := r.calls[callID]
+	if !ok {
+		return nil, nil, nil, false
+	}
+	oldWSB, oldB, oldOC := ac.wsBridge, ac.bridge, ac.browserOpus
+	ac.wsBridge, ac.bridge, ac.browserOpus = b, nil, oc
+	return oldWSB, oldB, oldOC, true
 }
 
 func (r *callRegistry) drain() []*activeCall {

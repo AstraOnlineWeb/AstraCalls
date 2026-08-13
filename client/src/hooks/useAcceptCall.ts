@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { openCall } from "@/lib/webrtc";
+import { openAdaptiveCall as openCall } from "@/lib/webrtc";
 import { acceptCall, endCall } from "@/services/calls";
 import { registerOwnConnection, clearIncoming } from "@/stores/calls";
 

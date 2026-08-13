@@ -609,6 +609,9 @@ func (s *Session) removeCall(callID string) {
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
+	if ac.wsBridge != nil {
+		ac.wsBridge.Close()
+	}
 	if ac.browserOpus != nil {
 		ac.browserOpus.Close()
 	}
@@ -652,9 +655,37 @@ func (s *Session) teardownAllCalls() {
 		if ac.bridge != nil {
 			ac.bridge.Close()
 		}
+		if ac.wsBridge != nil {
+			ac.wsBridge.Close()
+		}
 		if ac.browserOpus != nil {
 			ac.browserOpus.Close()
 		}
+	}
+}
+
+// setWSBridge registra uma ponte WebSocket na chamada ativa. Usa o mesmo
+// mecanismo de setBridge: fecha a ponte anterior (WebRTC ou WS) sem disparar
+// o encerramento da chamada (DisableTerminate).
+func (s *Session) setWSBridge(callID string, b *wsBridge, oc media.Codec) {
+	oldWSB, oldB, oldOC, found := s.reg.setWSBridge(callID, b, oc)
+	if !found {
+		b.Close()
+		if oc != nil {
+			oc.Close()
+		}
+		return
+	}
+	if oldB != nil {
+		oldB.DisableTerminate()
+		oldB.Close()
+	}
+	if oldWSB != nil {
+		oldWSB.DisableTerminate()
+		oldWSB.Close()
+	}
+	if oldOC != nil {
+		oldOC.Close()
 	}
 }
 

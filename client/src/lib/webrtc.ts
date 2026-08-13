@@ -2,6 +2,8 @@ import { apiPost } from "./api";
 import { setupVideoChannel } from "./call/video-channel";
 import { videoSupported } from "./call/video-codec";
 import { VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH } from "../constants/video";
+import { getTransport } from "./transport";
+import { openWSCall } from "./ws-audio";
 
 export type OpenCallOptions = {
   video?: boolean;
@@ -125,4 +127,45 @@ export const openCall = async (
       } catch {}
     },
   } as OpenCall;
+};
+
+// =============================================================================
+// Transporte adaptativo — escolhe WebRTC ou WebSocket conforme transport.ts
+// =============================================================================
+
+/**
+ * openAdaptiveCall — ponto de entrada das chamadas. Consulta getTransport():
+ *  - "webrtc" (padrão): usa openCall() normal (áudio + vídeo).
+ *  - "websocket" (opt-in, atrás de proxy que bloqueia UDP): usa openWSCall()
+ *    (áudio-only; campos de vídeo retornam null).
+ *
+ * A interface de retorno é compatível com OpenCall em todos os campos de áudio.
+ */
+export const openAdaptiveCall = async (
+  sid: string,
+  callId: string,
+  micDeviceId: string | null,
+  opts: OpenCallOptions = {},
+): Promise<OpenCall> => {
+  if (getTransport() === "webrtc") {
+    return openCall(sid, callId, micDeviceId, opts);
+  }
+
+  // Modo WebSocket — vídeo indisponível
+  if (opts.video) {
+    console.warn("[transport] modo WebSocket: vídeo indisponível, seguindo em áudio-only");
+  }
+  const wsConn = await openWSCall(sid, callId, micDeviceId);
+
+  return {
+    pc: null as unknown as RTCPeerConnection, // não usado fora do webrtc.ts
+    micStream: wsConn.micStream,
+    get remoteStream() {
+      return wsConn.remoteStream;
+    },
+    localVideoStream: null,
+    remoteVideoStream: null,
+    setLocalVideo: wsConn.setLocalVideo,
+    close: wsConn.close,
+  };
 };
