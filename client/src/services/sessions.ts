@@ -24,6 +24,12 @@ export const logoutSession = (id: string) => postVoid(`/api/sessions/${id}/logou
 
 export const pairSession = (id: string) => postVoid(`/api/sessions/${id}/pair`);
 
+// Pareamento por CÓDIGO (sem QR): envia o número (só dígitos, com DDI) e recebe
+// o código de 8 caracteres que o dono digita no WhatsApp em
+// Aparelhos conectados → Conectar com número de telefone.
+export const pairSessionCode = (id: string, phone: string) =>
+  apiPost<{ code: string }>(`/api/sessions/${id}/pair-code`, { phone });
+
 export const submitPasskeyAssertion = (id: string, assertion: unknown) =>
   apiPost<{ ok: boolean }>(`/api/sessions/${id}/pair-passkey`, assertion);
 

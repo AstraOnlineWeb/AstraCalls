@@ -18,7 +18,7 @@ type CallListRow = {
 export type BrokerEvent =
   | { type: "session-list"; sessions: SessionInfo[] }
   | { type: "session-qr"; sessionId: string; qr: string }
-  | { type: "auth-state"; sessionId: string; paired: boolean; state: SessionState; qr?: string; passkey?: unknown }
+  | { type: "auth-state"; sessionId: string; paired: boolean; state: SessionState; qr?: string; code?: string; passkey?: unknown }
   | { type: "call-list"; calls: CallListRow[] }
   | { type: "call-status"; sessionId: string; id: string; owner: string | null; status: CallStatus; peer: string; startedAt: number; held?: boolean }
   | { type: "call-ended"; sessionId: string; id: string; owner: string | null; reason: string; endedAt: number }

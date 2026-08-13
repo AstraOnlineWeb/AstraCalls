@@ -183,6 +183,9 @@ func (b *Broker) emitAuthState(sessionID string, a AuthSnapshot) {
 		"type": "auth-state", "sessionId": sessionID,
 		"paired": a.Paired, "state": a.State, "qr": a.QR,
 	}
+	if a.Code != "" {
+		ev["code"] = a.Code // código de pareamento por telefone (8 dígitos)
+	}
 	if len(a.Passkey) > 0 {
 		ev["passkey"] = a.Passkey // desafio WebAuthn p/ contas com passkey
 	}
