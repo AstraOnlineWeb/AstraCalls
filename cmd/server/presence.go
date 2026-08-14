@@ -86,7 +86,7 @@ func (s *server) handleSetProfileStatus(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status required"})
 		return
 	}
-	if err := sess.client.SetStatusMessage(r.Context(), b.Status); err != nil {
+	if err := sess.client.SetStatusMessage(r.Context(), types.SetStatusInput{Text: &b.Status}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
