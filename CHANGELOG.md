@@ -2,6 +2,38 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v0.0.6 — 2026-08-14
+
+Correção de sincronização de chamada entre dispositivos, conexão de sessão por
+código, transporte de áudio alternativo para redes restritivas e documentação da
+API completa.
+
+### 📞 Chamadas
+
+- **Correção: outros dispositivos paravam de tocar.** Numa ligação para um número
+  com vários aparelhos vinculados (celular + WhatsApp Web etc.), ao atender em um
+  device os demais continuavam tocando — e recusar em um podia derrubar a chamada
+  já ativa. Agora, no primeiro atendimento é enviado
+  `terminate reason="accepted_elsewhere"` para os aparelhos que não atenderam,
+  vale o **primeiro accept** e só o aparelho que atendeu pode encerrar.
+- **Transporte de áudio por WebSocket** (opt-in) — alternativa ao WebRTC para
+  redes/proxies que bloqueiam UDP (Cloudflare, firewall corporativo). O áudio
+  trafega como PCM sobre WSS/443. Ativação manual (`?transport=ws`); o padrão
+  segue sendo WebRTC. Modo WebSocket é áudio-only.
+
+### 🔗 Conexão de conta
+
+- **Conectar por código, além do QR.** Na tela de pareamento há um seletor
+  **QR / Código**: informe o número e receba um código de 8 dígitos para digitar
+  no WhatsApp (*Aparelhos conectados → Conectar com número de telefone*).
+
+### 📖 API & Documentação
+
+- **OpenAPI 100% sincronizado.** Documentadas as 26 rotas que faltavam — incluindo
+  Pix, produto, sticker, pareamento por código, controle de chamada
+  (espera/transferência/pickup), privacidade e mensagens temporárias.
+  (`/api-docs.html`)
+
 ## v0.0.5 — 2026-08-10
 
 Atualização grande: chamadas de vídeo, controles de chamada (espera e
