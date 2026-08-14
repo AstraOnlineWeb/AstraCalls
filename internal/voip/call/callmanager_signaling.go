@@ -96,6 +96,16 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node, peerJid types.JID) {
 	m.mu.Lock()
 	call := m.currentCall
+	// First accept wins: um accept posterior de OUTRO device (sibling) não pode
+	// trocar acceptedByJid nem rekey o SRTP com a mídia já estabelecida. Um retry
+	// do MESMO device passa: o primeiro accept pode ter trazido uma call key que
+	// não decifrou (desync de sessão signal) e a retransmissão é a única chance de
+	// reparar a chave.
+	if accepted := m.acceptedByJid; accepted != "" && accepted != peerJid.String() {
+		m.mu.Unlock()
+		m.log.Info("accept from another device ignored", "accepted_by", accepted, "from", peerJid.String())
+		return
+	}
 	m.mu.Unlock()
 	if call == nil {
 		return
@@ -118,6 +128,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	m.mu.Lock()
 	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
 	m.emitState()
+	firstAccept := m.acceptedByJid == ""
 	m.acceptedByJid = peerJid.String()
 	if m.peerSsrcs == nil || !m.actualPeerSet {
 		peerDeviceJid := ensureDeviceJid(peerJid.String())
@@ -127,6 +138,17 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	m.initSrtpKeysLocked()
 	hasConn := m.relay.HasConnection()
 	relayData := call.RelayData
+	// Só no PRIMEIRO accept fazemos o fan-out do "accepted_elsewhere" para os
+	// demais devices do destino (os que não atenderam) pararem de tocar.
+	var siblings []types.JID
+	if firstAccept {
+		for _, dev := range m.calleeDevices {
+			if dev.String() != peerJid.String() {
+				siblings = append(siblings, dev)
+			}
+		}
+	}
+	basePeer := call.PeerJid
 	m.mu.Unlock()
 
 	m.log.Info("remote accepted call", "call_id", call.CallID, "peer", peerJid.String(),
@@ -136,6 +158,15 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 
 	callID := call.CallID
 	creator := wanode.MustJID(call.CallCreator)
+	if len(siblings) > 0 {
+		elsewhere := signaling.BuildTerminateElsewhereStanza(wanode.MustJID(basePeer), callID, creator, siblings)
+		if err := m.sock.SendNode(ctx, elsewhere); err != nil {
+			m.log.Warn("accepted_elsewhere fanout failed; sibling devices may keep ringing",
+				"call_id", callID, "err", err)
+		} else {
+			m.log.Info("accepted_elsewhere sent to non-answering devices", "call_id", callID, "devices", len(siblings))
+		}
+	}
 	transport := waBinary.Node{
 		Tag:   "call",
 		Attrs: waBinary.Attrs{"to": peerJid, "id": signaling.GenerateCallStanzaID()},
@@ -260,6 +291,16 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 	call := m.currentCall
 	if call == nil {
 		m.mu.Unlock()
+		return
+	}
+	// Depois de um accept, só o device que atendeu pode encerrar. Um sibling que
+	// continuou tocando eventualmente dá timeout e manda o próprio reject/terminate,
+	// que não pode derrubar a chamada já ativa.
+	sender := wanode.AttrString(node.Attrs, "from")
+	if m.acceptedByJid != "" && sender != "" && sender != m.acceptedByJid && !call.IsEnded() {
+		m.mu.Unlock()
+		m.log.Info("terminate from non-answering device ignored",
+			"call_id", call.CallID, "from", sender, "accepted_by", m.acceptedByJid)
 		return
 	}
 	info := signaling.ExtractNodeInfo(node)

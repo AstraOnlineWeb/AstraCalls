@@ -28,7 +28,7 @@ func (m *CallManager) FakeCall(ctx context.Context, peerJid types.JID, isVideo b
 	callID := signaling.GenerateCallID()
 	callKey := media.GenerateCallKey()
 
-	offer, err := signaling.BuildOfferStanza(ctx, m.sock, callID, callKey, resolved, isVideo)
+	offer, _, err := signaling.BuildOfferStanza(ctx, m.sock, callID, callKey, resolved, isVideo)
 	if err != nil {
 		return "", err
 	}

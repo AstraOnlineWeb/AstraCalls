@@ -36,6 +36,7 @@ type CallManager struct {
 	initialTransportSent  bool
 	outgoingPreacceptSent bool
 	acceptedByJid         string
+	calleeDevices         []types.JID
 	debeEnabled           bool
 
 	captureBuf   []float32
@@ -163,12 +164,13 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	m.initCodec()
 	m.mu.Unlock()
 
-	offer, err := signaling.BuildOfferStanza(ctx, m.sock, callID, callKey, resolved, isVideo)
+	offer, calleeDevices, err := signaling.BuildOfferStanza(ctx, m.sock, callID, callKey, resolved, isVideo)
 	if err != nil {
 		return err
 	}
 
 	m.mu.Lock()
+	m.calleeDevices = calleeDevices
 	_ = m.currentCall.ApplyTransition(Transition{Type: TransitionOfferSent})
 	m.emitState()
 	m.mu.Unlock()
