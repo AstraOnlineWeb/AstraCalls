@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -197,7 +198,43 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 		reg:    newCallRegistry(),
 	}
 	client.AddEventHandler(s.handleEvent)
+	go s.runPresenceKeepalive()
 	return s
+}
+
+// keepPresenceActive marca a conta como disponível para o WhatsApp registrar
+// atividade do dispositivo vinculado e não removê-lo por inatividade. Ignora
+// silenciosamente ErrNoPushName (o pushname ainda não chegou; reenviamos no
+// evento PushNameSetting) e só loga outras falhas em debug.
+func (s *Session) keepPresenceActive(ctx context.Context) {
+	if err := s.client.SendPresence(ctx, types.PresenceAvailable); err != nil {
+		if !errors.Is(err, whatsmeow.ErrNoPushName) {
+			s.log.Debug("keepalive presence failed", "err", err)
+		}
+	}
+}
+
+// presenceKeepaliveInterval reforça a presença periodicamente: uma conexão
+// estável pode ficar dias no ar sem reconectar, e a "última sessão ativa" só é
+// atualizada quando enviamos presença — sem esse reforço a data envelhece e o
+// WhatsApp acaba agendando a remoção do dispositivo por inatividade.
+const presenceKeepaliveInterval = 6 * time.Hour
+
+// runPresenceKeepalive vive junto com a sessão (encerra no shutdown do app) e
+// reenvia a presença available enquanto a conta estiver conectada e pareada.
+func (s *Session) runPresenceKeepalive() {
+	ticker := time.NewTicker(presenceKeepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.mgr.appCtx.Done():
+			return
+		case <-ticker.C:
+			if s.client.IsConnected() && s.client.IsLoggedIn() {
+				s.keepPresenceActive(s.mgr.appCtx)
+			}
+		}
+	}
 }
 
 // createCall monta a chamada. record liga a gravação nesta chamada específica —
@@ -370,10 +407,17 @@ func (s *Session) handleEvent(rawEvt any) {
 		s.mu.Lock()
 		s.downAlerted = false
 		s.mu.Unlock()
-		// always_online: mantém a presença sempre disponível (reenvia a cada reconexão).
-		if s.getChatwoot().AlwaysOnline {
-			go func() { _ = s.client.SendPresence(ctx, types.PresenceAvailable) }()
-		}
+		// Marca o dispositivo como ativo no WhatsApp (atualiza a "última sessão
+		// ativa"). Sem enviar presença available, o WhatsApp trata o companion
+		// como inativo e agenda a remoção por inatividade ("Será desconectado
+		// hoje"), mesmo com o bridge conectado 24/7. No primeiro pareamento o
+		// pushname pode não ter chegado ainda (SendPresence -> ErrNoPushName);
+		// nesse caso o reenvio ocorre no evento PushNameSetting abaixo.
+		go s.keepPresenceActive(ctx)
+	case *events.PushNameSetting:
+		// O pushname chegou (às vezes depois do Connected): reenvia a presença,
+		// pois SendPresence falha enquanto o nome não está no store.
+		go s.keepPresenceActive(ctx)
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 		go s.notifyDisconnected("desconectada (o aparelho desvinculou este dispositivo)",

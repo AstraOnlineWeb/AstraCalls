@@ -60,9 +60,11 @@ type ChatwootConfig struct {
 	// com o nome do atendente prefixado (*Nome*\n...). O nome NÃO fica salvo na conversa
 	// do Chatwoot, é adicionado só na hora de enviar. Paridade com o signMsg da Evolution.
 	SignMsg bool `json:"sign_msg"`
-	// AlwaysOnline: mantém a presença da conta sempre como "online" (envia presença
-	// disponível a cada (re)conexão). ReadMessages: confirma leitura automática das
-	// mensagens recebidas (envia recibo de leitura ao receber).
+	// AlwaysOnline: mantido por compatibilidade. A presença "available" agora é
+	// enviada por padrão em toda (re)conexão e reforçada periodicamente, para o
+	// WhatsApp não remover o dispositivo por inatividade — independente deste flag.
+	// ReadMessages: confirma leitura automática das mensagens recebidas (envia
+	// recibo de leitura ao receber).
 	AlwaysOnline bool `json:"always_online"`
 	ReadMessages bool `json:"read_messages"`
 	// MirrorAPI: quando true, as mensagens enviadas pela API do AstraCalls (ex.: n8n)
