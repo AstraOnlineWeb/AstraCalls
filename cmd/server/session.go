@@ -260,6 +260,13 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
+		// diagnóstico: mostra o account_id da sessão e quantos assinantes vão
+		// receber. subs_matched inclui o painel (accountID 0); se um widget está
+		// aberto na conta certa, ele entra no matched — senão cai em
+		// subs_widget_other_acct (conta divergente) ou nem aparece (não conectou).
+		acct, total, matched, otherAcct := s.mgr.broker.subscriberScope(s.id)
+		s.log.Info("incoming call: broadcasting", "callID", c.CallID, "peer", c.PeerJid,
+			"acct", acct, "subs_total", total, "subs_matched", matched, "subs_widget_other_acct", otherAcct)
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, name, c.MediaType == core.CallMediaTypeVideo)
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {

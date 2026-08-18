@@ -327,6 +327,27 @@ func (b *Broker) emitVideoState(sessionID, id, kind string, peerVideo, localVide
 	})
 }
 
+// subscriberScope devolve, para diagnóstico, o account_id resolvido da sessão e a
+// contagem de assinantes: total, quantos receberão eventos escopados por conta
+// (escopo casa) e quantos são widgets de OUTRA conta (que serão filtrados). Serve
+// para explicar por que uma chamada recebida "toca no painel mas não no widget".
+func (b *Broker) subscriberScope(sessionID string) (acct, total, matched, widgetOtherAcct int) {
+	if b.AccountForSession != nil {
+		acct = b.AccountForSession(sessionID)
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		total++
+		if s.accountID != 0 && s.accountID != acct {
+			widgetOtherAcct++
+			continue
+		}
+		matched++
+	}
+	return
+}
+
 func (b *Broker) emitIncomingClaimed(sessionID, id, owner string) {
 	b.broadcastForSession(sessionID, map[string]any{"type": "incoming-claimed", "sessionId": sessionID, "id": id, "owner": owner})
 }
