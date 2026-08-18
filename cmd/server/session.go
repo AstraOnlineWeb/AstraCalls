@@ -271,10 +271,14 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {
+			// avisa o consumidor do WS (se abriu com ?events=1) antes de fechar.
+			s.wsCallEvent(c.CallID, map[string]any{"type": "call-ended", "reason": string(c.StateData.EndReason)})
 			s.removeCall(c.CallID)
 			s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 			return
 		}
+		// espelha a mudança de estado no WS (connected/hold/etc.) para o consumidor.
+		s.wsCallEvent(c.CallID, map[string]any{"type": "call-status", "status": mapStatus(c.StateData.State)})
 		dir := "outbound"
 		if c.Direction == core.CallDirectionIncoming {
 			dir = "inbound"
@@ -292,6 +296,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.mgr.broker.upsertCall(rec)
 	}
 	cm.OnEnded = func(c *call.CallInfo) {
+		s.wsCallEvent(c.CallID, map[string]any{"type": "call-ended", "reason": string(c.StateData.EndReason)})
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 	}
@@ -300,8 +305,14 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if !ok {
 			return
 		}
-		// grava o lado do peer (WhatsApp) mesmo se o navegador ainda não estiver pronto
+		// grava o lado do peer (WhatsApp) mesmo se o consumidor ainda não estiver pronto
 		ac.recorder.writePeer(pcm16)
+		// ponte WebSocket: envia PCM16 direto, sem Opus (menos CPU/latência).
+		if ws := ac.wsBridge; ws != nil {
+			_ = ws.WritePCM(pcm16)
+			return
+		}
+		// ponte WebRTC (pion): o navegador espera Opus/RTP.
 		if ac.bridge == nil || ac.browserOpus == nil {
 			return
 		}
@@ -712,6 +723,15 @@ func (s *Session) teardownAllCalls() {
 		if ac.browserOpus != nil {
 			ac.browserOpus.Close()
 		}
+	}
+}
+
+// wsCallEvent envia um evento de ciclo de vida ao consumidor da ponte WebSocket
+// da chamada (só surte efeito se ele abriu o socket com ?events=1). No-op quando
+// não há ponte WS ativa naquela chamada.
+func (s *Session) wsCallEvent(callID string, ev map[string]any) {
+	if ac, ok := s.reg.get(callID); ok && ac.wsBridge != nil {
+		ac.wsBridge.SendEvent(ev)
 	}
 }
 

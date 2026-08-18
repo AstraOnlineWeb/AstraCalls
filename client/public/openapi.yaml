@@ -1833,14 +1833,36 @@ paths:
   /api/sessions/{sid}/calls/{id}/ws:
     get:
       tags: [Chamadas]
-      summary: Transporte de áudio por WebSocket (fallback a proxy que bloqueia UDP)
+      summary: Áudio da chamada por WebSocket (full-duplex, PCM16) — contrato estável
       description: >
-        Upgrade WebSocket (subprotocolo `pcm16`) para trafegar o áudio como PCM Int16 LE
-        16 kHz mono sobre WSS/443 — atravessa proxy reverso HTTP (Cloudflare, Nginx) quando o
-        UDP do WebRTC está bloqueado. Áudio-only (sem vídeo). Autentique com `?apiKey=`.
+        Upgrade WebSocket (subprotocolo `pcm16`) com o áudio da chamada full-duplex.
+        Serve tanto de fallback quando o UDP do WebRTC está bloqueado (Cloudflare, Nginx)
+        quanto de via para um consumidor externo (ex.: agente de voz por IA) processar o
+        áudio nos dois sentidos.
+
+
+        **Contrato de fio (estável):**
+
+        - Frames **binários** = áudio **PCM Int16 LE, mono, 16 kHz**, nos dois sentidos.
+          Downlink (WhatsApp→cliente) e uplink (cliente→WhatsApp) usam o mesmo formato,
+          sem Opus intermediário. Recomendado enviar ~20 ms por frame (320 amostras);
+          o servidor aceita qualquer tamanho.
+
+        - Frames de **texto** = eventos de ciclo de vida em JSON, enviados só quando
+          conectar com `events=1`: `{"type":"call-status","status":"connected"|...}` e
+          `{"type":"call-ended","reason":"..."}`.
+
+
+        A chamada precisa já existir (crie/atenda antes: `POST .../calls` ou `.../accept`).
+        Áudio-only (sem vídeo). Autentique com `?apiKey=`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
+        - name: events
+          in: query
+          required: false
+          schema: { type: string, enum: ["1", "true"] }
+          description: "Se presente, envia eventos de ciclo de vida da chamada como frames de texto JSON (além do áudio binário)."
       responses:
         "101": { description: Conexão WebSocket estabelecida }
         "404": { description: Chamada inexistente }
