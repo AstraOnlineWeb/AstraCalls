@@ -173,7 +173,12 @@ func (s *server) routes() http.Handler {
 
 	if s.staticDir != "" {
 		if _, err := os.Stat(s.staticDir); err == nil {
-			mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
+			// O widget.js é embutido no Chatwoot e fica em cache no navegador de
+			// cada agente. Sem revalidação, uma versão antiga (ex.: anterior ao
+			// toque de chamada recebida, que conecta no SSE sem accountId) fica
+			// presa e a chamada "não entra no Chatwoot" mesmo com o backend ok.
+			// Força revalidação só nesse arquivo; o resto dos estáticos segue normal.
+			mux.Handle("/", noCacheFor(http.FileServer(http.Dir(s.staticDir)), "/widget.js"))
 		}
 	}
 	var handler http.Handler = mux
@@ -240,6 +245,22 @@ func widgetAllowed(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// noCacheFor marca os caminhos indicados com Cache-Control: no-cache (revalidação
+// obrigatória via If-Modified-Since/ETag, ainda respondendo 304 quando igual),
+// mantendo o cache padrão para os demais estáticos.
+func noCacheFor(next http.Handler, paths ...string) http.Handler {
+	set := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		set[p] = struct{}{}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := set[r.URL.Path]; ok {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
