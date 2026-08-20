@@ -66,6 +66,10 @@ COPY --from=server /wacalls /usr/local/bin/wacalls
 COPY --from=client /app/client/dist /app/client/dist
 COPY --from=server /astracalls-passkey.zip /app/client/dist/astracalls-passkey.zip
 WORKDIR /app
+# Revisão do build (commit + timestamp): identifica a imagem e garante digest
+# único a cada build de release. Injetado via --build-arg BUILD_REV=...
+ARG BUILD_REV=dev
+LABEL org.opencontainers.image.revision=$BUILD_REV
 EXPOSE 8080 50000
 ENTRYPOINT ["wacalls"]
 CMD ["-addr", ":8080", "-static", "/app/client/dist", "-db", "/data/wacalls.db"]
