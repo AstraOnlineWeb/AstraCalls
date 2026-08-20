@@ -44,26 +44,48 @@ func resolveRecipient(to string) (types.JID, error) {
 
 // fetchMedia obtém os bytes da mídia a partir de base64 (data) ou de uma URL.
 func fetchMedia(b64, url string) ([]byte, error) {
+	data, _, err := fetchMediaWithType(b64, url)
+	return data, err
+}
+
+// fetchMediaWithType é como fetchMedia, mas também devolve o Content-Type que o
+// servidor de origem informou (útil p/ documentos: o active_storage do Chatwoot
+// responde "application/pdf" mesmo quando o data_url não tem extensão, evitando
+// que o arquivo chegue como ".bin" no WhatsApp Android). Devolve "" quando não há
+// header (ex.: origem base64).
+func fetchMediaWithType(b64, url string) ([]byte, string, error) {
 	if b64 != "" {
 		if strings.HasPrefix(b64, "data:") {
+			ct := ""
 			if i := strings.Index(b64, ","); i > 0 {
+				if meta := b64[len("data:"):i]; meta != "" {
+					ct = strings.TrimSuffix(meta, ";base64")
+				}
 				b64 = b64[i+1:]
 			}
+			data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+			return data, ct, err
 		}
-		return base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+		return data, "", err
 	}
 	if url != "" {
 		resp, err := mediaHTTP.Get(url)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, errors.New("download failed: " + resp.Status)
+			return nil, "", errors.New("download failed: " + resp.Status)
 		}
-		return io.ReadAll(io.LimitReader(resp.Body, 100<<20)) // teto de 100MB
+		ct := resp.Header.Get("Content-Type")
+		if i := strings.IndexByte(ct, ';'); i >= 0 { // remove "; charset=..."
+			ct = ct[:i]
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20)) // teto de 100MB
+		return data, strings.TrimSpace(ct), err
 	}
-	return nil, errors.New("base64 or url required")
+	return nil, "", errors.New("base64 or url required")
 }
 
 func (s *server) send(sess *Session, w http.ResponseWriter, r *http.Request, to string, msg *waE2E.Message) {
@@ -209,14 +231,17 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Sem mimetype (ou genérico), deduz pela extensão do nome — senão o WhatsApp
+	// Android exibe o documento como ".bin".
 	mime := b.Mimetype
-	if mime == "" {
-		mime = "application/octet-stream"
+	if isGenericMime(mime) {
+		mime = firstNonEmptyOf(mimeByFileName(b.FileName), "application/octet-stream")
 	}
 	name := b.FileName
 	if name == "" {
 		name = "file"
 	}
+	name = ensureFileExt(name, mime)
 	s.send(sess, w, r, b.To, documentWithCaption(&waE2E.DocumentMessage{
 		FileName: proto.String(name), Title: proto.String(name), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,

@@ -2,6 +2,43 @@ package main
 
 import "testing"
 
+// %PDF-... : cabeçalho real de um PDF, o que http.DetectContentType fareja.
+var pdfBytes = []byte("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n")
+
+func TestResolveDocMime(t *testing.T) {
+	// hint do Chatwoot vence tudo
+	if got := resolveDocMime("application/pdf", "arquivo", "", nil); got != "application/pdf" {
+		t.Errorf("hint pdf = %q", got)
+	}
+	// hint genérico é ignorado; usa extensão do nome
+	if got := resolveDocMime("application/octet-stream", "proposta.pdf", "", nil); got != "application/pdf" {
+		t.Errorf("nome pdf = %q", got)
+	}
+	// sem hint e sem extensão no nome: usa Content-Type do download
+	if got := resolveDocMime("", "blob", "application/pdf; charset=binary", nil); got != "application/pdf" {
+		t.Errorf("http ct pdf = %q", got)
+	}
+	// nada disso: fareja os bytes (%PDF)
+	if got := resolveDocMime("", "blob", "application/octet-stream", pdfBytes); got != "application/pdf" {
+		t.Errorf("sniff pdf = %q", got)
+	}
+	// realmente desconhecido: cai no genérico
+	if got := resolveDocMime("", "blob", "", []byte{0x01, 0x02, 0x03}); got != "application/octet-stream" {
+		t.Errorf("desconhecido = %q", got)
+	}
+}
+
+func TestIsGenericMime(t *testing.T) {
+	for _, m := range []string{"", "application/octet-stream", "APPLICATION/OCTET-STREAM", "  "} {
+		if !isGenericMime(m) {
+			t.Errorf("isGenericMime(%q) = false, want true", m)
+		}
+	}
+	if isGenericMime("application/pdf") {
+		t.Error("application/pdf não é genérico")
+	}
+}
+
 func TestFileNameFromURL(t *testing.T) {
 	cases := map[string]string{
 		"https://x/y/proposta-comercial.pdf":            "proposta-comercial.pdf",

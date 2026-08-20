@@ -925,7 +925,7 @@ func (c ChatwootConfig) messageSourceID(convID, msgID int) string {
 // nameHint/mimeHint vêm do payload do Chatwoot (file_name/content_type); são usados
 // no envio de documento para o WhatsApp Android não exibir o arquivo como ".bin".
 func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType, url, caption, nameHint, mimeHint string, quote *waE2E.ContextInfo) (string, error) {
-	data, err := fetchMedia("", url)
+	data, httpCT, err := fetchMediaWithType("", url)
 	if err != nil {
 		return "", err
 	}
@@ -979,9 +979,9 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 			return "", e
 		}
 		// Resolve mimetype/nome reais: hint do Chatwoot > extensão do arquivo >
-		// fallback genérico. Garante que o nome carregue a extensão (Android usa
-		// isso para exibir o tipo em vez de ".bin").
-		mime := firstNonEmptyOf(mimeHint, mimeByFileName(filename), "application/octet-stream")
+		// Content-Type do download > farejamento dos bytes. Garante que o nome
+		// carregue a extensão (Android usa isso para exibir o tipo em vez de ".bin").
+		mime := resolveDocMime(mimeHint, filename, httpCT, data)
 		filename = ensureFileExt(filename, mime)
 		// documento COM legenda: repassa o content do Chatwoot como caption, no mesmo
 		// tratamento de imagem/vídeo (embrulhado em documentWithCaptionMessage).
@@ -1323,6 +1323,41 @@ func mimeByFileName(name string) string {
 		return strings.TrimSpace(t)
 	}
 	return ""
+}
+
+// isGenericMime informa se o mimetype é vazio ou o genérico "não sei o que é"
+// (application/octet-stream) — casos em que o WhatsApp Android exibe ".bin".
+func isGenericMime(m string) bool {
+	m = strings.TrimSpace(strings.ToLower(m))
+	return m == "" || m == "application/octet-stream"
+}
+
+// resolveDocMime escolhe o melhor mimetype real para um documento, tentando em
+// ordem: hint do Chatwoot > extensão do nome > Content-Type do download HTTP >
+// farejamento dos bytes (http.DetectContentType reconhece %PDF, ZIP, etc.).
+// Ignora candidatos genéricos (octet-stream) para não deixar o arquivo virar
+// ".bin" no celular do destinatário. Só cai no genérico se nada mais servir.
+func resolveDocMime(mimeHint, filename, httpCT string, data []byte) string {
+	strip := func(m string) string {
+		if i := strings.IndexByte(m, ';'); i >= 0 {
+			m = m[:i]
+		}
+		return strings.TrimSpace(m)
+	}
+	candidates := []string{
+		strip(mimeHint),
+		mimeByFileName(filename),
+		strip(httpCT),
+	}
+	if len(data) > 0 {
+		candidates = append(candidates, strip(http.DetectContentType(data)))
+	}
+	for _, c := range candidates {
+		if !isGenericMime(c) {
+			return c
+		}
+	}
+	return "application/octet-stream"
 }
 
 // ensureFileExt garante que o nome tenha extensão; se faltar, deriva do mimetype
