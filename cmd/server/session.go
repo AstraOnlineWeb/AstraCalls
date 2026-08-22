@@ -208,9 +208,19 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 // evento PushNameSetting) e só loga outras falhas em debug.
 func (s *Session) keepPresenceActive(ctx context.Context) {
 	// Sem pushname o WhatsApp recusa a presença (ErrNoPushName) e o dispositivo
-	// nunca é marcado como ativo. Alguns aparelhos não propagam o pushname para o
-	// companion (fica vazio no store), então definimos um fallback só para
-	// habilitar a presença — o nome real volta assim que o PushNameSetting chega.
+	// nunca é marcado como ativo. No Connected há uma corrida: o pushname pode
+	// ainda não ter sido carregado do store/app-state. Esperamos alguns segundos
+	// pelo nome real antes de recorrer a um fallback (evita broadcastar o nome
+	// genérico quando o real está a caminho). Se mesmo assim não vier, usamos o
+	// fallback só para habilitar a presença — o nome real é reenviado no próximo
+	// ciclo (PushNameSetting ou keepalive).
+	for i := 0; i < 5 && len(s.client.Store.PushName) == 0; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
 	if len(s.client.Store.PushName) == 0 {
 		s.client.Store.PushName = presenceFallbackName
 	}
