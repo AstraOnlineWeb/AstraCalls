@@ -207,12 +207,29 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 // silenciosamente ErrNoPushName (o pushname ainda não chegou; reenviamos no
 // evento PushNameSetting) e só loga outras falhas em debug.
 func (s *Session) keepPresenceActive(ctx context.Context) {
-	if err := s.client.SendPresence(ctx, types.PresenceAvailable); err != nil {
-		if !errors.Is(err, whatsmeow.ErrNoPushName) {
-			s.log.Debug("keepalive presence failed", "err", err)
-		}
+	// Sem pushname o WhatsApp recusa a presença (ErrNoPushName) e o dispositivo
+	// nunca é marcado como ativo. Alguns aparelhos não propagam o pushname para o
+	// companion (fica vazio no store), então definimos um fallback só para
+	// habilitar a presença — o nome real volta assim que o PushNameSetting chega.
+	if len(s.client.Store.PushName) == 0 {
+		s.client.Store.PushName = presenceFallbackName
 	}
+	err := s.client.SendPresence(ctx, types.PresenceAvailable)
+	if err != nil {
+		if errors.Is(err, whatsmeow.ErrNoPushName) {
+			s.log.Warn("keepalive presence: sem pushname, presença não enviada")
+		} else {
+			s.log.Warn("keepalive presence falhou", "err", err)
+		}
+		return
+	}
+	s.log.Info("keepalive presence enviada", "pushname", s.client.Store.PushName)
 }
+
+// presenceFallbackName é o pushname usado apenas quando o aparelho não propaga o
+// nome real para este dispositivo — necessário para o WhatsApp aceitar a presença
+// e manter o companion ativo. É sobrescrito pelo nome real no PushNameSetting.
+const presenceFallbackName = "WhatsApp"
 
 // presenceKeepaliveInterval reforça a presença periodicamente: uma conexão
 // estável pode ficar dias no ar sem reconectar, e a "última sessão ativa" só é
