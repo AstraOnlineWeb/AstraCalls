@@ -63,10 +63,60 @@ func summarizeMessage(evt *events.Message) map[string]any {
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
 		out["viewOnce"] = true
 	}
+	// origem de anúncio (Click to WhatsApp): o "UTM" do WhatsApp, quando a msg
+	// foi a primeira resposta a um anúncio do Facebook/Instagram.
+	if ref := messageReferral(evt.Message); ref != nil {
+		out["referral"] = ref
+	}
 	if raw, err := protojson.Marshal(evt.Message); err == nil {
 		out["raw"] = json.RawMessage(raw)
 	}
 	return out
+}
+
+// messageReferral extrai a origem de anúncio "Click to WhatsApp" (CTWA) de uma
+// mensagem — presente na PRIMEIRA resposta a um anúncio do Facebook/Instagram.
+// Devolve um mapa amigável (estilo WAHA) com o click id, o link e os campos de
+// campanha; nil quando a mensagem não veio de anúncio. É o "UTM" do WhatsApp:
+// o ctwaClid casa o clique com a campanha no Meta.
+func messageReferral(m *waE2E.Message) map[string]any {
+	ci := messageContextInfo(m)
+	if ci == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if ad := ci.GetExternalAdReply(); ad != nil {
+		putStr(out, "sourceType", ad.GetSourceType())
+		putStr(out, "sourceId", ad.GetSourceID())
+		putStr(out, "sourceUrl", ad.GetSourceURL())
+		putStr(out, "sourceApp", ad.GetSourceApp())
+		putStr(out, "ctwaClid", ad.GetCtwaClid())
+		putStr(out, "ref", ad.GetRef())
+		putStr(out, "title", ad.GetTitle())
+		putStr(out, "body", ad.GetBody())
+		putStr(out, "thumbnailUrl", ad.GetThumbnailURL())
+		putStr(out, "mediaUrl", ad.GetMediaURL())
+		if ad.MediaType != nil && ad.GetMediaType() != 0 {
+			out["mediaType"] = ad.GetMediaType().String()
+		}
+	}
+	// Campos de conversão a nível de ContextInfo (source/medium estilo UTM).
+	putStr(out, "conversionSource", ci.GetConversionSource())
+	putStr(out, "entryPointSource", ci.GetEntryPointConversionSource())
+	putStr(out, "entryPointApp", ci.GetEntryPointConversionApp())
+	putStr(out, "utmSource", ci.GetEntryPointConversionExternalSource())
+	putStr(out, "utmMedium", ci.GetEntryPointConversionExternalMedium())
+	putStr(out, "ctwaSignals", ci.GetCtwaSignals())
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func putStr(m map[string]any, k, v string) {
+	if v != "" {
+		m[k] = v
+	}
 }
 
 // unwrapViewOnce desembrulha mensagens de visualização única. No WhatsApp elas

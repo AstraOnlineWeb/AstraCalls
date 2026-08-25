@@ -300,6 +300,9 @@ func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
 	j.Phone = phone
 	j.Name = name
 	j.Avatar = avatar
+	// origem de anúncio (Click to WhatsApp): registra como nota privada p/ o
+	// atendente saber de qual campanha o contato veio.
+	j.Referral = messageReferral(evt.Message)
 	s.chatwootSend(cfg, j)
 }
 
@@ -393,9 +396,35 @@ type cwJob struct {
 	SourceID  string          `json:"sourceId"`  // = ID da msg do WhatsApp; idempotência no Chatwoot (dedup na reentrega)
 	InReplyTo string          `json:"inReplyTo"` // ID da msg citada (resposta)
 	MsgRaw    json.RawMessage `json:"msg,omitempty"` // protojson da mensagem; presente só quando há mídia p/ re-baixar
+	Referral  map[string]any  `json:"referral,omitempty"` // origem de anúncio (CTWA); vira nota privada p/ o atendente
 }
 
 func (j cwJob) hasMedia() bool { return len(j.MsgRaw) > 0 }
+
+// formatReferralNote monta a nota privada que avisa o atendente que o contato
+// chegou por um anúncio (Click to WhatsApp), com os dados de campanha. Retorna
+// "" quando não há origem de anúncio.
+func formatReferralNote(ref map[string]any) string {
+	if len(ref) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("📢 *Contato veio de um anúncio (Click to WhatsApp)*")
+	line := func(label, key string) {
+		if v, ok := ref[key].(string); ok && v != "" {
+			b.WriteString("\n• " + label + ": " + v)
+		}
+	}
+	line("Título", "title")
+	line("Descrição", "body")
+	line("Link do anúncio", "sourceUrl")
+	line("ID do anúncio", "sourceId")
+	line("Click ID (ctwa_clid)", "ctwaClid")
+	line("Ref", "ref")
+	line("Origem", "utmSource")
+	line("Meio", "utmMedium")
+	return b.String()
+}
 
 // deliverContent monta a parte de CONTEÚDO do job a partir do evento (texto já
 // formatado, source_id, citação e, se houver mídia, o proto da mensagem para
@@ -452,6 +481,14 @@ func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
 	convID, err := cfg.ensureConversation(contactID, sourceID)
 	if err != nil {
 		return fmt.Errorf("ensure conversation: %w", err)
+	}
+	// origem de anúncio (CTWA): nota privada avisando de qual campanha o contato
+	// veio. Best-effort e dedup por source_id derivado (não repete na reentrega);
+	// nunca aborta a entrega da mensagem em si.
+	if note := formatReferralNote(j.Referral); note != "" {
+		if perr := cfg.postText(convID, note, cwPrivate, j.SourceID+":ref", "", 0); perr != nil {
+			s.log.Debug("chatwoot: nota de referral falhou", "err", perr, "source", j.SourceID)
+		}
 	}
 	// mídia: re-baixa do WhatsApp e sobe como anexo. Se o download falhar (mídia
 	// expirada, etc.), cai para o texto — mantém o comportamento antigo.
