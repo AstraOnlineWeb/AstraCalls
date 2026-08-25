@@ -432,6 +432,13 @@ func formatReferralNote(ref map[string]any) string {
 // Avatar) antes de despachar.
 func deliverContent(evt *events.Message, prefix string, private bool) cwJob {
 	text := messageText(evt.Message)
+	// mensagem EDITADA pelo remetente: como evt.Info.ID == ID original, o Chatwoot
+	// deduplicaria e não mostraria nada. Postamos um balão NOVO marcado como
+	// editado e ligado ao original via in_reply_to (tratado mais abaixo).
+	_, editOrigID, isEdit := unwrapEdit(evt.Message)
+	if isEdit {
+		prefix = "✏️ _Editada:_\n" + prefix
+	}
 	// visualização única: sinaliza pro atendente (a mídia baixa e sobe normal)
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
 		text = strings.TrimRight("👁️ _Visualização única_\n"+text, "\n")
@@ -445,8 +452,12 @@ func deliverContent(evt *events.Message, prefix string, private bool) cwJob {
 		text += "\n_EID: " + evt.Info.ID + "_"
 	}
 	j := cwJob{Prefix: prefix, Private: private, Text: text, SourceID: evt.Info.ID}
-	// resposta com citação: in_reply_to = a msg citada
-	if ci := messageContextInfo(evt.Message); ci != nil {
+	if isEdit && editOrigID != "" {
+		// balão novo (source_id único) que aponta pro original via citação.
+		j.SourceID = editOrigID + ":edit:" + strconv.FormatInt(evt.Info.Timestamp.Unix(), 10)
+		j.InReplyTo = editOrigID
+	} else if ci := messageContextInfo(evt.Message); ci != nil {
+		// resposta com citação: in_reply_to = a msg citada
 		j.InReplyTo = ci.GetStanzaID()
 	}
 	// mídia: guarda o proto p/ re-baixar do WhatsApp na hora de postar (a fila fica

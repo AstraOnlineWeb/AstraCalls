@@ -60,6 +60,10 @@ func summarizeMessage(evt *events.Message) map[string]any {
 		"type":      messageType(evt.Message),
 		"text":      messageText(evt.Message),
 	}
+	if _, editOrigID, isEdit := unwrapEdit(evt.Message); isEdit {
+		out["edited"] = true
+		out["editedId"] = editOrigID // ID da mensagem original que foi editada
+	}
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
 		out["viewOnce"] = true
 	}
@@ -119,6 +123,19 @@ func putStr(m map[string]any, k, v string) {
 	}
 }
 
+// unwrapEdit desembrulha uma mensagem EDITADA. O WhatsApp entrega a edição como
+// um ProtocolMessage do tipo MESSAGE_EDIT: a mensagem nova fica em EditedMessage
+// e a Key aponta para o ID da mensagem ORIGINAL (que já foi ao Chatwoot como
+// source_id). Retorna a mensagem interna, o ID original e true quando é edição;
+// caso contrário devolve a própria mensagem, "" e false.
+func unwrapEdit(m *waE2E.Message) (*waE2E.Message, string, bool) {
+	pm := m.GetProtocolMessage()
+	if pm.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT && pm.GetEditedMessage() != nil {
+		return pm.GetEditedMessage(), pm.GetKey().GetID(), true
+	}
+	return m, "", false
+}
+
 // unwrapViewOnce desembrulha mensagens de visualização única. No WhatsApp elas
 // não chegam como ImageMessage/VideoMessage/AudioMessage no topo — vêm embrulhadas
 // num FutureProofMessage (V2 = foto/vídeo, V2Extension = áudio/PTT, e o formato
@@ -152,6 +169,7 @@ func unwrapDocCaption(m *waE2E.Message) *waE2E.Message {
 // messageContextInfo devolve o ContextInfo da mensagem (onde fica o StanzaID da
 // mensagem citada, quando é uma resposta). Nil se não houver.
 func messageContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
+	m, _, _ = unwrapEdit(m)
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
 	switch {
@@ -176,6 +194,7 @@ func messageContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
 }
 
 func messageText(m *waE2E.Message) string {
+	m, _, _ = unwrapEdit(m)
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
 	switch {
@@ -211,6 +230,7 @@ func messageText(m *waE2E.Message) string {
 }
 
 func messageType(m *waE2E.Message) string {
+	m, _, _ = unwrapEdit(m)
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
 	switch {
