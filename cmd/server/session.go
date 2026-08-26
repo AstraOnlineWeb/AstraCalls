@@ -484,6 +484,8 @@ func (s *Session) handleEvent(rawEvt any) {
 			go s.handleIncomingEventResponse(evt) // RSVP de evento (decodifica + encaminha)
 		case evt.Message.GetReactionMessage() != nil || evt.Message.GetEncReactionMessage() != nil:
 			go s.handleIncomingReaction(evt) // reação (emoji) numa mensagem
+		case evt.Message.GetSecretEncryptedMessage() != nil:
+			go s.handleIncomingSecretEdit(evt) // edição criptografada (decifra + reflete)
 		default:
 			s.storeMessageEvent(evt)
 			s.dispatchWebhook("message", summarizeMessage(evt))
