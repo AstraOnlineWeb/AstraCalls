@@ -769,12 +769,19 @@ func (c ChatwootConfig) postAttachment(convID int, content, filename, mime strin
 // ---------- Chatwoot -> WhatsApp (saída via webhook) ----------
 
 // shouldRelayWebhook decide se um evento de webhook do Chatwoot deve ser
-// reenviado ao WhatsApp. Reenvia só mensagens de SAÍDA que o agente escreveu na
-// conversa: ignora eventos que não são de criação de mensagem, mensagens de
+// reenviado ao WhatsApp. Reenvia mensagens de SAÍDA — escritas pelo agente
+// (outgoing) ou automáticas do Chatwoot como saudação/disponibilidade
+// (template, ver MessageTemplates::Template::Greeting/OutOfOffice no
+// AstraChat): ignora eventos que não são de criação de mensagem, mensagens de
 // entrada, notas privadas, e — crucial — mensagens com source_id, que já existem
 // no WhatsApp (echo do aparelho ou histórico importado) e duplicariam se reenviadas.
 func shouldRelayWebhook(body map[string]any) bool {
-	if asStr(body["event"]) != "message_created" || asStr(body["message_type"]) != "outgoing" {
+	if asStr(body["event"]) != "message_created" {
+		return false
+	}
+	switch asStr(body["message_type"]) {
+	case "outgoing", "template":
+	default:
 		return false
 	}
 	if b, ok := body["private"].(bool); ok && b {
