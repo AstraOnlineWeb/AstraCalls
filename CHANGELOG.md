@@ -2,6 +2,51 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v0.0.7 — 2026-08-26
+
+Reflexo de mensagens editadas no Chatwoot, captura da origem de anúncios (Click
+to WhatsApp), transporte de áudio da chamada por WebSocket para integrações de
+voz/IA, e melhorias de estabilidade de conexão.
+
+### 💬 Chatwoot & Mensagens
+
+- **Mensagem editada pelo contato agora aparece.** Quando o cliente edita uma
+  mensagem no WhatsApp, o Chatwoot passa a mostrar um balão **"✏️ Editada:"** com
+  o texto novo, ligado à mensagem original. Cobre inclusive a edição
+  **criptografada** (`secretEncryptedMessage`), que antes chegava vazia. O webhook
+  ganhou os campos `edited` e `editedId`.
+- **Origem de anúncio (Click to WhatsApp).** Quando o contato chega por um anúncio
+  do Facebook/Instagram, a primeira mensagem traz um objeto `referral` no webhook
+  (click id `ctwaClid`, link, título, `ref`, source/medium) — o "UTM" do WhatsApp
+  — e a origem é registrada como nota na conversa do Chatwoot.
+- **Correção: documento chegando como `.bin` no Android.** PDFs e arquivos
+  enviados pelo Chatwoot chegavam sem extensão/mimetype correto e o celular do
+  cliente abria como `.bin`. Agora o tipo é resolvido pelo cabeçalho HTTP e pela
+  assinatura do arquivo.
+
+### 🔌 Estabilidade & Conexão
+
+- **Fim do "Será desconectado hoje".** A conta era marcada como inativa e agendada
+  para remoção mesmo com o bridge conectado 24/7. Agora enviamos presença
+  `available` (com espera pelo pushname real e reforço periódico), mantendo o
+  dispositivo ativo.
+- **Atualização do whatsmeow.** Endereçamento LID em conversas diretas, correção
+  de download de mídia e isolamento da fila de handlers por conexão (mais
+  estabilidade geral da API) + dependências atualizadas.
+
+### 🎙️ Áudio da chamada (integrações de voz/IA)
+
+- **Transporte de áudio da chamada por WebSocket** — PCM16 full-duplex direto (sem
+  Opus) com eventos opt-in (`?events=1`). Contrato estável para um agente de
+  voz/IA consumir o áudio da ligação em tempo real.
+
+### 🛠️ Infra & Diagnóstico
+
+- **Revisão de build embutida na imagem** (`org.opencontainers.image.revision`) —
+  identifica exatamente qual commit está rodando.
+- Logs de diagnóstico do SSE e do broadcast de chamada recebida; revalidação de
+  cache do `widget.js`.
+
 ## v0.0.6 — 2026-08-14
 
 Correção de sincronização de chamada entre dispositivos, conexão de sessão por
