@@ -622,6 +622,8 @@ paths:
                 - type: object
                   properties:
                     ptt: { type: boolean, example: true, description: "true = nota de voz (push-to-talk)" }
+                    seconds: { type: integer, description: "Duração em segundos. Se omitido numa nota de voz (ptt), é estimada a partir do OGG/Opus." }
+                    waveform: { type: string, description: "Waveform em base64 (64 bytes, valores 0-100). Se omitido numa nota de voz, um aproximado é gerado para não ficar barra reta." }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 

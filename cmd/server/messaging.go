@@ -174,24 +174,52 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		To, Base64, URL, Mimetype    string
 		PTT                          bool
+		Seconds                      int    // duração (s); se 0 e PTT, calcula do OGG
+		Waveform                     string // 64 bytes em base64; se vazio e PTT, gera
 		QuotedMessageID, Participant string
 		FromMe                       bool
 		Mentions                     []string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
-	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaAudio)
-	if !ok {
+	// Buscamos os bytes primeiro (em vez de uploadMedia) p/ poder estimar a duração
+	// do OGG quando o cliente não informa `seconds`.
+	data, err := fetchMedia(b.Base64, b.URL)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	up, err := sess.client.Upload(r.Context(), data, whatsmeow.MediaAudio)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	mime := b.Mimetype
 	if mime == "" {
 		mime = "audio/ogg; codecs=opus"
 	}
-	msg := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+	am := &waE2E.AudioMessage{
 		Mimetype: proto.String(mime), PTT: proto.Bool(b.PTT),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-	}}
+	}
+	// Duração: usa a informada; senão (nota de voz) estima pelo OGG/Opus.
+	secs := uint32(0)
+	if b.Seconds > 0 {
+		secs = uint32(b.Seconds)
+	} else if b.PTT {
+		secs = oggOpusDurationSeconds(data)
+	}
+	if secs > 0 {
+		am.Seconds = proto.Uint32(secs)
+	}
+	// Waveform: usa o real enviado (64 bytes base64); senão, numa nota de voz, gera
+	// um aproximado p/ não ficar barra reta no destinatário.
+	if wf, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(b.Waveform)); derr == nil && len(wf) == 64 {
+		am.Waveform = wf
+	} else if b.PTT {
+		am.Waveform = synthWaveform()
+	}
+	msg := &waE2E.Message{AudioMessage: am}
 	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
 	s.send(sess, w, r, b.To, msg)
 }
