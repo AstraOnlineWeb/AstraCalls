@@ -103,8 +103,9 @@ func (o chatOverview) MarshalJSON() ([]byte, error) {
 	type alias chatOverview
 	return json.Marshal(struct {
 		alias
-		ID string `json:"id"`
-	}{alias(o), waChatIDStr(o.ChatJID)})
+		ID   string `json:"id"`
+		Type string `json:"type"` // individual | group | channel | broadcast
+	}{alias(o), waChatIDStr(o.ChatJID), chatKind(o.ChatJID)})
 }
 
 // saveMessage persiste (ou atualiza) uma mensagem. Idempotente por (session, chat, msg_id).

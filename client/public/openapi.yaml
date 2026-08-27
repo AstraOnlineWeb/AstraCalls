@@ -121,6 +121,10 @@ components:
         base64: { type: string, description: "Conteúdo em base64 (aceita prefixo data:...)" }
         url: { type: string, description: "URL de onde baixar a mídia" }
         mimetype: { type: string, example: "image/jpeg" }
+        quotedMessageId: { type: string, description: "Cita (responde) a mensagem com esse id." }
+        participant: { type: string, description: "Opcional. Em grupo, JID de quem enviou a mensagem citada." }
+        fromMe: { type: boolean, description: "Opcional. true se a mensagem citada foi enviada por você." }
+        mentions: { type: array, items: { type: string }, description: "Números ou JIDs a mencionar (@) na legenda." }
     GroupInfo:
       type: object
       description: "Inclui aliases de compatibilidade (id/subject/description) ao lado dos campos nativos."
@@ -573,6 +577,10 @@ paths:
               properties:
                 to: { type: string, example: "5561999999999", description: "Número (DDI+DDD) ou JID completo (...@s.whatsapp.net / ...@g.us)" }
                 text: { type: string, example: "Olá!" }
+                quotedMessageId: { type: string, description: "Cita (responde) a mensagem com esse id. O remetente/conteúdo da citada é resolvido automaticamente." }
+                participant: { type: string, description: "Opcional. Em grupo, o JID de quem enviou a mensagem citada (só se a resolução automática não achar)." }
+                fromMe: { type: boolean, description: "Opcional. true se a mensagem citada foi enviada por você." }
+                mentions: { type: array, items: { type: string }, description: "Números ou JIDs a mencionar (@). O texto deve conter os @ correspondentes.", example: ["5561999999999"] }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
         "503": { description: Conta não pareada }
@@ -1129,6 +1137,28 @@ paths:
                 audio: { type: boolean, description: "true = mostra 'gravando áudio'" }
       responses:
         "200": { description: OK }
+
+  /api/sessions/{sid}/messages/{id}/media:
+    get:
+      tags: [Mensagens]
+      summary: Baixa os bytes de uma mídia RECEBIDA (imagem/áudio/vídeo/documento/sticker)
+      description: |
+        Decifra e devolve o arquivo original de uma mensagem de mídia recebida, a
+        partir do `id` da mensagem (o mesmo `id` que veio no webhook `message`).
+        Responde com o `Content-Type` correto e `Content-Disposition: inline`
+        (use `?download=1` para forçar download como anexo). Retorna 404 se a
+        mensagem não existe ou não tem mídia.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string }, description: "ID da mensagem (webhook message.data.id)" }
+        - { name: download, in: query, required: false, schema: { type: string, enum: ["1", "true"] }, description: "Força download (anexo) em vez de inline" }
+      responses:
+        "200":
+          description: Bytes do arquivo (Content-Type conforme a mídia)
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404": { description: Mensagem não encontrada ou sem mídia }
 
   # ===================== Contatos =====================
   /api/sessions/{sid}/contacts/check:

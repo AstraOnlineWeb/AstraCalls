@@ -486,9 +486,11 @@ func (s *Session) handleEvent(rawEvt any) {
 			go s.handleIncomingReaction(evt) // reação (emoji) numa mensagem
 		case evt.Message.GetSecretEncryptedMessage() != nil:
 			go s.handleIncomingSecretEdit(evt) // edição criptografada (decifra + reflete)
+		case isRevokeMessage(evt.Message):
+			go s.handleIncomingRevoke(evt) // mensagem apagada p/ todos -> evento `deleted`
 		default:
 			s.storeMessageEvent(evt)
-			s.dispatchWebhook("message", summarizeMessage(evt))
+			s.dispatchWebhook("message", s.messagePayload(evt))
 			go s.chatwootPushIncoming(evt)
 			s.maybeMarkRead(ctx, evt)
 		}

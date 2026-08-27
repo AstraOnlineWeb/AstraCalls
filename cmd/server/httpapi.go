@@ -61,6 +61,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{sid}/messages", s.handleDeleteMessage)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/seen", s.handleMarkSeen)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/typing", s.handleTyping)
+	// Baixar os bytes de uma mídia RECEBIDA (imagem/áudio/vídeo/documento/sticker)
+	mux.HandleFunc("GET /api/sessions/{sid}/messages/{id}/media", s.handleGetMedia)
 
 	// Contatos (whatsmeow)
 	mux.HandleFunc("GET /api/sessions/{sid}/contacts/check", s.handleCheckNumber)

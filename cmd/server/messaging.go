@@ -121,14 +121,20 @@ func (s *server) handleSendText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		To   string `json:"to"`
-		Text string `json:"text"`
+		To              string   `json:"to"`
+		Text            string   `json:"text"`
+		QuotedMessageID string   `json:"quotedMessageId"` // citar (reply) a msg com esse id
+		Participant     string   `json:"participant"`     // em grupo: quem mandou a citada
+		FromMe          bool     `json:"fromMe"`          // a citada é nossa
+		Mentions        []string `json:"mentions"`        // JIDs/números a mencionar (@)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Text) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to and text required"})
 		return
 	}
-	s.send(sess, w, r, b.To, &waE2E.Message{Conversation: proto.String(b.Text)})
+	msg := &waE2E.Message{Conversation: proto.String(b.Text)}
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	s.send(sess, w, r, b.To, msg)
 }
 
 func (s *server) handleSendImage(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +144,9 @@ func (s *server) handleSendImage(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		To, Base64, URL, Caption, Mimetype string
+		QuotedMessageID, Participant       string
+		FromMe                             bool
+		Mentions                           []string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaImage)
@@ -148,11 +157,13 @@ func (s *server) handleSendImage(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = "image/jpeg"
 	}
-	s.send(sess, w, r, b.To, &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+	msg := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
 		Caption: proto.String(b.Caption), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-	}})
+	}}
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	s.send(sess, w, r, b.To, msg)
 }
 
 func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
@@ -161,8 +172,11 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		To, Base64, URL, Mimetype string
-		PTT                       bool
+		To, Base64, URL, Mimetype    string
+		PTT                          bool
+		QuotedMessageID, Participant string
+		FromMe                       bool
+		Mentions                     []string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaAudio)
@@ -173,11 +187,13 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = "audio/ogg; codecs=opus"
 	}
-	s.send(sess, w, r, b.To, &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+	msg := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
 		Mimetype: proto.String(mime), PTT: proto.Bool(b.PTT),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-	}})
+	}}
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	s.send(sess, w, r, b.To, msg)
 }
 
 func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +203,9 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		To, Base64, URL, Caption, Mimetype string
+		QuotedMessageID, Participant       string
+		FromMe                             bool
+		Mentions                           []string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaVideo)
@@ -197,11 +216,13 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = "video/mp4"
 	}
-	s.send(sess, w, r, b.To, &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+	msg := &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
 		Caption: proto.String(b.Caption), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-	}})
+	}}
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	s.send(sess, w, r, b.To, msg)
 }
 
 // documentWithCaption monta a mensagem de documento, embrulhando-a em
@@ -225,6 +246,9 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		To, Base64, URL, FileName, Mimetype, Caption string
+		QuotedMessageID, Participant                 string
+		FromMe                                       bool
+		Mentions                                     []string
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaDocument)
@@ -242,11 +266,15 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 		name = "file"
 	}
 	name = ensureFileExt(name, mime)
-	s.send(sess, w, r, b.To, documentWithCaption(&waE2E.DocumentMessage{
+	doc := &waE2E.DocumentMessage{
 		FileName: proto.String(name), Title: proto.String(name), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-	}, b.Caption))
+	}
+	// citação/menção vão no ContextInfo do documento interno (o wrapper de legenda
+	// só embrulha essa mesma mensagem).
+	doc.ContextInfo = sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions)
+	s.send(sess, w, r, b.To, documentWithCaption(doc, b.Caption))
 }
 
 func (s *server) handleSendSticker(w http.ResponseWriter, r *http.Request) {

@@ -41,6 +41,6 @@ func (s *Session) handleIncomingSecretEdit(evt *events.Message) {
 		},
 	}
 	s.storeMessageEvent(&synthetic)
-	s.dispatchWebhook("message", summarizeMessage(&synthetic))
+	s.dispatchWebhook("message", s.messagePayload(&synthetic))
 	s.chatwootPushIncoming(&synthetic)
 }
