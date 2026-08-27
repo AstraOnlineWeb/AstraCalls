@@ -206,7 +206,7 @@ func (b *Broker) upsertCall(r CallRecord) {
 	b.calls[r.CallID] = &cp
 	b.mu.Unlock()
 	b.broadcastCallList()
-	b.broadcast(map[string]any{
+	b.broadcastForSession(rec.SessionID, map[string]any{
 		"type": "call-status", "sessionId": r.SessionID, "id": r.CallID, "owner": r.Owner,
 		"status": r.Status, "peer": r.Peer, "startedAt": r.StartedAt, "held": r.Held,
 	})
@@ -251,7 +251,7 @@ func (b *Broker) reassignOwner(id string, owner *string) bool {
 	rec := *c
 	b.mu.Unlock()
 	b.broadcastCallList()
-	b.broadcast(map[string]any{
+	b.broadcastForSession(r.SessionID, map[string]any{
 		"type": "call-status", "sessionId": rec.SessionID, "id": rec.CallID, "owner": rec.Owner,
 		"status": rec.Status, "peer": rec.Peer, "startedAt": rec.StartedAt, "held": rec.Held,
 	})
@@ -290,7 +290,7 @@ func (b *Broker) endCall(id, reason string) {
 	sessionID := c.SessionID
 	b.mu.Unlock()
 
-	b.broadcast(map[string]any{
+	b.broadcastForSession(sessionID, map[string]any{
 		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now,
 	})
 	b.broadcastCallList()
@@ -298,12 +298,47 @@ func (b *Broker) endCall(id, reason string) {
 
 func (b *Broker) broadcastCallList() {
 	b.mu.RLock()
-	list := make([]CallRecord, 0, len(b.calls))
+	all := make([]CallRecord, 0, len(b.calls))
 	for _, c := range b.calls {
-		list = append(list, *c)
+		all = append(all, *c)
 	}
 	b.mu.RUnlock()
-	b.broadcast(map[string]any{"type": "call-list", "calls": list})
+
+	// resolve each call's account outside the broker lock (matches broadcastForSession)
+	acctOf := make(map[string]int, len(all))
+	if b.AccountForSession != nil {
+		for _, c := range all {
+			acctOf[c.CallID] = b.AccountForSession(c.SessionID)
+		}
+	}
+
+	encoded := map[int][]byte{}
+	payloadFor := func(acct int) []byte {
+		if data, ok := encoded[acct]; ok {
+			return data
+		}
+		list := all
+		if acct != 0 {
+			list = make([]CallRecord, 0, len(all))
+			for _, c := range all {
+				if acctOf[c.CallID] == acct {
+					list = append(list, c)
+				}
+			}
+		}
+		data, _ := json.Marshal(map[string]any{"type": "call-list", "calls": list})
+		encoded[acct] = data
+		return data
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		select {
+		case s.ch <- payloadFor(s.accountID):
+		default:
+		}
+	}
 }
 
 func (b *Broker) emitIncoming(sessionID, id, peer, phone, name string, video bool) {
