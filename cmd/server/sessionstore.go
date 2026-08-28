@@ -11,6 +11,7 @@ type sessionRow struct {
 	ID        string
 	Name      string
 	JID       string
+	LastJID   string
 	Webhook   string
 	Chatwoot  string
 	Recording bool
@@ -39,6 +40,8 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS recording BOOLEAN NOT NULL DEFAULT false`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS proxy TEXT`)
+	// último número conectado — sobrevive à desconexão p/ o painel exibir "último número"
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_jid TEXT`)
 
 	// Histórico de mensagens (para as rotas de chats/messages).
 	// O whatsmeow não persiste histórico; guardamos aqui o que passa pela sessão.
@@ -88,7 +91,7 @@ func newSessionID() string {
 }
 
 func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, '') FROM sessions ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(last_jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, '') FROM sessions ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +99,7 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	var out []sessionRow
 	for rows.Next() {
 		var r sessionRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.Recording, &r.Proxy); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.LastJID, &r.Webhook, &r.Chatwoot, &r.Recording, &r.Proxy); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -110,7 +113,10 @@ func (s *sessionStore) insert(ctx context.Context, id, name string) error {
 }
 
 func (s *sessionStore) setJID(ctx context.Context, id, jid string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET jid = $1 WHERE id = $2`, jid, id)
+	// ao conectar (jid != ''), atualiza também o last_jid; ao desconectar (jid=''),
+	// preserva o last_jid para o painel mostrar o último número.
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET jid = $1, last_jid = CASE WHEN $1 <> '' THEN $1 ELSE last_jid END WHERE id = $2`, jid, id)
 	return err
 }
 

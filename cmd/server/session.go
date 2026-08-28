@@ -46,6 +46,7 @@ type Session struct {
 	chatwoot  ChatwootConfig
 	recording bool   // grava as chamadas desta sessão (opt-in)
 	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)
+	lastJID   string // último número (JID) que esteve conectado; mantido após desconectar
 
 	// downAlerted evita repetir o aviso de "sessão desconectada" no Chatwoot
 	// enquanto ela segue caída; volta a false ao reconectar (events.Connected).
@@ -662,15 +663,19 @@ func (s *Session) notifyDisconnected(reason, action string) {
 }
 
 func (s *Session) info() SessionInfo {
-	s.mu.Lock()
-	a := s.auth
-	rec := s.recording
-	s.mu.Unlock()
 	jid := ""
 	if id := s.client.Store.ID; id != nil {
 		jid = id.String()
 	}
-	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != "", Recording: rec}
+	s.mu.Lock()
+	a := s.auth
+	rec := s.recording
+	if jid != "" {
+		s.lastJID = jid // enquanto conectado, memoriza o número atual
+	}
+	last := s.lastJID
+	s.mu.Unlock()
+	return SessionInfo{ID: s.id, Name: s.name, JID: jid, LastJID: last, State: a.State, Paired: a.Paired || jid != "", Recording: rec}
 }
 
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {

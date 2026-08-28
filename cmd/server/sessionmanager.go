@@ -155,6 +155,11 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 		}
 		client := whatsmeow.NewClient(device, m.waLogger)
 		s := newSession(m, row.ID, row.Name, client)
+		if row.LastJID != "" {
+			s.lastJID = row.LastJID
+		} else {
+			s.lastJID = row.JID
+		}
 		s.waContainer = container
 		s.waDB = db
 		s.setWebhook(row.Webhook)

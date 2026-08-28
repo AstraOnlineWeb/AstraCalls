@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, Power, QrCode, Mic, Copy, Check } from "lucide-react";
+import { Loader2, Power, QrCode, Mic, Copy, Check, Phone } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { ChatwootDialog } from "./ChatwootDialog";
 import { ProxyDialog } from "./ProxyDialog";
 import { logoutSession, pairSession, setRecording } from "@/services/sessions";
+import { phoneFromJid } from "@/utils/format";
 import type { SessionInfo, SessionState } from "@/types/session";
 
 const statusLabel: Record<SessionState, string> = {
@@ -64,6 +65,9 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
     }
   };
 
+  const connectedPhone = phoneFromJid(session.jid);
+  const lastPhone = phoneFromJid(session.lastJid);
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-1">
@@ -71,6 +75,17 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
           <h1 className="truncate text-xl font-semibold tracking-tight">{session.name}</h1>
           <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>
         </div>
+        {connectedPhone ? (
+          <div className="flex items-center gap-1.5 text-sm">
+            <Phone className="h-3.5 w-3.5 text-emerald-600" />
+            <span className="font-medium text-foreground">{connectedPhone}</span>
+          </div>
+        ) : lastPhone ? (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground" title="Último número que esteve conectado">
+            <Phone className="h-3.5 w-3.5" />
+            <span>Último número: <span className="font-medium">{lastPhone}</span></span>
+          </div>
+        ) : null}
         <button
           type="button"
           onClick={copyId}

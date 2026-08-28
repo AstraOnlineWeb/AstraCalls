@@ -41,6 +41,7 @@ type SessionInfo struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	JID       string `json:"jid"`
+	LastJID   string `json:"lastJid"` // último número conectado (persiste após desconectar)
 	State     string `json:"state"`
 	Paired    bool   `json:"paired"`
 	Recording bool   `json:"recording"`

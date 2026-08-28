@@ -10,6 +10,7 @@ export type SessionInfo = {
   id: string;
   name: string;
   jid: string;
+  lastJid: string;
   state: SessionState;
   paired: boolean;
   recording: boolean;
