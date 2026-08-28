@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { setActiveSession, useSessions } from "@/stores/sessions";
 import { createSession, deleteSession } from "@/services/sessions";
 import { EXTENSION_DOWNLOAD_URL } from "@/lib/passkey";
+import { phoneFromJid } from "@/utils/format";
 import type { SessionInfo, SessionState } from "@/types/session";
 
 const dotClass: Record<SessionState, string> = {
@@ -79,7 +80,11 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
             <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-card", dotClass[s.state])} />
             <div className="min-w-0 flex-1">
               <p className="truncate font-medium">{s.name}</p>
-              {s.jid && <p className="truncate text-xs text-muted-foreground">{s.jid.split("@")[0]}</p>}
+              {phoneFromJid(s.jid) ? (
+                <p className="truncate text-xs text-muted-foreground">{phoneFromJid(s.jid)}</p>
+              ) : phoneFromJid(s.lastJid) ? (
+                <p className="truncate text-xs text-muted-foreground">{phoneFromJid(s.lastJid)}</p>
+              ) : null}
             </div>
             <button
               onClick={(e) => {
