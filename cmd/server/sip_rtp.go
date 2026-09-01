@@ -78,7 +78,7 @@ func NewSIPRTPBridge(waCallID, remoteRTP string) (*SIPRTPBridge, error) {
 		addr = a
 	}
 
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 0})
+	conn, err := listenRTP()
 	if err != nil {
 		return nil, fmt.Errorf("listen RTP: %w", err)
 	}
@@ -94,6 +94,33 @@ func NewSIPRTPBridge(waCallID, remoteRTP string) (*SIPRTPBridge, error) {
 
 	go br.readLoop()
 	return br, nil
+}
+
+// listenRTP abre o socket UDP do RTP dentro de uma FAIXA de portas fixa
+// (WACALLS_RTP_PORT_MIN..MAX, padrão 40000..40049) em vez de porta efêmera —
+// assim dá pra publicar essa faixa no Docker Swarm (mode=host) e o áudio chega.
+// Cai para porta efêmera (Port: 0) se a faixa estiver toda ocupada.
+func listenRTP() (*net.UDPConn, error) {
+	min, max := rtpPortRange()
+	for p := min; p <= max; p++ {
+		conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: p})
+		if err == nil {
+			return conn, nil
+		}
+	}
+	return net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 0})
+}
+
+func rtpPortRange() (min, max int) {
+	min = envInt("WACALLS_RTP_PORT_MIN", 40000)
+	max = envInt("WACALLS_RTP_PORT_MAX", 40049)
+	if min <= 0 || min > 65535 {
+		min = 40000
+	}
+	if max < min || max > 65535 {
+		max = min + 49
+	}
+	return min, max
 }
 
 func (b *SIPRTPBridge) LocalAddr() *net.UDPAddr {
