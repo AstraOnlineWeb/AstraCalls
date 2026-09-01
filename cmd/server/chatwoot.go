@@ -124,19 +124,52 @@ func (c ChatwootConfig) req(method, path string, body any) (map[string]any, int,
 
 // ---------- WhatsApp -> Chatwoot (entrada) ----------
 
-// realPhone devolve o telefone real (PN). Se o JID for um LID, tenta converter
-// via store; senão devolve o próprio user.
-func (s *Session) realPhone(jid types.JID) string {
+// resolvedPhone devolve o telefone real (PN) e resolved=true quando ele foi de
+// fato apurado. Para um LID sem PN conhecido no store devolve ("", false) — NÃO
+// devolve o número cru do LID, que não é um telefone e não pode virar
+// phone_number de contato no Chatwoot.
+func (s *Session) resolvedPhone(jid types.JID) (string, bool) {
 	if jid.User == "" {
-		return ""
+		return "", false
 	}
 	if jid.Server == types.DefaultUserServer {
-		return jid.User
+		return jid.User, true
 	}
 	if pn, err := s.client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn.User != "" {
-		return pn.User
+		return pn.User, true
+	}
+	return "", false
+}
+
+// realPhone devolve o telefone real (PN). Se o JID for um LID não resolvível,
+// cai no próprio user (usado só para EXIBIÇÃO — widget/label; nunca para gravar
+// phone_number). Para chavear contato no Chatwoot use resolvedPhone/directIdentity.
+func (s *Session) realPhone(jid types.JID) string {
+	if p, ok := s.resolvedPhone(jid); ok {
+		return p
 	}
 	return jid.User
+}
+
+// directIdentity resolve, para uma conversa 1:1, a identidade do contato no
+// Chatwoot: o telefone real (PN), o identifier principal, um identifier
+// alternativo (o JID @lid, para reencontrar um contato criado antes de o número
+// resolver) e se o telefone foi de fato apurado. Quando não foi (LID sem PN),
+// resolved=false e o contato é chaveado pelo próprio JID @lid, SEM telefone falso.
+func (s *Session) directIdentity(chat, alt types.JID) (phone, chatID, altID string, resolved bool) {
+	if chat.Server == types.DefaultUserServer {
+		return chat.User, chat.User + "@" + types.DefaultUserServer, "", true
+	}
+	// chat é @lid: guarda o JID como identifier alternativo p/ backfill posterior.
+	altID = chat.String()
+	if alt.Server == types.DefaultUserServer && alt.User != "" {
+		return alt.User, alt.User + "@" + types.DefaultUserServer, altID, true
+	}
+	if p, ok := s.resolvedPhone(chat); ok {
+		return p, p + "@" + types.DefaultUserServer, altID, true
+	}
+	// não resolvido: chaveia pelo próprio LID, sem telefone.
+	return "", chat.String(), "", false
 }
 
 // resolvePeer converte o JID cru do peer de uma chamada (que costuma vir como
@@ -255,49 +288,44 @@ const mirrorDeviceTitle = "📲 Enviado pelo aparelho:\n"
 // Não é reenviado ao contato (nota privada não dispara o webhook de saída).
 func (s *Session) chatwootMirrorOwn(cfg ChatwootConfig, evt *events.Message) {
 	chat := evt.Info.Chat // numa msg from_me 1:1, o Chat é o destinatário
-	phone := chat.User
-	if chat.Server != types.DefaultUserServer {
-		if evt.Info.RecipientAlt.Server == types.DefaultUserServer && evt.Info.RecipientAlt.User != "" {
-			phone = evt.Info.RecipientAlt.User
-		} else {
-			phone = s.realPhone(chat)
-		}
+	phone, chatID, altID, _ := s.directIdentity(chat, evt.Info.RecipientAlt)
+	name := phone
+	if name == "" {
+		name = chat.User
 	}
 	avatar := ""
 	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), chat, nil); perr == nil && pp != nil {
 		avatar = pp.URL
 	}
 	j := deliverContent(evt, mirrorDeviceTitle, true)
-	j.ChatID = phone + "@" + types.DefaultUserServer
+	j.ChatID = chatID
 	j.Phone = phone
-	j.Name = phone
+	j.AltID = altID
+	j.Name = name
 	j.Avatar = avatar
 	s.chatwootSend(cfg, j)
 }
 
 // chatwootPushDirect trata a conversa 1:1 (comportamento original).
 func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
-	// telefone real (PN), nunca o LID
+	// telefone real (PN), nunca o LID cru
 	chat := evt.Info.Chat
-	phone := chat.User
-	if chat.Server != types.DefaultUserServer {
-		if evt.Info.SenderAlt.Server == types.DefaultUserServer && evt.Info.SenderAlt.User != "" {
-			phone = evt.Info.SenderAlt.User
-		} else {
-			phone = s.realPhone(chat)
-		}
-	}
+	phone, chatID, altID, _ := s.directIdentity(chat, evt.Info.SenderAlt)
 	name := evt.Info.PushName
 	if name == "" {
 		name = phone
+		if name == "" {
+			name = chat.User
+		}
 	}
 	avatar := ""
 	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), evt.Info.Chat, nil); perr == nil && pp != nil {
 		avatar = pp.URL
 	}
 	j := deliverContent(evt, "", false)
-	j.ChatID = phone + "@" + types.DefaultUserServer
+	j.ChatID = chatID
 	j.Phone = phone
+	j.AltID = altID
 	j.Name = name
 	j.Avatar = avatar
 	// origem de anúncio (Click to WhatsApp): registra como nota privada p/ o
@@ -388,6 +416,7 @@ func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
 type cwJob struct {
 	ChatID    string          `json:"chatId"`    // identifier do contato no Chatwoot (telefone@..., JID de grupo/canal)
 	Phone     string          `json:"phone"`     // telefone p/ busca do contato (vazio em grupo/canal)
+	AltID     string          `json:"altId,omitempty"` // identifier alternativo (JID @lid) p/ reencontrar contato criado antes do número resolver
 	Name      string          `json:"name"`      // nome do contato
 	Avatar    string          `json:"avatar"`    // URL do avatar (best-effort)
 	Prefix    string          `json:"prefix"`    // prefixo colado antes do texto (autor em grupo, título de espelho)
@@ -485,7 +514,7 @@ func (s *Session) chatwootSend(cfg ChatwootConfig, j cwJob) {
 // unidade retryável: qualquer passo que fale com o Chatwoot pode falhar aqui e o
 // job volta pra fila. Só re-baixa mídia do WhatsApp quando o job carrega uma.
 func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
-	contactID, sourceID, err := cfg.ensureContact(j.ChatID, j.Phone, j.Name, j.Avatar)
+	contactID, sourceID, err := cfg.ensureContact(j.ChatID, j.Phone, j.Name, j.Avatar, j.AltID)
 	if err != nil {
 		return fmt.Errorf("ensure contact: %w", err)
 	}
@@ -532,13 +561,29 @@ var avatarSynced sync.Map
 
 // ensureContact acha (por telefone, ou por identifier quando phone == "" no caso
 // de grupos/canais) ou cria o contato e garante o source_id da inbox.
-func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (contactID int, sourceID string, err error) {
-	// grupos/canais não têm telefone -> busca pelo identifier (o JID)
-	query := phone
-	if query == "" {
-		query = chatID
+func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, altIDs ...string) (contactID int, sourceID string, err error) {
+	// buscas: por telefone (1:1) ou pelo identifier (grupo/canal), e ainda por
+	// quaisquer identificadores alternativos (ex.: o JID @lid do contato), para
+	// reencontrar um contato criado ANTES de resolvermos o número real e fazer o
+	// backfill do telefone nele — em vez de criar um contato duplicado.
+	queries := make([]string, 0, 1+len(altIDs))
+	if phone != "" {
+		queries = append(queries, phone)
+	} else {
+		queries = append(queries, chatID)
 	}
-	if res, code, e := c.req(http.MethodGet, "/contacts/search?q="+url.QueryEscape(query), nil); e == nil && code == 200 {
+	queries = append(queries, altIDs...)
+
+	seen := map[string]bool{}
+	for _, query := range queries {
+		if query == "" || seen[query] {
+			continue
+		}
+		seen[query] = true
+		res, code, e := c.req(http.MethodGet, "/contacts/search?q="+url.QueryEscape(query), nil)
+		if e != nil || code != 200 {
+			continue
+		}
 		for _, it := range asList(res["payload"]) {
 			m := asMap(it)
 			ident := asStr(m["identifier"])
@@ -561,6 +606,12 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (co
 			}
 			if id := asInt(m["id"]); id != 0 {
 				c.syncAvatar(id, avatarURL)
+				// backfill: contato achado mas sem telefone ou com um número errado
+				// (ex.: criado a partir de um @lid antes de o PN resolver). Agora que
+				// temos o telefone real, corrige o phone_number. Best-effort.
+				if phone != "" && digitsOnly(asStr(m["phone_number"])) != phone {
+					c.backfillPhone(id, phone)
+				}
 				if sid := sourceIDForInbox(m, c.InboxID); sid != "" {
 					return id, sid, nil
 				}
@@ -602,6 +653,14 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (co
 		sid, _ = c.ensureContactInbox(id)
 	}
 	return id, sid, nil
+}
+
+// backfillPhone corrige o phone_number de um contato existente que estava sem
+// número (ou com um número errado) — tipicamente um contato criado a partir de um
+// @lid antes de o telefone real (PN) resolver. Best-effort: o Chatwoot pode
+// recusar (ex.: número já pertence a outro contato); nesse caso não faz nada.
+func (c ChatwootConfig) backfillPhone(contactID int, phone string) {
+	_, _, _ = c.req(http.MethodPut, fmt.Sprintf("/contacts/%d", contactID), map[string]any{"phone_number": "+" + phone})
 }
 
 // syncAvatar atualiza a foto do contato existente (uma vez por processo).
