@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ChatwootDialog } from "./ChatwootDialog";
 import { ProxyDialog } from "./ProxyDialog";
+import { SIPDialog } from "./SIPDialog";
 import { logoutSession, pairSession, setRecording } from "@/services/sessions";
 import { phoneFromJid } from "@/utils/format";
 import type { SessionInfo, SessionState } from "@/types/session";
@@ -111,6 +112,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
           </label>
         )}
         {session.paired && <ProxyDialog sid={session.id} />}
+        {session.paired && <SIPDialog session={session} />}
         {session.paired && <ChatwootDialog sid={session.id} />}
         {session.paired ? (
           <Button

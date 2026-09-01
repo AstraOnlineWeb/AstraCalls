@@ -14,4 +14,7 @@ export type SessionInfo = {
   state: SessionState;
   paired: boolean;
   recording: boolean;
+  sip_user?: string;
+  sip_pass?: string;
+  sip_url?: string;
 };

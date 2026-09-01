@@ -45,6 +45,9 @@ type SessionInfo struct {
 	State     string `json:"state"`
 	Paired    bool   `json:"paired"`
 	Recording bool   `json:"recording"`
+	SIPUser   string `json:"sip_user"`
+	SIPPass   string `json:"sip_pass"`
+	SIPURL    string `json:"sip_url"`
 }
 
 type subscriber struct {

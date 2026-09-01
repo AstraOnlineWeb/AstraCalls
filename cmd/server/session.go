@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,12 @@ type Session struct {
 	recording bool   // grava as chamadas desta sessão (opt-in)
 	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)
 	lastJID   string // último número (JID) que esteve conectado; mantido após desconectar
+
+	// Credenciais SIP desta sessão (modelo Wavoip: o PBX do cliente se registra
+	// no AstraCalls usando estes dados). Definidas na criação da sessão.
+	SIPUser string
+	SIPPass string
+	SIPURL  string
 
 	// downAlerted evita repetir o aviso de "sessão desconectada" no Chatwoot
 	// enquanto ela segue caída; volta a false ao reconectar (events.Connected).
@@ -296,17 +303,30 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.log.Info("incoming call: broadcasting", "callID", c.CallID, "peer", c.PeerJid,
 			"acct", acct, "subs_total", total, "subs_matched", matched, "subs_widget_other_acct", otherAcct)
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, name, c.MediaType == core.CallMediaTypeVideo)
+		// se um tronco SIP está registrado, toca essa chamada no ramal também.
+		if s.mgr.sipInbound != nil {
+			s.mgr.sipInbound(s, c.CallID, sipUserPart(c.PeerJid))
+		}
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {
 			// avisa o consumidor do WS (se abriu com ?events=1) antes de fechar.
 			s.wsCallEvent(c.CallID, map[string]any{"type": "call-ended", "reason": string(c.StateData.EndReason)})
+			if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
+				ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
+			}
 			s.removeCall(c.CallID)
 			s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 			return
 		}
 		// espelha a mudança de estado no WS (connected/hold/etc.) para o consumidor.
 		s.wsCallEvent(c.CallID, map[string]any{"type": "call-status", "status": mapStatus(c.StateData.State)})
+		// SIP: quando a chamada WhatsApp fica ativa, libera o 200 OK do lado SIP.
+		if c.IsActive() {
+			if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
+				ac.rtpBridge.NotifyActive()
+			}
+		}
 		dir := "outbound"
 		if c.Direction == core.CallDirectionIncoming {
 			dir = "inbound"
@@ -325,6 +345,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnEnded = func(c *call.CallInfo) {
 		s.wsCallEvent(c.CallID, map[string]any{"type": "call-ended", "reason": string(c.StateData.EndReason)})
+		if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
+			ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
+		}
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 	}
@@ -335,21 +358,24 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		}
 		// grava o lado do peer (WhatsApp) mesmo se o consumidor ainda não estiver pronto
 		ac.recorder.writePeer(pcm16)
+		// ponte SIP (G.711 u-law): recebe o PCM 16kHz direto (chamada SIP não usa WS/WebRTC).
+		if ac.rtpBridge != nil {
+			_ = ac.rtpBridge.WritePCM(pcm16)
+		}
 		// ponte WebSocket: envia PCM16 direto, sem Opus (menos CPU/latência).
 		if ws := ac.wsBridge; ws != nil {
 			_ = ws.WritePCM(pcm16)
 			return
 		}
 		// ponte WebRTC (pion): o navegador espera Opus/RTP.
-		if ac.bridge == nil || ac.browserOpus == nil {
-			return
+		if ac.bridge != nil && ac.browserOpus != nil {
+			pcm48 := media.Upsample16to48(pcm16)
+			opus, err := ac.browserOpus.Encode(pcm48)
+			if err != nil || len(opus) == 0 {
+				return
+			}
+			_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
 		}
-		pcm48 := media.Upsample16to48(pcm16)
-		opus, err := ac.browserOpus.Encode(pcm48)
-		if err != nil || len(opus) == 0 {
-			return
-		}
-		_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
 	}
 	cm.OnPeerVideo = func(au []byte) {
 		ac, ok := s.reg.get(callID)
@@ -675,7 +701,11 @@ func (s *Session) info() SessionInfo {
 	}
 	last := s.lastJID
 	s.mu.Unlock()
-	return SessionInfo{ID: s.id, Name: s.name, JID: jid, LastJID: last, State: a.State, Paired: a.Paired || jid != "", Recording: rec}
+	return SessionInfo{
+		ID: s.id, Name: s.name, JID: jid, LastJID: last, State: a.State,
+		Paired: a.Paired || jid != "", Recording: rec,
+		SIPUser: s.SIPUser, SIPPass: s.SIPPass, SIPURL: s.SIPURL,
+	}
 }
 
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {
@@ -712,6 +742,9 @@ func (s *Session) removeCall(callID string) {
 	}
 	if ac.browserOpus != nil {
 		ac.browserOpus.Close()
+	}
+	if ac.rtpBridge != nil {
+		ac.rtpBridge.Close()
 	}
 }
 
@@ -821,5 +854,39 @@ func mapStatus(state core.CallState) CallStatus {
 		return StatusStarting
 	default:
 		return StatusRinging
+	}
+}
+
+// sipStartCall dispara uma chamada WhatsApp de saída a partir de um INVITE SIP.
+func (s *Session) sipStartCall(ctx context.Context, phone string, isVideo bool) (string, error) {
+	phone = strings.TrimSpace(phone)
+	phone = strings.TrimPrefix(phone, "+")
+	var cleaned strings.Builder
+	for _, c := range phone {
+		if c >= '0' && c <= '9' {
+			cleaned.WriteRune(c)
+		}
+	}
+	peer := types.NewJID(cleaned.String(), types.DefaultUserServer)
+	// chamada originada por SIP: grava conforme o modo de gravação da sessão.
+	return s.startOutgoing(ctx, peer, isVideo, false)
+}
+
+func (s *Session) terminateCallByID(callID string) {
+	ac, ok := s.reg.get(callID)
+	if !ok {
+		return
+	}
+	_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+}
+
+func (s *Session) setRTPBridge(callID string, b *SIPRTPBridge) {
+	oldB, found := s.reg.setRTPBridge(callID, b)
+	if !found {
+		b.Close()
+		return
+	}
+	if oldB != nil {
+		oldB.Close()
 	}
 }

@@ -13,6 +13,7 @@ type activeCall struct {
 	wsBridge    *wsBridge // ponte WebSocket (alternativa ao pion WebRTC para proxies HTTP)
 	browserOpus media.Codec
 	recorder    *callRecorder // nil quando a gravação está desligada na sessão
+	rtpBridge   *SIPRTPBridge // ponte RTP p/ SIP; nil quando a chamada não é SIP
 }
 
 type callRegistry struct {
@@ -87,4 +88,16 @@ func (r *callRegistry) drain() []*activeCall {
 	}
 	r.calls = map[string]*activeCall{}
 	return out
+}
+
+func (r *callRegistry) setRTPBridge(callID string, b *SIPRTPBridge) (*SIPRTPBridge, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ac, ok := r.calls[callID]
+	if !ok {
+		return nil, false
+	}
+	oldB := ac.rtpBridge
+	ac.rtpBridge = b
+	return oldB, true
 }
