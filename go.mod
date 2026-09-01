@@ -9,7 +9,7 @@ require (
 	github.com/pion/ice/v4 v4.2.7
 	github.com/pion/webrtc/v4 v4.2.15
 	go.mau.fi/util v0.10.1-0.20260820140024-eb612d936fde
-	go.mau.fi/whatsmeow v0.0.0-20260821141805-33cfac511629
+	go.mau.fi/whatsmeow v0.0.0-20260828224850-0fadda796019
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.53.0
 )
