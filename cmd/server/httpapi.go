@@ -277,6 +277,17 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// accountFromClientID extrai o número da conta do padrão "astrachat_accN" usado pela
+// integração do Chatwoot (ex.: "astrachat_acc4" -> 4). Devolve 0 se não casar, para
+// o chamador manter o comportamento de escopo admin.
+func accountFromClientID(cid string) int {
+	const prefix = "astrachat_acc"
+	if !strings.HasPrefix(cid, prefix) {
+		return 0
+	}
+	return asInt(strings.TrimPrefix(cid, prefix))
+}
+
 func clientID(r *http.Request) string {
 	if id := r.Header.Get("X-Client-Id"); id != "" {
 		return id
@@ -298,6 +309,16 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// widget do Chatwoot passa a conta dele; o painel admin não passa e recebe tudo.
 	acc := asInt(r.URL.Query().Get("accountId"))
 	cid := clientID(r)
+	// Rede de segurança: se a integração conectar SEM accountId, o escopo cairia em
+	// 0 (=painel admin) e essa conexão passaria a receber chamadas de TODAS as contas
+	// — misturando empresas (chamada tocando/contato criado na conta errada). Quando o
+	// clientId vem no padrão "astrachat_accN", derivamos a conta do próprio N para não
+	// depender da integração lembrar de mandar o parâmetro.
+	if acc == 0 {
+		if derived := accountFromClientID(cid); derived != 0 {
+			acc = derived
+		}
+	}
 	// diagnóstico: quem conectou no SSE e com qual conta (o widget deve passar a
 	// conta do Chatwoot; o painel, nenhuma). Ajuda a ver se a chamada não "entra"
 	// no Chatwoot por o widget não estar conectado ou estar em outra conta.
