@@ -1,12 +1,25 @@
 package call
 
 import (
+	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 	"wacalls/internal/voip/transport"
 )
+
+// mediaDebugEnabled liga os logs de diagnóstico da mídia (recepção/decodificação
+// do áudio do peer). Desligado por padrão; o operador da stack habilita com
+// WACALLS_SIP_DEBUG=1 só quando precisa depurar.
+var mediaDebugEnabled = func() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("WACALLS_SIP_DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}()
 
 func (m *CallManager) initCodec() {
 	if m.codec != nil {
@@ -124,13 +137,15 @@ func (m *CallManager) onRelayData(data []byte) {
 		return
 	}
 	pt := data[1] & 0x7f
-	// diagnóstico: confirma que CHEGA RTP do relay e com qual payload type/ssrc.
-	n := atomic.AddUint64(&m.rtpRecvN, 1)
-	if n == 1 || n%500 == 0 {
-		m.mu.Lock()
-		self, sub := m.selfSsrc, m.subscribedSsrcForLog()
-		m.mu.Unlock()
-		m.log.Info("relay RTP recebido", "pkts", n, "pt", pt, "ssrc", media.RTPSsrc(data), "self_ssrc", self, "peer_ssrc_sub", sub)
+	// diagnóstico (opt-in): confirma que CHEGA RTP do relay e com qual payload type/ssrc.
+	if mediaDebugEnabled {
+		n := atomic.AddUint64(&m.rtpRecvN, 1)
+		if n == 1 || n%500 == 0 {
+			m.mu.Lock()
+			self, sub := m.selfSsrc, m.subscribedSsrcForLog()
+			m.mu.Unlock()
+			m.log.Info("relay RTP recebido", "pkts", n, "pt", pt, "ssrc", media.RTPSsrc(data), "self_ssrc", self, "peer_ssrc_sub", sub)
+		}
 	}
 	switch pt {
 	case core.PayloadTypeWhatsAppOpus:
@@ -174,8 +189,10 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {
-		if e := atomic.AddUint64(&m.unprotectErrN, 1); e == 1 || e%200 == 0 {
-			m.log.Info("srtp unprotect falhou (áudio do peer não decodificado)", "erros", e, "err", err)
+		if mediaDebugEnabled {
+			if e := atomic.AddUint64(&m.unprotectErrN, 1); e == 1 || e%200 == 0 {
+				m.log.Info("srtp unprotect falhou (áudio do peer não decodificado)", "erros", e, "err", err)
+			}
 		}
 		return
 	}
@@ -186,10 +203,12 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	if err != nil || len(pcm) == 0 {
 		return
 	}
-	// diagnóstico: confirma que o áudio do peer chega e é decodificado do relay.
-	n := atomic.AddUint64(&m.recvDiagN, 1)
-	if n == 1 || n%500 == 0 {
-		m.log.Info("relay peer audio decodificado", "pkts", n, "held", held, "has_cb", m.OnPeerAudio != nil, "samples", len(pcm))
+	// diagnóstico (opt-in): confirma que o áudio do peer chega e é decodificado do relay.
+	if mediaDebugEnabled {
+		n := atomic.AddUint64(&m.recvDiagN, 1)
+		if n == 1 || n%500 == 0 {
+			m.log.Info("relay peer audio decodificado", "pkts", n, "held", held, "has_cb", m.OnPeerAudio != nil, "samples", len(pcm))
+		}
 	}
 	if held {
 		// Em espera: não encaminha o áudio do peer ao navegador do atendente.

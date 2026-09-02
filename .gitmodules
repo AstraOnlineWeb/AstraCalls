@@ -1,0 +1,3 @@
+[submodule "opus_mlow"]
+	path = opus_mlow
+	url = https://github.com/edgardmessias/opus_mlow.git

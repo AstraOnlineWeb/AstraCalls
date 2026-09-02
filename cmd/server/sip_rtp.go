@@ -4,12 +4,23 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pion/rtp"
 )
+
+// sipDebugEnabled liga os logs de diagnóstico do SIP/ponte de áudio. Desligado por
+// padrão; habilite com WACALLS_SIP_DEBUG=1 na stack só para depurar.
+var sipDebugEnabled = func() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("WACALLS_SIP_DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}()
 
 // ===== G.711 u-law codec =====
 
@@ -104,7 +115,9 @@ func NewSIPRTPBridge(waCallID, remoteRTP string, log *slog.Logger) (*SIPRTPBridg
 		ssrc:      1234567,
 		log:       log,
 	}
-	br.log.Info("sip rtp bridge criada", "wa_call_id", waCallID, "local_port", br.LocalPort(), "remote", remoteRTP)
+	if sipDebugEnabled {
+		br.log.Info("sip rtp bridge criada", "wa_call_id", waCallID, "local_port", br.LocalPort(), "remote", remoteRTP)
+	}
 
 	go br.readLoop()
 	return br, nil
@@ -168,7 +181,7 @@ func (b *SIPRTPBridge) readLoop() {
 		firstRecv := !b.recvFirst
 		b.recvFirst = true
 		b.mu.Unlock()
-		if firstRecv {
+		if firstRecv && sipDebugEnabled {
 			b.log.Info("sip rtp: primeiro pacote RECEBIDO do PBX (SIP->WhatsApp)", "wa_call_id", b.waCallID, "from", addr.String())
 		}
 
@@ -235,13 +248,13 @@ func (b *SIPRTPBridge) WritePCM(pcm []float32) error {
 	b.wroteFirst = true
 	b.mu.Unlock()
 
-	if firstWrite {
+	if firstWrite && sipDebugEnabled {
 		b.log.Info("sip rtp: primeiro WritePCM (WhatsApp->SIP) recebido do peer", "wa_call_id", b.waCallID, "remote", addrStr(remote))
 	}
 
 	if remote == nil {
 		// destino RTP ainda não conhecido (aguardando 200 OK do softphone).
-		if calls%250 == 1 {
+		if sipDebugEnabled && calls%250 == 1 {
 			b.log.Warn("sip rtp: WhatsApp->SIP sem destino RTP (remote nil) — áudio do peer descartado", "wa_call_id", b.waCallID, "write_calls", calls)
 		}
 		return nil
@@ -253,15 +266,19 @@ func (b *SIPRTPBridge) WritePCM(pcm []float32) error {
 	}
 	n, err := b.conn.WriteToUDP(raw, remote)
 	if err != nil {
-		b.log.Warn("sip rtp: erro enviando RTP p/ o PBX", "wa_call_id", b.waCallID, "remote", remote.String(), "err", err)
+		if calls%500 == 1 { // erro real, mas evita spam por pacote
+			b.log.Warn("sip rtp: erro enviando RTP p/ o PBX", "wa_call_id", b.waCallID, "remote", remote.String(), "err", err)
+		}
 		return err
 	}
-	b.mu.Lock()
-	b.writeSent++
-	sent := b.writeSent
-	b.mu.Unlock()
-	if sent == 1 || sent%500 == 0 {
-		b.log.Info("sip rtp: enviando RTP p/ o PBX (WhatsApp->SIP)", "wa_call_id", b.waCallID, "remote", remote.String(), "pkts_sent", sent, "bytes", n)
+	if sipDebugEnabled {
+		b.mu.Lock()
+		b.writeSent++
+		sent := b.writeSent
+		b.mu.Unlock()
+		if sent == 1 || sent%500 == 0 {
+			b.log.Info("sip rtp: enviando RTP p/ o PBX (WhatsApp->SIP)", "wa_call_id", b.waCallID, "remote", remote.String(), "pkts_sent", sent, "bytes", n)
+		}
 	}
 	return nil
 }
