@@ -593,9 +593,33 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 	if callID == "" {
 		return
 	}
-	if ac, ok := s.reg.get(callID); ok {
-		ac.cm.HandleVideoState(ctx, evt.Node)
+	ac, ok := s.reg.get(callID)
+	if !ok {
+		return
 	}
+	// O whatsmeow só emite CallTerminate/CallReject tipado quando o <call> tem UM
+	// filho só; quando a chamada é atendida/encerrada em outro device (ex.: o
+	// celular), o WhatsApp às vezes manda o <terminate>/<reject> junto com outros
+	// nós (relaylatency etc.), e isso cai aqui como UnknownCallEvent — antes era
+	// ignorado, então a chamada nunca encerrava (ringtone preso nos atendentes e
+	// vaga presa no limite de chamadas). Agora tratamos como terminal.
+	if nodeHasTerminalCall(evt.Node) {
+		s.log.Info("call encerrada em outro device (terminal via UnknownCallEvent)", "call_id", callID)
+		ac.cm.HandleCallTerminate(evt.Node) // → OnEnded → broker.endCall (avisa TODOS) + removeCall
+		return
+	}
+	ac.cm.HandleVideoState(ctx, evt.Node)
+}
+
+// nodeHasTerminalCall diz se um <call> traz um <terminate> ou <reject> entre os
+// filhos (a chamada saiu do estado tocando: atendida/recusada/encerrada alhures).
+func nodeHasTerminalCall(node *waBinary.Node) bool {
+	for _, c := range node.GetChildren() {
+		if c.Tag == "terminate" || c.Tag == "reject" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Session) connect(ctx context.Context) error {

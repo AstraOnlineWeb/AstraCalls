@@ -755,11 +755,23 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 
 func (s *server) doReject(sess *Session, w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if ac, ok := sess.reg.get(id); ok {
-		_ = ac.cm.RejectCall(r.Context(), id, core.EndCallReasonDeclined)
+	ac, ok := sess.reg.get(id)
+	if !ok {
+		// callId desconhecido: NÃO responde 200 (antes respondia, então o cliente
+		// não distinguia "recusou" de "id errado/chamada já encerrada"). 404 deixa
+		// claro que a recusa não foi aplicada — o id certo é o mesmo do evento
+		// `incoming`/`call-list` (a chave da chamada).
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call", "status": "not_applied"})
+		return
 	}
+	// RejectCall envia o <reject> ao WhatsApp (encerra de fato a chamada de entrada).
+	err := ac.cm.RejectCall(r.Context(), id, core.EndCallReasonDeclined)
 	sess.removeCall(id)
 	s.broker.endCall(id, string(core.EndCallReasonDeclined))
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "status": "not_applied"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
