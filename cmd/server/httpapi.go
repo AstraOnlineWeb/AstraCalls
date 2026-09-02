@@ -18,6 +18,11 @@ func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/config", s.handleConfig)
+	// Credencial de widget para quem tem a chave-mestra (não entram em widgetAllowed,
+	// então SÓ a chave-mestra acessa). widget-key = estática por instância; widget-tokens
+	// = token efêmero escopado por conta (recomendado).
+	mux.HandleFunc("GET /api/widget-key", s.handleWidgetKey)
+	mux.HandleFunc("POST /api/widget-tokens", s.handleWidgetToken)
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls", s.handleSessionCalls)
@@ -230,11 +235,28 @@ func withAuth(h http.Handler, key, widgetKey string) http.Handler {
 			if got == "" {
 				got = r.URL.Query().Get("apiKey")
 			}
-			ok := got == key || (widgetKey != "" && got == widgetKey && widgetAllowed(r))
-			if !ok {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			if got == key {
+				h.ServeHTTP(w, r) // chave-mestra: libera tudo
 				return
 			}
+			// Superfície de widget: chave estática (por instância) OU token efêmero (por conta).
+			if widgetAllowed(r) {
+				if widgetKey != "" && got == widgetKey {
+					h.ServeHTTP(w, r)
+					return
+				}
+				if claims, ok := parseWidgetToken(got); ok {
+					// escopo de conta no SSE: um token só recebe eventos da sua própria conta.
+					if p == "/api/events" && !widgetTokenAccountMatches(r, claims) {
+						writeJSON(w, http.StatusForbidden, map[string]string{"error": "account_scope_mismatch"})
+						return
+					}
+					h.ServeHTTP(w, r)
+					return
+				}
+			}
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
 		}
 		h.ServeHTTP(w, r)
 	})
