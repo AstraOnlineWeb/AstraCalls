@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wacalls/internal/voip/call"
@@ -367,6 +368,12 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		ac, ok := s.reg.get(callID)
 		if !ok {
 			return
+		}
+		// diagnóstico: confirma que o áudio do peer (WhatsApp) chega e se há ponte SIP.
+		n := atomic.AddUint64(&ac.peerAudioN, 1)
+		if n == 1 || n%500 == 0 {
+			s.log.Info("peer audio (WhatsApp->consumidor)", "call_id", callID, "frames", n,
+				"has_sip", ac.rtpBridge != nil, "has_ws", ac.wsBridge != nil, "has_webrtc", ac.bridge != nil, "samples", len(pcm16))
 		}
 		// grava o lado do peer (WhatsApp) mesmo se o consumidor ainda não estiver pronto
 		ac.recorder.writePeer(pcm16)

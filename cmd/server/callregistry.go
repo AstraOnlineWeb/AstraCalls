@@ -14,6 +14,7 @@ type activeCall struct {
 	browserOpus media.Codec
 	recorder    *callRecorder // nil quando a gravação está desligada na sessão
 	rtpBridge   *SIPRTPBridge // ponte RTP p/ SIP; nil quando a chamada não é SIP
+	peerAudioN  uint64        // diagnóstico: nº de frames de áudio do peer (WhatsApp) recebidos
 }
 
 type callRegistry struct {

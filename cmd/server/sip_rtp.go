@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -53,6 +54,7 @@ type SIPRTPBridge struct {
 	remote    *net.UDPAddr
 	closeChan chan struct{}
 	closed    bool
+	log       *slog.Logger
 
 	OnCapturedPCM func(pcm []float32)
 	OnActive      func()
@@ -64,9 +66,16 @@ type SIPRTPBridge struct {
 	seqOut     uint16
 	tsOut      uint32
 	ssrc       uint32
+
+	// diagnóstico (WhatsApp->SIP): conta chamadas de WritePCM e pacotes de fato
+	// enviados, p/ diagnosticar o sentido de áudio que não passava.
+	wroteFirst bool
+	writeCalls uint64
+	writeSent  uint64
+	recvFirst  bool
 }
 
-func NewSIPRTPBridge(waCallID, remoteRTP string) (*SIPRTPBridge, error) {
+func NewSIPRTPBridge(waCallID, remoteRTP string, log *slog.Logger) (*SIPRTPBridge, error) {
 	// remoteRTP pode vir vazio (chamada WhatsApp->SIP, onde o destino só é
 	// conhecido após o 200 OK do softphone) — nesse caso fica definido depois.
 	var addr *net.UDPAddr
@@ -83,6 +92,9 @@ func NewSIPRTPBridge(waCallID, remoteRTP string) (*SIPRTPBridge, error) {
 		return nil, fmt.Errorf("listen RTP: %w", err)
 	}
 
+	if log == nil {
+		log = slog.Default()
+	}
 	br := &SIPRTPBridge{
 		waCallID:  waCallID,
 		conn:      conn,
@@ -90,7 +102,9 @@ func NewSIPRTPBridge(waCallID, remoteRTP string) (*SIPRTPBridge, error) {
 		closeChan: make(chan struct{}),
 		seqOut:    1000,
 		ssrc:      1234567,
+		log:       log,
 	}
+	br.log.Info("sip rtp bridge criada", "wa_call_id", waCallID, "local_port", br.LocalPort(), "remote", remoteRTP)
 
 	go br.readLoop()
 	return br, nil
@@ -151,7 +165,12 @@ func (b *SIPRTPBridge) readLoop() {
 
 		b.mu.Lock()
 		b.remote = addr
+		firstRecv := !b.recvFirst
+		b.recvFirst = true
 		b.mu.Unlock()
+		if firstRecv {
+			b.log.Info("sip rtp: primeiro pacote RECEBIDO do PBX (SIP->WhatsApp)", "wa_call_id", b.waCallID, "from", addr.String())
+		}
 
 		var packet rtp.Packet
 		if err := packet.Unmarshal(buf[:n]); err != nil {
@@ -210,10 +229,21 @@ func (b *SIPRTPBridge) WritePCM(pcm []float32) error {
 	// timestamp avança pelo número de amostras 8kHz.
 	b.tsOut += uint32(len(payload))
 	remote := b.remote
+	b.writeCalls++
+	calls := b.writeCalls
+	firstWrite := !b.wroteFirst
+	b.wroteFirst = true
 	b.mu.Unlock()
+
+	if firstWrite {
+		b.log.Info("sip rtp: primeiro WritePCM (WhatsApp->SIP) recebido do peer", "wa_call_id", b.waCallID, "remote", addrStr(remote))
+	}
 
 	if remote == nil {
 		// destino RTP ainda não conhecido (aguardando 200 OK do softphone).
+		if calls%250 == 1 {
+			b.log.Warn("sip rtp: WhatsApp->SIP sem destino RTP (remote nil) — áudio do peer descartado", "wa_call_id", b.waCallID, "write_calls", calls)
+		}
 		return nil
 	}
 
@@ -221,8 +251,26 @@ func (b *SIPRTPBridge) WritePCM(pcm []float32) error {
 	if err != nil {
 		return err
 	}
-	_, err = b.conn.WriteToUDP(raw, remote)
-	return err
+	n, err := b.conn.WriteToUDP(raw, remote)
+	if err != nil {
+		b.log.Warn("sip rtp: erro enviando RTP p/ o PBX", "wa_call_id", b.waCallID, "remote", remote.String(), "err", err)
+		return err
+	}
+	b.mu.Lock()
+	b.writeSent++
+	sent := b.writeSent
+	b.mu.Unlock()
+	if sent == 1 || sent%500 == 0 {
+		b.log.Info("sip rtp: enviando RTP p/ o PBX (WhatsApp->SIP)", "wa_call_id", b.waCallID, "remote", remote.String(), "pkts_sent", sent, "bytes", n)
+	}
+	return nil
+}
+
+func addrStr(a *net.UDPAddr) string {
+	if a == nil {
+		return "<nil>"
+	}
+	return a.String()
 }
 
 func (b *SIPRTPBridge) Close() {

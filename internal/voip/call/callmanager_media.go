@@ -1,6 +1,7 @@
 package call
 
 import (
+	"sync/atomic"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
@@ -165,6 +166,11 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	pcm, err := codec.Decode(pkt.Payload)
 	if err != nil || len(pcm) == 0 {
 		return
+	}
+	// diagnóstico: confirma que o áudio do peer chega e é decodificado do relay.
+	n := atomic.AddUint64(&m.recvDiagN, 1)
+	if n == 1 || n%500 == 0 {
+		m.log.Info("relay peer audio decodificado", "pkts", n, "held", held, "has_cb", m.OnPeerAudio != nil, "samples", len(pcm))
 	}
 	if held {
 		// Em espera: não encaminha o áudio do peer ao navegador do atendente.

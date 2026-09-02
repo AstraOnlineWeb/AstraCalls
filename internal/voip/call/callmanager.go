@@ -53,6 +53,8 @@ type CallManager struct {
 	audioBaseTs        uint32
 	audioPlayedSamples uint64
 
+	recvDiagN uint64 // diagnóstico: nº de pacotes de áudio do peer recebidos/decodificados do relay
+
 	OnStateChange func(*CallInfo)
 	OnIncoming    func(*CallInfo)
 	OnEnded       func(*CallInfo)

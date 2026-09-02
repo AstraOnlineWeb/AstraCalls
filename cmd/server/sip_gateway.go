@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,11 @@ type sipRegistration struct {
 	contact    string
 	contactURI sip.Uri
 	transport  string
+	expiresAt  time.Time // quando este registro expira; registros vencidos são ignorados/limpos
+}
+
+func (r *sipRegistration) expired() bool {
+	return !r.expiresAt.IsZero() && time.Now().After(r.expiresAt)
 }
 
 // inboundDialog representa uma chamada WhatsApp->SIP (somos o UAC).
@@ -149,19 +155,49 @@ func (gw *SIPGateway) handleRegister(req *sip.Request, tx sip.ServerTransaction)
 		contactURI = contactHeader.Address
 	}
 
+	// Expires do header (ou do param do Contact). 0 = DESREGISTRAR.
+	expires := 3600
+	if e := req.GetHeader("Expires"); e != nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(e.Value())); err == nil {
+			expires = n
+		}
+	}
+	if contactHeader != nil && contactHeader.Params != nil {
+		if ev, ok := contactHeader.Params.Get("expires"); ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(ev)); err == nil {
+				expires = n
+			}
+		}
+	}
+
+	if expires <= 0 {
+		// Unregister: remove o binding p/ não deixar registro fantasma tocando num
+		// SIP morto (que poderia derrubar chamadas reais de entrada).
+		gw.mu.Lock()
+		delete(gw.registrations, sipUser)
+		gw.mu.Unlock()
+		gw.log.Info("SIP REGISTER: desregistrado (Expires 0)", "sip_user", sipUser, "session", sess.id)
+		resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
+		resp.AppendHeader(sip.NewHeader("Expires", "0"))
+		_ = tx.Respond(resp)
+		return
+	}
+
 	gw.mu.Lock()
 	gw.registrations[sipUser] = &sipRegistration{
 		sipUser:    sipUser,
 		sessionID:  sess.id,
 		contact:    contact,
 		contactURI: contactURI,
+		// margem de 32s p/ tolerar atraso do re-REGISTER antes de considerar vencido.
+		expiresAt: time.Now().Add(time.Duration(expires+32) * time.Second),
 	}
 	gw.mu.Unlock()
 
-	gw.log.Info("SIP REGISTER success", "sip_user", sipUser, "session", sess.id, "contact", contact)
+	gw.log.Info("SIP REGISTER success", "sip_user", sipUser, "session", sess.id, "contact", contact, "expires", expires)
 
 	resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
-	resp.AppendHeader(sip.NewHeader("Expires", "3600"))
+	resp.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expires)))
 	_ = tx.Respond(resp)
 }
 
@@ -223,6 +259,9 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	gw.mu.RLock()
 	reg, ok := gw.registrations[sipUser]
 	gw.mu.RUnlock()
+	if ok && reg.expired() {
+		ok = false // registro vencido: ignora (evita tocar num SIP morto)
+	}
 	if ok {
 		if s, found := gw.sessions.Get(reg.sessionID); found {
 			sess = s
@@ -290,7 +329,7 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 
-	rtpBridge, err := NewSIPRTPBridge(callID, remoteRTP)
+	rtpBridge, err := NewSIPRTPBridge(callID, remoteRTP, gw.log)
 	if err != nil {
 		gw.log.Error("SIP INVITE: RTP Bridge failed", "err", err)
 		gw.reply(tx, req, 500, "Internal Server Error - "+err.Error())
@@ -499,7 +538,7 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 	gw.mu.RLock()
 	var reg *sipRegistration
 	for _, r := range gw.registrations {
-		if r.sessionID == sess.id {
+		if r.sessionID == sess.id && !r.expired() {
 			reg = r
 			break
 		}
@@ -520,7 +559,7 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		return // nenhum destino SIP: a chamada segue só para o painel web.
 	}
 
-	rtpBridge, err := NewSIPRTPBridge(callID, "")
+	rtpBridge, err := NewSIPRTPBridge(callID, "", gw.log)
 	if err != nil {
 		gw.log.Error("inbound: RTP bridge failed", "err", err)
 		return
