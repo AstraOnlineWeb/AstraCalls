@@ -2,6 +2,74 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v0.0.8 — 2026-09-02
+
+Chamadas por **SIP/PBX** (tronco e ramal, áudio bidirecional), correção de
+vazamento de chamadas entre contas no multi-conta, token de widget por conta
+para não expor a chave-mestra, notas de voz com waveform, download de mídia
+recebida e citações/menções no envio.
+
+### ☎️ Chamadas por SIP / PBX (novo)
+
+- **Gateway SIP** (servidor Go na porta 5060 UDP/TCP) integrando tronco/PBX ↔
+  WhatsApp por sessão, com **áudio bidirecional** (ponte RTP G.711 u-law 8kHz ↔
+  PCM 16kHz do WhatsApp) e autenticação **Digest MD5** no REGISTER.
+  - **Modelo 1 — o PBX registra no AstraCalls:** o painel mostra usuário/senha/
+    servidor por sessão; o cliente cria um tronco no Asterisk/FreePBX. SIP→WhatsApp
+    disca o número pelo WhatsApp (200 OK só quando a chamada conecta); WhatsApp→SIP
+    toca no PBX/softphone registrado.
+  - **Modelo 2 — o AstraCalls registra num PBX externo (UAC):** campos de host/
+    porta/usuário/senha e ramal de destino no painel, REGISTER + re-REGISTER
+    automático, desafio Digest e **status do registro** (Registrando/Registrado/
+    Falhou) na tela.
+- **Robustez:** RTP em faixa de portas fixa (funciona atrás do Docker Swarm/NAT);
+  tratamento de `Expires: 0` (desregistro) e **expiração de registro** — um PBX
+  que cai não deixa mais registro fantasma que derrubaria chamadas reais de entrada.
+
+### 💬 Chatwoot & multi-conta
+
+- **Correção de vazamento entre contas nos eventos.** Conexões de eventos (SSE)
+  abertas sem `accountId` não são mais tratadas como "admin" (que recebia chamadas
+  de TODAS as contas): a conta é derivada do `clientId` no padrão `astrachat_accN`
+  quando o parâmetro não vem. Fim de chamada tocando/contato criado na conta errada.
+- **Fim de contato com LID como número.** Contatos 1:1 vindos de `@lid` não são
+  mais criados com o LID cru no `phone_number`; quando o número real (PN) resolve
+  depois, o telefone é preenchido (backfill) no contato existente — encontrado
+  também pelo identifier `@lid` — em vez de duplicar.
+
+### 🔐 Integração & segurança
+
+- **Token de widget por conta.** `POST /api/widget-tokens` (com a chave-mestra)
+  devolve um token efêmero, escopado a uma conta (e opcionalmente inbox), que abre
+  só a superfície de widget (eventos/resolve/chamadas) e, no SSE, **só recebe
+  eventos da própria conta** (senão `403 account_scope_mismatch`). Evita pôr a
+  chave-mestra no navegador. `GET /api/widget-key` devolve a chave estática por
+  instância, ou **409 explícito** quando não configurada.
+
+### 🎙️ Mensagens & mídia
+
+- **Nota de voz (PTT) com duração e waveform.** O envio de áudio aceita `seconds`
+  e `waveform`; quando não vêm, o servidor estima a duração pela granule do
+  OGG/Opus e gera um waveform aproximado. Antes a nota chegava sem tempo e com
+  barra reta.
+- **Download de mídia recebida** (`GET /api/sessions/{sid}/messages/{id}/media`,
+  decifra imagem/áudio/vídeo/documento/sticker), **citação (`quotedMessageId`) e
+  menções** no envio (texto/imagem/vídeo/áudio/documento), novo evento de webhook
+  **`deleted`** quando o contato apaga uma mensagem para todos, `senderPhone`/
+  `chatPhone` (telefone real do `@lid`) no webhook, e marcação de tipo de conversa
+  (individual/grupo/canal/broadcast) em `/chats`.
+
+### 🖥️ Painel
+
+- Mostra o **número conectado** e o **último número** após desconectar (formato BR),
+  e remove o sufixo de device (`:N`) do número na lista de conexões.
+
+### 🛠️ Infra & dependências
+
+- whatsmeow atualizado (28-08-2026); build do codec MLow via **submódulo**
+  (não depende mais de clonar o GitHub em tempo de build); **logs de diagnóstico
+  de SIP/mídia opt-in** via `WACALLS_SIP_DEBUG` (desligados por padrão).
+
 ## v0.0.7 — 2026-08-26
 
 Reflexo de mensagens editadas no Chatwoot, captura da origem de anúncios (Click
