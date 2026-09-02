@@ -48,6 +48,15 @@ type SessionInfo struct {
 	SIPUser   string `json:"sip_user"`
 	SIPPass   string `json:"sip_pass"`
 	SIPURL    string `json:"sip_url"`
+	// Modelo 2 (registro em PBX externo).
+	SIPExtEnabled bool   `json:"sip_ext_enabled"`
+	SIPExtHost    string `json:"sip_ext_host"`
+	SIPExtPort    int    `json:"sip_ext_port"`
+	SIPExtUser    string `json:"sip_ext_user"`
+	SIPExtPass    string `json:"sip_ext_pass"`
+	SIPExtDest    string `json:"sip_ext_dest"`
+	SIPExtStatus  string `json:"sip_ext_status"`
+	SIPExtError   string `json:"sip_ext_error"`
 }
 
 type subscriber struct {

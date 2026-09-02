@@ -25,6 +25,11 @@ type SessionManager struct {
 	// para tocar num softphone/PBX SIP registrado (gateway SIP).
 	sipInbound func(sess *Session, callID, peerNumber string)
 
+	// sipExtApply/sipExtRemove (modelo 2) sincronizam o registro da sessão num PBX
+	// externo: apply (re)inicia conforme a config; remove para ao deletar a sessão.
+	sipExtApply  func(sess *Session)
+	sipExtRemove func(sessionID string)
+
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	order    []string
@@ -174,6 +179,10 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 		}
 		s.SIPUser = row.SIPUser
 		s.SIPPass = row.SIPPass
+		s.setSIPExt(sipExtConfig{
+			Enabled: row.SIPExtEnabled, Host: row.SIPExtHost, Port: row.SIPExtPort,
+			User: row.SIPExtUser, Pass: row.SIPExtPass, Dest: row.SIPExtDest,
+		})
 		s.setWebhook(row.Webhook)
 		s.setRecording(row.Recording)
 		s.setProxy(row.Proxy)
@@ -184,6 +193,9 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 			}
 		}
 		m.register(s)
+		if m.sipExtApply != nil && s.SIPExtEnabled {
+			m.sipExtApply(s) // modelo 2: retoma o registro no PBX externo
+		}
 		if err := s.connect(ctx); err != nil {
 			m.log.Error("session connect failed", "session", row.ID, "err", err)
 		}
@@ -234,6 +246,9 @@ func (m *SessionManager) Delete(ctx context.Context, id string) error {
 	}
 	s.client.Disconnect()
 	s.teardownAllCalls()
+	if m.sipExtRemove != nil {
+		m.sipExtRemove(id) // modelo 2: para o registro no PBX externo
+	}
 	// o store da sessão é um banco inteiro só dela: fecha a conexão e derruba.
 	if s.waDB != nil {
 		_ = s.waDB.Close()

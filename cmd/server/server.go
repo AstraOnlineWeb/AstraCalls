@@ -54,6 +54,8 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 		log.Error("SIP gateway init failed", "err", err)
 	} else {
 		mgr.sipInbound = sipGateway.handleInboundCall
+		mgr.sipExtApply = sipGateway.applyExtRegistration
+		mgr.sipExtRemove = sipGateway.removeExtRegistration
 		_ = sipGateway.Start(ctx, sipAddr)
 	}
 

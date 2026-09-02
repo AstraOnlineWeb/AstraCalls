@@ -55,6 +55,18 @@ type Session struct {
 	SIPPass string
 	SIPURL  string
 
+	// Modelo 2 (UAC): esta sessão se REGISTRA num PBX externo. Protegido por s.mu.
+	SIPExtEnabled bool
+	SIPExtHost    string
+	SIPExtPort    int
+	SIPExtUser    string
+	SIPExtPass    string
+	SIPExtDest    string
+	// estado do registro no PBX externo (registering/registered/failed), atualizado
+	// pelo registrador UAC; exibido no painel. Protegido por s.mu.
+	sipExtStatus string
+	sipExtError  string
+
 	// downAlerted evita repetir o aviso de "sessão desconectada" no Chatwoot
 	// enquanto ela segue caída; volta a false ao reconectar (events.Connected).
 	downAlerted bool
@@ -700,11 +712,22 @@ func (s *Session) info() SessionInfo {
 		s.lastJID = jid // enquanto conectado, memoriza o número atual
 	}
 	last := s.lastJID
+	extEnabled := s.SIPExtEnabled
+	extHost := s.SIPExtHost
+	extPort := s.SIPExtPort
+	extUser := s.SIPExtUser
+	extPass := s.SIPExtPass
+	extDest := s.SIPExtDest
+	extStatus := s.sipExtStatus
+	extErr := s.sipExtError
 	s.mu.Unlock()
 	return SessionInfo{
 		ID: s.id, Name: s.name, JID: jid, LastJID: last, State: a.State,
 		Paired: a.Paired || jid != "", Recording: rec,
 		SIPUser: s.SIPUser, SIPPass: s.SIPPass, SIPURL: s.SIPURL,
+		SIPExtEnabled: extEnabled, SIPExtHost: extHost, SIPExtPort: extPort,
+		SIPExtUser: extUser, SIPExtPass: extPass, SIPExtDest: extDest,
+		SIPExtStatus: extStatus, SIPExtError: extErr,
 	}
 }
 
@@ -870,6 +893,43 @@ func (s *Session) sipStartCall(ctx context.Context, phone string, isVideo bool) 
 	peer := types.NewJID(cleaned.String(), types.DefaultUserServer)
 	// chamada originada por SIP: grava conforme o modo de gravação da sessão.
 	return s.startOutgoing(ctx, peer, isVideo, false)
+}
+
+// sipExtConfig é um snapshot da configuração do modelo 2 (registro em PBX externo).
+type sipExtConfig struct {
+	Enabled bool
+	Host    string
+	Port    int
+	User    string
+	Pass    string
+	Dest    string
+}
+
+func (s *Session) sipExtSnapshot() sipExtConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return sipExtConfig{
+		Enabled: s.SIPExtEnabled, Host: s.SIPExtHost, Port: s.SIPExtPort,
+		User: s.SIPExtUser, Pass: s.SIPExtPass, Dest: s.SIPExtDest,
+	}
+}
+
+func (s *Session) setSIPExt(c sipExtConfig) {
+	s.mu.Lock()
+	s.SIPExtEnabled = c.Enabled
+	s.SIPExtHost = c.Host
+	s.SIPExtPort = c.Port
+	s.SIPExtUser = c.User
+	s.SIPExtPass = c.Pass
+	s.SIPExtDest = c.Dest
+	s.mu.Unlock()
+}
+
+func (s *Session) setSIPExtStatus(state, errMsg string) {
+	s.mu.Lock()
+	s.sipExtStatus = state
+	s.sipExtError = errMsg
+	s.mu.Unlock()
 }
 
 func (s *Session) terminateCallByID(callID string) {

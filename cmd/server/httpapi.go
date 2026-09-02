@@ -33,6 +33,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sip/status", s.handleSIPStatus)
 	mux.HandleFunc("GET /api/sessions/{sid}/sip", s.handleSIPConfig)
 	mux.HandleFunc("POST /api/sessions/{sid}/sip", s.handleSIPConfig)
+	mux.HandleFunc("GET /api/sessions/{sid}/sip-ext", s.handleSIPExtConfig)
+	mux.HandleFunc("POST /api/sessions/{sid}/sip-ext", s.handleSIPExtConfig)
 
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
 	// Rota WebSocket de mídia — funciona atrás de proxy reverso HTTP (Cloudflare etc.)

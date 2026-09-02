@@ -23,9 +23,10 @@ type SIPGateway struct {
 	log *slog.Logger
 
 	mu             sync.RWMutex
-	registrations  map[string]*sipRegistration // keyed by sip_user
+	registrations  map[string]*sipRegistration // keyed by sip_user (modelo 1: PBX registra em nós)
 	activeCalls    map[string]*sipCall         // keyed by SIP Call-ID (SIP->WhatsApp)
 	inboundDialogs map[string]*inboundDialog   // keyed by SIP Call-ID (WhatsApp->SIP)
+	extRegs        map[string]*sipUACRegistrar // keyed by session id (modelo 2: nós registramos no PBX)
 }
 
 type sipRegistration struct {
@@ -76,6 +77,7 @@ func NewSIPGateway(sessions *SessionManager, log *slog.Logger) (*SIPGateway, err
 		registrations:  make(map[string]*sipRegistration),
 		activeCalls:    make(map[string]*sipCall),
 		inboundDialogs: make(map[string]*inboundDialog),
+		extRegs:        make(map[string]*sipUACRegistrar),
 	}
 	gw.dialogUA = &sipgo.DialogUA{
 		Client: client,
@@ -213,19 +215,28 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	gw.mu.Unlock()
 
-	// Lookup registration
+	// Descobre a sessão dona do INVITE.
+	// Modelo 1: o softphone/PBX está registrado em nós (casa por sip_user).
+	// Modelo 2: o INVITE vem de um PBX externo no qual ESTAMOS registrados
+	// (casa pelo IP de origem com o host do PBX configurado).
+	var sess *Session
 	gw.mu.RLock()
 	reg, ok := gw.registrations[sipUser]
 	gw.mu.RUnlock()
-	if !ok {
-		gw.log.Warn("SIP INVITE: unregistered user", "sip_user", sipUser)
+	if ok {
+		if s, found := gw.sessions.Get(reg.sessionID); found {
+			sess = s
+		}
+	}
+	if sess == nil {
+		sess = gw.sessionForExtInvite(sourceIPOf(req.Source()))
+	}
+	if sess == nil {
+		gw.log.Warn("SIP INVITE: sessão não encontrada", "sip_user", sipUser, "source", req.Source())
 		gw.reply(tx, req, 403, "Forbidden - Not Registered")
 		return
 	}
-
-	// Find WhatsApp session
-	sess, ok := gw.sessions.Get(reg.sessionID)
-	if !ok || sess.client.Store.ID == nil {
+	if sess.client.Store.ID == nil {
 		gw.reply(tx, req, 503, "Service Unavailable - WhatsApp Not Connected")
 		return
 	}
@@ -381,12 +392,110 @@ func (gw *SIPGateway) handleCancel(req *sip.Request, tx sip.ServerTransaction) {
 	gw.reply(tx, req, 200, "OK")
 }
 
+// ========== MODELO 2: registro em PBX externo (UAC) ==========
+
+// applyExtRegistration (re)inicia o registro da sessão num PBX externo conforme a
+// config atual. Chame após criar a sessão, no restore e sempre que a config mudar.
+func (gw *SIPGateway) applyExtRegistration(sess *Session) {
+	cfg := sess.sipExtSnapshot()
+
+	gw.mu.Lock()
+	old := gw.extRegs[sess.id]
+	delete(gw.extRegs, sess.id)
+	gw.mu.Unlock()
+	if old != nil {
+		go old.stop() // desregistra o antigo em background (best-effort)
+	}
+
+	if !cfg.Enabled || cfg.Host == "" || cfg.User == "" {
+		sess.setSIPExtStatus("", "")
+		gw.sessions.broker.emitSessionList(gw.sessions.infos())
+		return
+	}
+
+	r := newSIPUACRegistrar(gw, sess.id, cfg)
+	gw.mu.Lock()
+	gw.extRegs[sess.id] = r
+	gw.mu.Unlock()
+}
+
+// removeExtRegistration para o registro de uma sessão (ex.: ao deletá-la).
+func (gw *SIPGateway) removeExtRegistration(sessionID string) {
+	gw.mu.Lock()
+	r := gw.extRegs[sessionID]
+	delete(gw.extRegs, sessionID)
+	gw.mu.Unlock()
+	if r != nil {
+		go r.stop()
+	}
+}
+
+// extRegStatus devolve o estado do registro externo de uma sessão (para o painel).
+func (gw *SIPGateway) extRegStatus(sessionID string) (state, lastErr string) {
+	gw.mu.RLock()
+	r := gw.extRegs[sessionID]
+	gw.mu.RUnlock()
+	if r == nil {
+		return "", ""
+	}
+	return r.snapshot()
+}
+
+// sessionForExtInvite acha a sessão dona quando um INVITE chega de um PBX externo
+// no qual estamos registrados (modelo 2), casando o IP de origem com o host do PBX.
+func (gw *SIPGateway) sessionForExtInvite(sourceIP string) *Session {
+	gw.mu.RLock()
+	defer gw.mu.RUnlock()
+	for sid, r := range gw.extRegs {
+		if pbxHostMatches(r.host(), sourceIP) {
+			if sess, ok := gw.sessions.Get(sid); ok {
+				return sess
+			}
+		}
+	}
+	return nil
+}
+
+// pbxHostMatches compara o host configurado do PBX (pode ser hostname) com o IP
+// de origem do INVITE. Casa direto por string ou resolvendo o host para IPs.
+func pbxHostMatches(pbxHost, sourceIP string) bool {
+	if pbxHost == "" || sourceIP == "" {
+		return false
+	}
+	if strings.EqualFold(pbxHost, sourceIP) {
+		return true
+	}
+	if ips, err := net.LookupHost(pbxHost); err == nil {
+		for _, ip := range ips {
+			if ip == sourceIP {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sourceIPOf extrai só o IP de um "ip:port" (Request.Source()).
+func sourceIPOf(src string) string {
+	if h, _, err := net.SplitHostPort(src); err == nil {
+		return h
+	}
+	return src
+}
+
 // ========== INBOUND (WhatsApp -> SIP) ==========
 
 // handleInboundCall é chamada quando o WhatsApp recebe uma chamada. Se houver um
 // softphone/PBX registrado para a sessão, manda um INVITE para ele tocar; quando
 // atende, faz a ponte de áudio e aceita a chamada no WhatsApp.
 func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string) {
+	// Descobre para onde tocar:
+	// Modelo 1: um softphone/PBX registrado em nós -> manda pro Contact dele.
+	// Modelo 2: estamos registrados num PBX externo -> manda pro ramal de destino
+	//           configurado (sip_ext_dest) naquele PBX.
+	var targetURI sip.Uri
+	var targetLabel string
+
 	gw.mu.RLock()
 	var reg *sipRegistration
 	for _, r := range gw.registrations {
@@ -396,8 +505,19 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		}
 	}
 	gw.mu.RUnlock()
-	if reg == nil {
-		return // nenhum SIP registrado: a chamada segue só para o painel web.
+
+	if reg != nil {
+		targetURI = reg.contactURI
+		targetLabel = reg.sipUser
+	} else if cfg := sess.sipExtSnapshot(); cfg.Enabled && cfg.Host != "" && cfg.Dest != "" {
+		port := cfg.Port
+		if port <= 0 {
+			port = 5060
+		}
+		targetURI = sip.Uri{Scheme: "sip", User: cfg.Dest, Host: cfg.Host, Port: port}
+		targetLabel = cfg.Dest + "@" + cfg.Host
+	} else {
+		return // nenhum destino SIP: a chamada segue só para o painel web.
 	}
 
 	rtpBridge, err := NewSIPRTPBridge(callID, "")
@@ -419,14 +539,14 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 	fromHDR.Params.Add("tag", generateRandomString(12))
 	ct := sip.NewHeader("Content-Type", "application/sdp")
 
-	d, err := gw.dialogUA.Invite(context.Background(), reg.contactURI, []byte(sdpOffer), fromHDR, ct)
+	d, err := gw.dialogUA.Invite(context.Background(), targetURI, []byte(sdpOffer), fromHDR, ct)
 	if err != nil {
 		gw.log.Error("inbound: INVITE failed", "err", err)
 		sess.terminateCallByID(callID)
 		return
 	}
 
-	gw.log.Info("inbound: ringing SIP", "sip_user", reg.sipUser, "peer", peerNumber, "wa_call_id", callID)
+	gw.log.Info("inbound: ringing SIP", "target", targetLabel, "peer", peerNumber, "wa_call_id", callID)
 
 	go func() {
 		waitCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

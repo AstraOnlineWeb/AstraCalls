@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 )
 
 // Endpoints HTTP para status e configuração SIP por sessão.
@@ -87,3 +88,68 @@ func (s *server) handleSIPConfig(w http.ResponseWriter, r *http.Request) {
 	_ = s.sessions.store.setSIP(r.Context(), sess.id, sess.SIPUser, sess.SIPPass)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
+
+// handleSIPExtConfig lê/grava a config do MODELO 2: registrar esta sessão num PBX
+// externo (a sessão vira um ramal registrado no Asterisk/FreePBX do cliente).
+func (s *server) handleSIPExtConfig(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		cfg := sess.sipExtSnapshot()
+		state, lastErr := "", ""
+		if s.sipGW != nil {
+			state, lastErr = s.sipGW.extRegStatus(sess.id)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled":   cfg.Enabled,
+			"host":      cfg.Host,
+			"port":      cfg.Port,
+			"user":      cfg.User,
+			"pass":      cfg.Pass,
+			"dest":      cfg.Dest,
+			"status":    state,
+			"error":     lastErr,
+			"advertise": sipAdvertiseHost() + ":" + itoa(sipAdvertisePort()),
+		})
+		return
+	}
+
+	// POST: atualiza e aplica.
+	var body struct {
+		Enabled bool   `json:"enabled"`
+		Host    string `json:"host"`
+		Port    int    `json:"port"`
+		User    string `json:"user"`
+		Pass    string `json:"pass"`
+		Dest    string `json:"dest"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if body.Port <= 0 {
+		body.Port = 5060
+	}
+	if body.Enabled && (body.Host == "" || body.User == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "host e usuário são obrigatórios"})
+		return
+	}
+	cfg := sipExtConfig{
+		Enabled: body.Enabled, Host: body.Host, Port: body.Port,
+		User: body.User, Pass: body.Pass, Dest: body.Dest,
+	}
+	sess.setSIPExt(cfg)
+	if err := s.sessions.store.setSIPExt(r.Context(), sess.id, cfg.Enabled, cfg.Host, cfg.Port, cfg.User, cfg.Pass, cfg.Dest); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if s.sipGW != nil {
+		s.sipGW.applyExtRegistration(sess)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
