@@ -54,6 +54,8 @@ type CallManager struct {
 	audioPlayedSamples uint64
 
 	recvDiagN uint64 // diagnóstico: nº de pacotes de áudio do peer recebidos/decodificados do relay
+	rtpRecvN      uint64 // diagnóstico: nº de pacotes RTP crus recebidos do relay (qualquer payload type)
+	unprotectErrN uint64 // diagnóstico: nº de falhas de SRTP unprotect no áudio do peer
 
 	OnStateChange func(*CallInfo)
 	OnIncoming    func(*CallInfo)

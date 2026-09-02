@@ -123,12 +123,29 @@ func (m *CallManager) onRelayData(data []byte) {
 	if len(data) < 12 {
 		return
 	}
-	switch data[1] & 0x7f {
+	pt := data[1] & 0x7f
+	// diagnóstico: confirma que CHEGA RTP do relay e com qual payload type/ssrc.
+	n := atomic.AddUint64(&m.rtpRecvN, 1)
+	if n == 1 || n%500 == 0 {
+		m.mu.Lock()
+		self, sub := m.selfSsrc, m.subscribedSsrcForLog()
+		m.mu.Unlock()
+		m.log.Info("relay RTP recebido", "pkts", n, "pt", pt, "ssrc", media.RTPSsrc(data), "self_ssrc", self, "peer_ssrc_sub", sub)
+	}
+	switch pt {
 	case core.PayloadTypeWhatsAppOpus:
 		m.handleAudioRelayData(data)
 	case core.PayloadTypeWhatsAppH264:
 		m.video.HandleRelayData(data)
 	}
+}
+
+// subscribedSsrcForLog devolve o SSRC do peer que estamos assinando (p/ diagnóstico).
+func (m *CallManager) subscribedSsrcForLog() uint32 {
+	if len(m.peerSsrcs) > 0 {
+		return m.peerSsrcs[0]
+	}
+	return 0
 }
 
 func (m *CallManager) handleAudioRelayData(data []byte) {
@@ -157,7 +174,9 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {
-		m.log.Debug("srtp unprotect error", "err", err)
+		if e := atomic.AddUint64(&m.unprotectErrN, 1); e == 1 || e%200 == 0 {
+			m.log.Info("srtp unprotect falhou (áudio do peer não decodificado)", "erros", e, "err", err)
+		}
 		return
 	}
 	if len(pkt.Payload) == 0 {
