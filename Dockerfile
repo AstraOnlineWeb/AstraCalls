@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Stage 1: build do client React ----------
-FROM node:22-bookworm AS client
+# Os assets do client são JS/HTML estáticos (independem de arquitetura); fixamos
+# em $BUILDPLATFORM para NÃO rodar o node emulado (QEMU) num build arm64 — isso
+# acelera o build multi-arch e reduz muito o uso de disco.
+FROM --platform=$BUILDPLATFORM node:22-bookworm AS client
 WORKDIR /app/client
 COPY client/package*.json ./
 RUN npm ci

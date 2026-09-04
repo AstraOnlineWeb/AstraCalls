@@ -1,0 +1,133 @@
+name: Docker (multi-arch)
+
+# Build e publicação da imagem Docker multi-arquitetura (amd64 + arm64).
+#
+# Estratégia (build NATIVO por arquitetura — sem QEMU):
+#   - linux/amd64  -> runner x86 padrao do GitHub (ubuntu-latest)
+#   - linux/arm64  -> runner ARM efemero do Ubicloud (ubicloud-standard-8-arm)
+# Cada job faz push da imagem por DIGEST; o job final "merge" monta o
+# manifest list (a tag que o cliente usa aponta para as duas arquiteturas).
+#
+# Pre-requisitos (configurar UMA vez):
+#   - Conectar este repositorio ao Ubicloud (runners de GitHub Actions), para
+#     que o label "ubicloud-standard-4-arm" resolva numa VM ARM efemera.
+#   - Secrets do repositorio: DOCKERHUB_USERNAME e DOCKERHUB_TOKEN.
+
+on:
+  push:
+    branches: [develop, main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: astraonline/astracalls
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubicloud-standard-8-arm
+    steps:
+      - name: Checkout (com submodulos)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Docker meta (labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build e push por digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_REV=${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Publica sem tag, apenas por digest; a tag final vem do job "merge".
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: Exporta o digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Sobe o digest como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: merge (manifest list)
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixa os digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta (tags finais)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # develop -> :develop ; tag vX.Y.Z -> :vX.Y.Z + :latest
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Monta o manifest list a partir dos digests
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Confere o manifesto publicado
+        run: docker buildx imagetools inspect ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
