@@ -2,6 +2,8 @@ package main
 
 import (
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"wacalls/internal/voip/call"
 	"wacalls/internal/voip/media"
@@ -15,6 +17,8 @@ type activeCall struct {
 	recorder    *callRecorder // nil quando a gravação está desligada na sessão
 	rtpBridge   *SIPRTPBridge // ponte RTP p/ SIP; nil quando a chamada não é SIP
 	peerAudioN  uint64        // diagnóstico: nº de frames de áudio do peer (WhatsApp) recebidos
+	ringTimer   *time.Timer   // timeout de toque: expira a chamada que nunca recebe encerramento
+	answered    atomic.Bool   // marca que a chamada ficou ativa (atendida) — não expirar
 }
 
 type callRegistry struct {
@@ -46,8 +50,33 @@ func (r *callRegistry) remove(callID string) (*activeCall, bool) {
 	if !ok {
 		return nil, false
 	}
+	if ac.ringTimer != nil {
+		ac.ringTimer.Stop()
+	}
 	delete(r.calls, callID)
 	return ac, true
+}
+
+// setRingTimer guarda o timer de timeout de toque na chamada. Se a chamada já
+// saiu do registro (encerrou antes de armar), para o timer na hora.
+func (r *callRegistry) setRingTimer(callID string, t *time.Timer) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ac, ok := r.calls[callID]; ok {
+		ac.ringTimer = t
+		return
+	}
+	t.Stop()
+}
+
+// stopRingTimer cancela o timer de toque (chamada atendida) sob o lock.
+func (r *callRegistry) stopRingTimer(callID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ac, ok := r.calls[callID]; ok && ac.ringTimer != nil {
+		ac.ringTimer.Stop()
+		ac.ringTimer = nil
+	}
 }
 
 func (r *callRegistry) count() int {
@@ -85,6 +114,9 @@ func (r *callRegistry) drain() []*activeCall {
 	defer r.mu.Unlock()
 	out := make([]*activeCall, 0, len(r.calls))
 	for _, ac := range r.calls {
+		if ac.ringTimer != nil {
+			ac.ringTimer.Stop()
+		}
 		out = append(out, ac)
 	}
 	r.calls = map[string]*activeCall{}
