@@ -2,6 +2,34 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v0.0.9 — 2026-09-09
+
+Correções de confiabilidade nas chamadas (recusa e encerramento) e imagem
+Docker **multi-arquitetura** (amd64 + arm64).
+
+### ☎️ Chamadas
+
+- **Recusa (`/reject`) confiável.** O endpoint agora responde **404** quando o
+  `callId` não existe / a chamada já encerrou, e **409** quando o WhatsApp recusa
+  a operação — em vez de responder **200 em qualquer caso**. O cliente passa a
+  distinguir "recusei de verdade" de "id errado". O `callId` é o mesmo dos eventos
+  `incoming`/`call-list`.
+- **Encerramento confiável quando a chamada é atendida ou encerrada em outro
+  aparelho** (ex.: o próprio celular). O WhatsApp às vezes envia o
+  `<terminate>`/`<reject>` junto com outros nós, o que caía como evento
+  "desconhecido" e era **ignorado** — a chamada nunca encerrava. Isso deixava o
+  **toque preso** nos atendentes e a **vaga da chamada presa**, esgotando o limite
+  e fazendo novas chamadas serem **recusadas automaticamente**. Agora é tratado
+  como encerramento: avisa **todos** os atendentes (`call-ended`) e **libera a
+  vaga**.
+
+### 🐳 Imagem & infraestrutura
+
+- **Imagem Docker multi-arquitetura: `linux/amd64` + `linux/arm64`.** Roda também
+  em servidores ARM (AWS Graviton, Ampere/Oracle Cloud, etc.), não só x86.
+- Build multi-arch automatizado por CI, com build **nativo por arquitetura** (sem
+  emulação).
+
 ## v0.0.8 — 2026-09-02
 
 Chamadas por **SIP/PBX** (tronco e ramal, áudio bidirecional), correção de
