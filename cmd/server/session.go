@@ -138,12 +138,22 @@ func (s *Session) selfSentOrigin(id string) (origin string, ok bool) {
 // ID da mensagem do WhatsApp (usado p/ gravar o source_id no Chatwoot).
 func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) (string, error) {
 	resp, err := s.client.SendMessage(ctx, jid, msg)
-	if err != nil && isLIDResolveErr(err) {
-		// Falha de resolução de LID: o número pode estar em formato não-canônico
-		// (ex.: 9º dígito brasileiro). Resolve o JID canônico e reenvia.
-		if canon, ok := s.canonicalJID(ctx, jid); ok {
-			s.log.Info("reenvio com JID canônico após falha de LID", "orig", jid.String(), "canon", canon.String())
-			resp, err = s.client.SendMessage(ctx, canon, msg)
+	if err != nil && isLIDResolveErr(err) && jid.Server == types.DefaultUserServer {
+		// "no LID found": o número não tem mapeamento PN↔LID no store (ex.: 9º
+		// dígito brasileiro). Resolvemos o LID+PN canônicos via IsOnWhatsApp,
+		// GRAVAMOS o mapeamento no store e reenviamos PELO PN — assim o whatsmeow
+		// entrega do jeito correto (resolve o LID internamente e anexa o
+		// peerRecipientPN). Antes reenviávamos pro @lid cru, que era ACEITO pelo
+		// servidor mas entregava de forma inconsistente (msg presa em "sent").
+		if lid, pn, ok := s.resolveCanonical(ctx, jid); ok {
+			s.client.StoreLIDPNMapping(ctx, lid, pn)
+			s.log.Info("reenvio após gravar mapeamento LID", "orig", jid.String(), "lid", lid.String(), "pn", pn.String())
+			resp, err = s.client.SendMessage(ctx, pn, msg)
+			if err != nil {
+				// último recurso: envia direto pro @lid (comportamento anterior).
+				s.log.Warn("envio pelo PN falhou; tentando @lid direto", "err", err, "lid", lid.String())
+				resp, err = s.client.SendMessage(ctx, lid, msg)
+			}
 		}
 	}
 	if err != nil {
@@ -164,25 +174,44 @@ func isLIDResolveErr(err error) bool {
 	return strings.Contains(e, "no LID found") || strings.Contains(e, "get LID for PN")
 }
 
-// canonicalJID resolve o JID canônico de um número (PN) via IsOnWhatsApp,
-// corrigindo o 9º dígito brasileiro (o WhatsApp devolve a forma registrada real).
-// Cacheia por sessão. Retorna (jid, true) só quando o número é registrado e o JID
-// canônico difere do informado.
-func (s *Session) canonicalJID(ctx context.Context, pn types.JID) (types.JID, bool) {
-	if pn.Server != types.DefaultUserServer || pn.User == "" {
-		return pn, false
+type canonInfo struct {
+	lid types.JID
+	pn  types.JID
+	ok  bool
+}
+
+// resolveCanonical consulta IsOnWhatsApp e devolve o LID e o PN canônicos do
+// número (corrige o 9º dígito brasileiro — o WhatsApp devolve a forma real
+// registrada + o LID). Cacheia por sessão. ok=false se o número não é registrado
+// ou não tem LID. O pn devolvido é sempre um @s.whatsapp.net (o canônico, ou o
+// original como fallback) para casar com StoreLIDPNMapping/GetLIDForPN.
+func (s *Session) resolveCanonical(ctx context.Context, jid types.JID) (types.JID, types.JID, bool) {
+	if jid.User == "" {
+		return types.JID{}, types.JID{}, false
 	}
-	if v, ok := s.canonCache.Load(pn.User); ok {
-		canon := v.(types.JID)
-		return canon, canon.String() != pn.String()
+	if v, ok := s.canonCache.Load(jid.User); ok {
+		ci := v.(canonInfo)
+		return ci.lid, ci.pn, ci.ok
 	}
-	resp, err := s.client.IsOnWhatsApp(ctx, []string{"+" + pn.User})
-	if err != nil || len(resp) == 0 || !resp[0].IsIn || resp[0].JID.IsEmpty() {
-		return pn, false
+	resp, err := s.client.IsOnWhatsApp(ctx, []string{"+" + jid.User})
+	if err != nil || len(resp) == 0 || !resp[0].IsIn {
+		s.canonCache.Store(jid.User, canonInfo{ok: false})
+		return types.JID{}, types.JID{}, false
 	}
-	canon := resp[0].JID.ToNonAD()
-	s.canonCache.Store(pn.User, canon)
-	return canon, canon.String() != pn.String()
+	it := resp[0]
+	lid := it.JID.ToNonAD()
+	pn := it.PhoneNumber.ToNonAD()
+	if pn.IsEmpty() || pn.Server != types.DefaultUserServer {
+		pn = jid.ToNonAD() // fallback: PN original
+	}
+	// só é útil quando temos um LID de verdade (@lid) pra gravar/mapear
+	if lid.IsEmpty() || lid.Server != types.HiddenUserServer {
+		s.canonCache.Store(jid.User, canonInfo{ok: false})
+		return types.JID{}, types.JID{}, false
+	}
+	ci := canonInfo{lid: lid, pn: pn, ok: true}
+	s.canonCache.Store(jid.User, ci)
+	return lid, pn, true
 }
 
 func (s *Session) setWebhook(url string) {
