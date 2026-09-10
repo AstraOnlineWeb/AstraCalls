@@ -51,6 +51,83 @@
     });
   }
 
+  // ---------- transporte da chamada (WebRTC vs WebSocket) ----------
+  // Config do servidor: defaultTransport ("websocket" força WS onde o WebRTC/UDP
+  // não fecha, ex.: atrás de proxy). Carregada uma vez e cacheada.
+  var CFG = { defaultTransport: "" };
+  var cfgPromise = null;
+  function ensureConfig() {
+    if (!cfgPromise) {
+      cfgPromise = api("/api/config")
+        .then(function (c) { CFG.defaultTransport = (c && c.defaultTransport) || ""; })
+        .catch(function () {});
+    }
+    return cfgPromise;
+  }
+  function pickTransport() {
+    return CFG.defaultTransport === "websocket" ? "websocket" : "webrtc";
+  }
+
+  // Transporte de áudio por WebSocket (PCM16 16kHz) — espelha
+  // client/src/lib/ws-audio.ts em JS puro. Áudio-only (sem vídeo). Passa em
+  // WSS/443, portanto funciona atrás de proxy/firewall que bloqueia UDP.
+  var WS_SR = 16000, WS_FRAME = 512, WS_CUSHION = 0.06;
+  function f32toI16(f) {
+    var o = new Int16Array(f.length);
+    for (var i = 0; i < f.length; i++) { var s = Math.max(-1, Math.min(1, f[i])); o[i] = s < 0 ? s * 32768 : s * 32767; }
+    return o;
+  }
+  async function openWSAudio(session, callId) {
+    var mic = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: WS_SR, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    var wsBase = BASE.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://");
+    var url = wsBase + "/api/sessions/" + session + "/calls/" + callId + "/ws" + (KEY ? "?apiKey=" + encodeURIComponent(KEY) : "");
+    var ws = new WebSocket(url, ["pcm16"]);
+    ws.binaryType = "arraybuffer";
+    var capCtx = null, playCtx = null, srcNode = null, proc = null, playCursor = 0, closed = false;
+    function startCapture() {
+      capCtx = new AudioContext({ sampleRate: WS_SR });
+      srcNode = capCtx.createMediaStreamSource(mic);
+      proc = capCtx.createScriptProcessor(WS_FRAME, 1, 1);
+      proc.onaudioprocess = function (ev) {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(f32toI16(ev.inputBuffer.getChannelData(0)).buffer);
+      };
+      srcNode.connect(proc); proc.connect(capCtx.destination);
+    }
+    function playPCM(buf) {
+      if (!playCtx) playCtx = new AudioContext({ sampleRate: WS_SR });
+      var i16 = new Int16Array(buf); if (!i16.length) return;
+      var f = new Float32Array(i16.length);
+      for (var i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
+      var ab = playCtx.createBuffer(1, f.length, WS_SR); ab.copyToChannel(f, 0);
+      var s = playCtx.createBufferSource(); s.buffer = ab; s.connect(playCtx.destination);
+      var now = playCtx.currentTime;
+      if (playCursor < now + 0.005) playCursor = now + WS_CUSHION;
+      s.start(playCursor); playCursor += ab.duration;
+    }
+    await new Promise(function (resolve, reject) {
+      ws.onopen = function () { resolve(); };
+      ws.onerror = function () { reject(new Error("ws audio failed")); };
+      ws.onmessage = function (ev) { if (ev.data instanceof ArrayBuffer) playPCM(ev.data); };
+    });
+    startCapture();
+    return {
+      mic: mic,
+      setMic: function (on) { mic.getAudioTracks().forEach(function (t) { t.enabled = on; }); },
+      close: function () {
+        if (closed) return; closed = true;
+        try { proc && proc.disconnect(); } catch (e) {}
+        try { srcNode && srcNode.disconnect(); } catch (e) {}
+        try { capCtx && capCtx.close(); } catch (e) {}
+        try { playCtx && playCtx.close(); } catch (e) {}
+        try { mic.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        try { if (ws.readyState === WebSocket.OPEN) ws.close(1000, "call ended"); } catch (e) {}
+      },
+    };
+  }
+
   // ---------- estilos ----------
   var style = document.createElement("style");
   style.textContent =
@@ -343,6 +420,7 @@
   // Liga a câmera do widget e pede upgrade para o peer; ou desliga (downgrade).
   async function toggleCam(btn) {
     if (!call || !call.video) return;
+    if (call.ws) { setStatus("Vídeo indisponível (áudio via WebSocket)"); return; } // WS é áudio-only
     if (call.localVideo) {
       api("/api/sessions/" + call.session + "/calls/" + call.callId + "/video/stop", { method: "POST", body: {} }).catch(function () {});
       call.video.stopSender();
@@ -400,41 +478,43 @@
   async function startCall(state) {
     render({ inCall: true, name: state.name, phone: state.phone, status: "Conectando…" });
     try {
-      var mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-      var pc = new RTCPeerConnection({ iceServers: [] });
-      mic.getAudioTracks().forEach(function (t) {
-        pc.addTrack(t, mic);
-      });
-      pc.addTransceiver("audio", { direction: "recvonly" });
-      pc.ontrack = function (ev) {
-        var a = document.getElementById("wacalls-audio");
-        if (a && ev.streams[0]) {
-          a.srcObject = ev.streams[0];
-          a.play().catch(function () {});
-        }
-      };
-      var video = setupVideoChannel(pc); // canal h264 sempre aberto (permite vídeo mid-call)
+      await ensureConfig();
       var r = await api("/api/sessions/" + state.session + "/calls", {
         method: "POST",
         body: { phone: state.phone, duration_ms: 300000, record: false },
       });
       var callId = r.call.callId;
-      var offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await iceComplete(pc);
-      var ans = await api("/api/sessions/" + state.session + "/calls/" + callId + "/webrtc", {
-        method: "POST",
-        body: { sdp_offer: pc.localDescription.sdp },
-      });
-      await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
-      call = { pc: pc, mic: mic, callId: callId, session: state.session, t0: null, timer: null, es: null, answered: false, video: video, localVideo: false, peerVideo: false, camTrack: null };
+      if (pickTransport() === "websocket") {
+        // WS: áudio-only, passa em proxy/sem UDP. Sem PC/offer/webrtc nem vídeo.
+        var wsa = await openWSAudio(state.session, callId);
+        call = { pc: null, ws: wsa, mic: wsa.mic, callId: callId, session: state.session, t0: null, timer: null, es: null, answered: false, video: NO_VIDEO, localVideo: false, peerVideo: false, camTrack: null };
+      } else {
+        var mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        var pc = new RTCPeerConnection({ iceServers: [] });
+        mic.getAudioTracks().forEach(function (t) { pc.addTrack(t, mic); });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+        pc.ontrack = function (ev) {
+          var a = document.getElementById("wacalls-audio");
+          if (a && ev.streams[0]) { a.srcObject = ev.streams[0]; a.play().catch(function () {}); }
+        };
+        var video = setupVideoChannel(pc); // canal h264 sempre aberto (permite vídeo mid-call)
+        var offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await iceComplete(pc);
+        var ans = await api("/api/sessions/" + state.session + "/calls/" + callId + "/webrtc", {
+          method: "POST",
+          body: { sdp_offer: pc.localDescription.sdp },
+        });
+        await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
+        call = { pc: pc, ws: null, mic: mic, callId: callId, session: state.session, t0: null, timer: null, es: null, answered: false, video: video, localVideo: false, peerVideo: false, camTrack: null };
+        pc.onconnectionstatechange = function () {
+          // NÃO usar a conexão do navegador como "atendida" — ela conecta na hora
+          // (navegador↔servidor), antes de o destinatário atender.
+          if (pc.connectionState === "failed") setStatus("Falha na conexão");
+        };
+      }
       updateVideoUI();
       setStatus("Chamando…");
-      pc.onconnectionstatechange = function () {
-        // NÃO usar a conexão do navegador como "atendida" — ela conecta na hora
-        // (navegador↔servidor), antes de o destinatário atender.
-        if (pc.connectionState === "failed") setStatus("Falha na conexão");
-      };
       // O tempo só começa quando o DESTINATÁRIO atende. O sinal real vem do
       // backend via SSE global (call-status "connected" = atendeu).
       connectEvents();
@@ -521,26 +601,34 @@
     stopRing();
     render({ inCall: true, name: "Chamada recebida", phone: inc.peer, status: "Conectando…" });
     try {
+      await ensureConfig();
       await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", { method: "POST", body: {} });
-      var mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-      var pc = new RTCPeerConnection({ iceServers: [] });
-      mic.getAudioTracks().forEach(function (t) { pc.addTrack(t, mic); });
-      pc.addTransceiver("audio", { direction: "recvonly" });
-      pc.ontrack = function (ev) {
-        var a = document.getElementById("wacalls-audio");
-        if (a && ev.streams[0]) { a.srcObject = ev.streams[0]; a.play().catch(function () {}); }
-      };
-      var video = setupVideoChannel(pc); // canal h264 sempre aberto
-      var offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await iceComplete(pc);
-      var ans = await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/webrtc", { method: "POST", body: { sdp_offer: pc.localDescription.sdp } });
-      await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
-      call = { pc: pc, mic: mic, callId: inc.callId, session: inc.sessionId, t0: null, timer: null, es: null, answered: false, video: video, localVideo: false, peerVideo: !!inc.video, camTrack: null };
-      markAnswered();
-      updateVideoUI();
-      // Se a chamada recebida já é de vídeo, liga a câmera automaticamente.
-      if (inc.video) toggleCam(document.getElementById("wacalls-cam")); // nós atendemos → conta o tempo
+      if (pickTransport() === "websocket") {
+        var wsa = await openWSAudio(inc.sessionId, inc.callId);
+        call = { pc: null, ws: wsa, mic: wsa.mic, callId: inc.callId, session: inc.sessionId, t0: null, timer: null, es: null, answered: false, video: NO_VIDEO, localVideo: false, peerVideo: false, camTrack: null };
+        markAnswered();
+        updateVideoUI();
+      } else {
+        var mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        var pc = new RTCPeerConnection({ iceServers: [] });
+        mic.getAudioTracks().forEach(function (t) { pc.addTrack(t, mic); });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+        pc.ontrack = function (ev) {
+          var a = document.getElementById("wacalls-audio");
+          if (a && ev.streams[0]) { a.srcObject = ev.streams[0]; a.play().catch(function () {}); }
+        };
+        var video = setupVideoChannel(pc); // canal h264 sempre aberto
+        var offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await iceComplete(pc);
+        var ans = await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/webrtc", { method: "POST", body: { sdp_offer: pc.localDescription.sdp } });
+        await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
+        call = { pc: pc, ws: null, mic: mic, callId: inc.callId, session: inc.sessionId, t0: null, timer: null, es: null, answered: false, video: video, localVideo: false, peerVideo: !!inc.video, camTrack: null };
+        markAnswered();
+        updateVideoUI();
+        // Se a chamada recebida já é de vídeo, liga a câmera automaticamente.
+        if (inc.video) toggleCam(document.getElementById("wacalls-cam"));
+      }
     } catch (e) {
       setStatus("Erro: " + (e.message || e));
       try { await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId, { method: "DELETE" }); } catch (_) {}
@@ -601,8 +689,9 @@
     } catch (e) {}
     try { if (c.video) c.video.close(); } catch (e) {}
     try { if (c.camTrack) c.camTrack.stop(); } catch (e) {}
+    try { if (c.ws) c.ws.close(); } catch (e) {}
     try {
-      c.pc.close();
+      if (c.pc) c.pc.close();
     } catch (e) {}
     closePanel();
   }
