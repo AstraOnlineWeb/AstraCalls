@@ -188,12 +188,14 @@ func (s *server) routes() http.Handler {
 
 	if s.staticDir != "" {
 		if _, err := os.Stat(s.staticDir); err == nil {
-			// O widget.js é embutido no Chatwoot e fica em cache no navegador de
-			// cada agente. Sem revalidação, uma versão antiga (ex.: anterior ao
-			// toque de chamada recebida, que conecta no SSE sem accountId) fica
-			// presa e a chamada "não entra no Chatwoot" mesmo com o backend ok.
-			// Força revalidação só nesse arquivo; o resto dos estáticos segue normal.
-			mux.Handle("/", noCacheFor(http.FileServer(http.Dir(s.staticDir)), "/widget.js"))
+			// widget.js e index.html ficam em cache no navegador de cada agente.
+			// Sem revalidação, uma versão ANTIGA do painel fica presa — ex.: um
+			// index.html velho aponta pra um bundle antigo (sem o fallback de
+			// transporte da chamada), e o agente continua no WebRTC quebrado
+			// mesmo após o deploy, resultando em "chamada muda". Forçamos
+			// revalidação do index.html e do widget.js; os bundles com hash
+			// (/assets/index-<hash>.js) são imutáveis e seguem em cache normal.
+			mux.Handle("/", noCacheFor(http.FileServer(http.Dir(s.staticDir)), "/widget.js", "/", "/index.html"))
 		}
 	}
 	var handler http.Handler = mux
