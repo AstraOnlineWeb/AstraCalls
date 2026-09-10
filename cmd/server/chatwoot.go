@@ -414,17 +414,17 @@ func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
 // cliente do WhatsApp (usado apenas para re-baixar a mídia). É o que persiste na
 // fila de reentrega quando o Chatwoot está fora do ar.
 type cwJob struct {
-	ChatID    string          `json:"chatId"`    // identifier do contato no Chatwoot (telefone@..., JID de grupo/canal)
-	Phone     string          `json:"phone"`     // telefone p/ busca do contato (vazio em grupo/canal)
-	AltID     string          `json:"altId,omitempty"` // identifier alternativo (JID @lid) p/ reencontrar contato criado antes do número resolver
-	Name      string          `json:"name"`      // nome do contato
-	Avatar    string          `json:"avatar"`    // URL do avatar (best-effort)
-	Prefix    string          `json:"prefix"`    // prefixo colado antes do texto (autor em grupo, título de espelho)
-	Private   bool            `json:"private"`   // nota privada (espelho do que saiu por fora)
-	Text      string          `json:"text"`      // texto final já formatado
-	SourceID  string          `json:"sourceId"`  // = ID da msg do WhatsApp; idempotência no Chatwoot (dedup na reentrega)
-	InReplyTo string          `json:"inReplyTo"` // ID da msg citada (resposta)
-	MsgRaw    json.RawMessage `json:"msg,omitempty"` // protojson da mensagem; presente só quando há mídia p/ re-baixar
+	ChatID    string          `json:"chatId"`             // identifier do contato no Chatwoot (telefone@..., JID de grupo/canal)
+	Phone     string          `json:"phone"`              // telefone p/ busca do contato (vazio em grupo/canal)
+	AltID     string          `json:"altId,omitempty"`    // identifier alternativo (JID @lid) p/ reencontrar contato criado antes do número resolver
+	Name      string          `json:"name"`               // nome do contato
+	Avatar    string          `json:"avatar"`             // URL do avatar (best-effort)
+	Prefix    string          `json:"prefix"`             // prefixo colado antes do texto (autor em grupo, título de espelho)
+	Private   bool            `json:"private"`            // nota privada (espelho do que saiu por fora)
+	Text      string          `json:"text"`               // texto final já formatado
+	SourceID  string          `json:"sourceId"`           // = ID da msg do WhatsApp; idempotência no Chatwoot (dedup na reentrega)
+	InReplyTo string          `json:"inReplyTo"`          // ID da msg citada (resposta)
+	MsgRaw    json.RawMessage `json:"msg,omitempty"`      // protojson da mensagem; presente só quando há mídia p/ re-baixar
 	Referral  map[string]any  `json:"referral,omitempty"` // origem de anúncio (CTWA); vira nota privada p/ o atendente
 }
 
@@ -895,9 +895,12 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	quote := sess.quoteContext(ctx, body)
 
 	var waMsgID string // ID da 1ª msg do WhatsApp enviada (vira source_id no Chatwoot)
+	var sendErr error  // última falha de envio ao WhatsApp (p/ sinalizar ao Chatwoot)
+	attempted := false // houve algo pra enviar (texto e/ou anexo)
 
 	// texto (só envia separado se não houver exatamente 1 anexo)
 	if strings.TrimSpace(content) != "" && len(attachments) != 1 {
+		attempted = true
 		signed := sign(content)
 		var msg *waE2E.Message
 		if quote != nil {
@@ -909,6 +912,11 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		if id, e := sess.sendAndMark(ctx, jid, msg); e == nil {
 			waMsgID = id
+		} else {
+			// antes o erro era descartado em silêncio: a mensagem sumia e o Chatwoot
+			// achava que entregou (recebia 200). Agora loga e sinaliza mais abaixo.
+			sendErr = e
+			s.log.Error("chatwoot->wa: envio de texto falhou", "err", e, "chat", chatID)
 		}
 	}
 	// anexos
@@ -924,10 +932,12 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		// Chatwoot já entrega mimetype e nome reais no anexo; sem isso o Android
 		// mostra documento como ".bin" (assume application/octet-stream).
+		attempted = true
 		nameHint := firstNonEmptyOf(asStr(a["file_name"]), asStr(a["filename"]))
 		mimeHint := firstNonEmptyOf(asStr(a["content_type"]), asStr(a["mimetype"]))
 		id, ferr := sess.sendChatwootFile(ctx, jid, asStr(a["file_type"]), url, caption, nameHint, mimeHint, quote)
 		if ferr != nil {
+			sendErr = ferr
 			s.log.Error("chatwoot->wa: send file failed", "err", ferr)
 		} else if waMsgID == "" {
 			waMsgID = id
@@ -938,7 +948,25 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		if cwMsgID := asInt(body["id"]); cwMsgID != 0 {
 			go sess.setMessageSourceID(cwMsgID, waMsgID)
 		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
 	}
+	if attempted {
+		// NADA foi enviado ao WhatsApp (ex.: sessão caída / websocket EOF). NÃO
+		// responder 200 — isso fazia o Chatwoot considerar entregue e a mensagem
+		// sumia sem retry. Retorna erro pra o Chatwoot re-tentar o webhook e/ou
+		// marcar a mensagem como falha (visível ao atendente). Como no sucesso o
+		// source_id bloqueia reentrega, aqui (sem envio) não há risco de duplicar.
+		errMsg := "envio ao WhatsApp falhou (sessão indisponível?)"
+		if sendErr != nil {
+			errMsg = sendErr.Error()
+		}
+		s.log.Error("chatwoot->wa: nenhuma mensagem enviada; sinalizando falha ao Chatwoot",
+			"chat", chatID, "err", errMsg)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": errMsg, "status": "not_sent"})
+		return
+	}
+	// nada pra enviar (ex.: webhook sem conteúdo relevante): ok silencioso.
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
