@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,14 +190,7 @@ func (s *server) routes() http.Handler {
 
 	if s.staticDir != "" {
 		if _, err := os.Stat(s.staticDir); err == nil {
-			// widget.js e index.html ficam em cache no navegador de cada agente.
-			// Sem revalidação, uma versão ANTIGA do painel fica presa — ex.: um
-			// index.html velho aponta pra um bundle antigo (sem o fallback de
-			// transporte da chamada), e o agente continua no WebRTC quebrado
-			// mesmo após o deploy, resultando em "chamada muda". Forçamos
-			// revalidação do index.html e do widget.js; os bundles com hash
-			// (/assets/index-<hash>.js) são imutáveis e seguem em cache normal.
-			mux.Handle("/", noCacheFor(http.FileServer(http.Dir(s.staticDir)), "/widget.js", "/", "/index.html"))
+			mux.Handle("/", s.staticFileHandler())
 		}
 	}
 	var handler http.Handler = mux
@@ -281,19 +276,38 @@ func widgetAllowed(r *http.Request) bool {
 	return false
 }
 
-// noCacheFor marca os caminhos indicados com Cache-Control: no-cache (revalidação
-// obrigatória via If-Modified-Since/ETag, ainda respondendo 304 quando igual),
-// mantendo o cache padrão para os demais estáticos.
-func noCacheFor(next http.Handler, paths ...string) http.Handler {
-	set := make(map[string]struct{}, len(paths))
-	for _, p := range paths {
-		set[p] = struct{}{}
-	}
+// staticFileHandler serve o painel estático.
+//
+//   - index.html e widget.js revalidam (Cache-Control: no-cache) para o agente
+//     sempre pegar a última versão — um index.html velho apontaria pra um bundle
+//     antigo (sem o fallback de transporte da chamada), causando "chamada muda"
+//     após deploy. Os bundles com hash (/assets/index-<hash>.js) são imutáveis e
+//     seguem em cache normal.
+//   - Se WACALLS_DEFAULT_TRANSPORT estiver setado (ex.: "websocket"), injeta o
+//     valor no index.html (window.__WACALLS_DEFAULT_TRANSPORT). O painel então usa
+//     esse transporte por padrão, sem o agente precisar de ?transport=ws — útil
+//     em redes/servidores onde o WebRTC (UDP) não fecha e o WS é o caminho
+//     confiável. ?transport= e localStorage continuam tendo prioridade.
+func (s *server) staticFileHandler() http.Handler {
+	fs := http.FileServer(http.Dir(s.staticDir))
+	defaultTransport := strings.TrimSpace(os.Getenv("WACALLS_DEFAULT_TRANSPORT"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := set[r.URL.Path]; ok {
+		switch r.URL.Path {
+		case "/", "/index.html":
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			if defaultTransport != "" {
+				if b, err := os.ReadFile(filepath.Join(s.staticDir, "index.html")); err == nil {
+					inject := "<script>window.__WACALLS_DEFAULT_TRANSPORT=" + strconv.Quote(defaultTransport) + ";</script>"
+					html := strings.Replace(string(b), "</head>", inject+"</head>", 1)
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					_, _ = w.Write([]byte(html))
+					return
+				}
+			}
+		case "/widget.js":
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		}
-		next.ServeHTTP(w, r)
+		fs.ServeHTTP(w, r)
 	})
 }
 

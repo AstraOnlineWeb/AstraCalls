@@ -53,6 +53,16 @@ export function getTransportMode(): TransportMode {
   } catch {
     /* localStorage indisponível — ignora */
   }
+  // Padrão do servidor (injetado no index.html via WACALLS_DEFAULT_TRANSPORT).
+  // Permite fixar o transporte por instância (ex.: "websocket" onde o WebRTC/UDP
+  // não fecha) sem o agente precisar de ?transport=. Query e localStorage têm
+  // prioridade sobre isso.
+  try {
+    const fromServer = normalize((window as unknown as { __WACALLS_DEFAULT_TRANSPORT?: string }).__WACALLS_DEFAULT_TRANSPORT ?? null);
+    if (fromServer) return fromServer;
+  } catch {
+    /* ignora */
+  }
   return "auto";
 }
 
