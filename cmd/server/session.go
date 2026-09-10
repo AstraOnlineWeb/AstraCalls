@@ -38,6 +38,12 @@ type Session struct {
 	client *whatsmeow.Client
 	reg    *callRegistry
 
+	// cache número(PN)->JID canônico do WhatsApp (via IsOnWhatsApp). Corrige o 9º
+	// dígito brasileiro: o WhatsApp registra o número numa forma canônica (às vezes
+	// sem o 9) e o whatsmeow novo recusa enviar a um PN cujo LID não resolve
+	// ("no LID found"). thread-safe (sync.Map), sem init.
+	canonCache sync.Map
+
 	// store próprio desta sessão (1 banco por sessão)
 	waContainer *sqlstore.Container
 	waDB        *sql.DB
@@ -132,11 +138,51 @@ func (s *Session) selfSentOrigin(id string) (origin string, ok bool) {
 // ID da mensagem do WhatsApp (usado p/ gravar o source_id no Chatwoot).
 func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) (string, error) {
 	resp, err := s.client.SendMessage(ctx, jid, msg)
+	if err != nil && isLIDResolveErr(err) {
+		// Falha de resolução de LID: o número pode estar em formato não-canônico
+		// (ex.: 9º dígito brasileiro). Resolve o JID canônico e reenvia.
+		if canon, ok := s.canonicalJID(ctx, jid); ok {
+			s.log.Info("reenvio com JID canônico após falha de LID", "orig", jid.String(), "canon", canon.String())
+			resp, err = s.client.SendMessage(ctx, canon, msg)
+		}
+	}
 	if err != nil {
 		return "", err
 	}
 	s.markSelfSent(resp.ID, selfSentChatwoot)
 	return resp.ID, nil
+}
+
+// isLIDResolveErr indica que o whatsmeow não conseguiu resolver o LID do
+// destinatário (novo requisito do WhatsApp) — normalmente por o número (PN)
+// estar num formato que o servidor não reconhece.
+func isLIDResolveErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := err.Error()
+	return strings.Contains(e, "no LID found") || strings.Contains(e, "get LID for PN")
+}
+
+// canonicalJID resolve o JID canônico de um número (PN) via IsOnWhatsApp,
+// corrigindo o 9º dígito brasileiro (o WhatsApp devolve a forma registrada real).
+// Cacheia por sessão. Retorna (jid, true) só quando o número é registrado e o JID
+// canônico difere do informado.
+func (s *Session) canonicalJID(ctx context.Context, pn types.JID) (types.JID, bool) {
+	if pn.Server != types.DefaultUserServer || pn.User == "" {
+		return pn, false
+	}
+	if v, ok := s.canonCache.Load(pn.User); ok {
+		canon := v.(types.JID)
+		return canon, canon.String() != pn.String()
+	}
+	resp, err := s.client.IsOnWhatsApp(ctx, []string{"+" + pn.User})
+	if err != nil || len(resp) == 0 || !resp[0].IsIn || resp[0].JID.IsEmpty() {
+		return pn, false
+	}
+	canon := resp[0].JID.ToNonAD()
+	s.canonCache.Store(pn.User, canon)
+	return canon, canon.String() != pn.String()
 }
 
 func (s *Session) setWebhook(url string) {
