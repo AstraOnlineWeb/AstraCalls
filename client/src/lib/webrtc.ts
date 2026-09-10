@@ -2,7 +2,7 @@ import { apiPost } from "./api";
 import { setupVideoChannel } from "./call/video-channel";
 import { videoSupported } from "./call/video-codec";
 import { VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH } from "../constants/video";
-import { getTransport } from "./transport";
+import { getTransportMode } from "./transport";
 import { openWSCall } from "./ws-audio";
 
 export type OpenCallOptions = {
@@ -133,30 +133,41 @@ export const openCall = async (
 // Transporte adaptativo — escolhe WebRTC ou WebSocket conforme transport.ts
 // =============================================================================
 
-/**
- * openAdaptiveCall — ponto de entrada das chamadas. Consulta getTransport():
- *  - "webrtc" (padrão): usa openCall() normal (áudio + vídeo).
- *  - "websocket" (opt-in, atrás de proxy que bloqueia UDP): usa openWSCall()
- *    (áudio-only; campos de vídeo retornam null).
- *
- * A interface de retorno é compatível com OpenCall em todos os campos de áudio.
- */
-export const openAdaptiveCall = async (
+// Tempo (ms) que esperamos o ICE do WebRTC conectar antes de cair pro WebSocket
+// no modo "auto". Curto o suficiente pra não deixar o usuário no vácuo, folgado
+// o suficiente pra redes lentas fecharem o ICE.
+const ICE_FALLBACK_MS = 6000;
+
+// waitIceConnected resolve true quando o PeerConnection conecta o ICE, e false
+// se falhar/fechar ou estourar o timeout (aí o chamador cai pro WebSocket).
+const waitIceConnected = (pc: RTCPeerConnection, timeoutMs: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    let settled = false;
+    const finish = (v: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      pc.removeEventListener("iceconnectionstatechange", onChange);
+      resolve(v);
+    };
+    const onChange = () => {
+      const s = pc.iceConnectionState;
+      if (s === "connected" || s === "completed") finish(true);
+      else if (s === "failed" || s === "closed") finish(false);
+      // "disconnected"/"checking": transitório — aguarda timeout
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    pc.addEventListener("iceconnectionstatechange", onChange);
+    onChange(); // caso já tenha conectado antes do listener
+  });
+
+// wsAdapter embrulha openWSCall no formato OpenCall (campos de vídeo nulos).
+const wsAdapter = async (
   sid: string,
   callId: string,
   micDeviceId: string | null,
-  opts: OpenCallOptions = {},
 ): Promise<OpenCall> => {
-  if (getTransport() === "webrtc") {
-    return openCall(sid, callId, micDeviceId, opts);
-  }
-
-  // Modo WebSocket — vídeo indisponível
-  if (opts.video) {
-    console.warn("[transport] modo WebSocket: vídeo indisponível, seguindo em áudio-only");
-  }
   const wsConn = await openWSCall(sid, callId, micDeviceId);
-
   return {
     pc: null as unknown as RTCPeerConnection, // não usado fora do webrtc.ts
     micStream: wsConn.micStream,
@@ -168,4 +179,55 @@ export const openAdaptiveCall = async (
     setLocalVideo: wsConn.setLocalVideo,
     close: wsConn.close,
   };
+};
+
+/**
+ * openAdaptiveCall — ponto de entrada das chamadas. Consulta getTransportMode():
+ *  - "webrtc"    (forçado): só WebRTC (áudio + vídeo), sem fallback.
+ *  - "websocket" (forçado): só WebSocket (áudio-only).
+ *  - "auto"      (padrão): tenta WebRTC; se o ICE não conectar em ICE_FALLBACK_MS
+ *    (proxy/firewall bloqueando UDP), fecha e cai pro WebSocket — sem abrir porta
+ *    nem intervenção do operador. Mantém vídeo quando o WebRTC funciona.
+ *
+ * A interface de retorno é compatível com OpenCall em todos os campos de áudio.
+ */
+export const openAdaptiveCall = async (
+  sid: string,
+  callId: string,
+  micDeviceId: string | null,
+  opts: OpenCallOptions = {},
+): Promise<OpenCall> => {
+  const mode = getTransportMode();
+
+  if (mode === "websocket") {
+    if (opts.video) {
+      console.warn("[transport] modo WebSocket: vídeo indisponível, seguindo em áudio-only");
+    }
+    return wsAdapter(sid, callId, micDeviceId);
+  }
+
+  if (mode === "webrtc") {
+    return openCall(sid, callId, micDeviceId, opts);
+  }
+
+  // mode === "auto": tenta WebRTC e cai pro WebSocket se o ICE não conectar.
+  // Trocar o transporte não derruba a chamada no WhatsApp: o servidor substitui
+  // a ponte (setWSBridge faz DisableTerminate na ponte WebRTC antiga).
+  try {
+    const call = await openCall(sid, callId, micDeviceId, opts);
+    if (await waitIceConnected(call.pc, ICE_FALLBACK_MS)) {
+      return call;
+    }
+    console.warn(
+      `[transport] WebRTC não conectou (ICE) em ${ICE_FALLBACK_MS}ms — caindo para WebSocket (áudio-only)`,
+    );
+    try {
+      call.close();
+    } catch {
+      /* ignore */
+    }
+  } catch (err) {
+    console.warn("[transport] WebRTC falhou ao abrir — caindo para WebSocket (áudio-only)", err);
+  }
+  return wsAdapter(sid, callId, micDeviceId);
 };

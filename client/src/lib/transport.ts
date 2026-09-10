@@ -7,17 +7,15 @@
  *   - "websocket": áudio via WSS/443 (PCM16). Atravessa proxy reverso HTTP
  *                 (Cloudflare, Nginx, firewall que bloqueia UDP). Sem vídeo.
  *
- * A escolha é EXPLÍCITA (não há auto-detecção mágica): o padrão é WebRTC e o
- * WebSocket é opt-in. Ativa-se de três formas, nesta ordem de prioridade:
- *   1. Query param na URL:  ?transport=ws   (ou ?transport=websocket)
- *   2. localStorage:        wacalls.transport = "websocket"
- *   3. padrão:              "webrtc"
+ * Seleção (ordem de prioridade):
+ *   1. Query param na URL:  ?transport=ws   (ou ?transport=webrtc)
+ *   2. localStorage:        wacalls.transport = "websocket" | "webrtc"
+ *   3. padrão:              "auto" (ver getTransportMode)
  *
- * O motivo de ser explícito: a única forma confiável de saber se o UDP está
- * bloqueado é a chamada WebRTC real falhar em conectar — um "probe" de ICE
- * local sempre acha candidato host e daria falso-positivo de WebRTC. Enquanto
- * um fallback automático baseado em falha real não existe, o operador liga o
- * WebSocket quando sabe que está atrás de proxy.
+ * No modo "auto" (padrão) o openAdaptiveCall tenta WebRTC (mantém vídeo quando a
+ * rede permite) e, se o ICE NÃO conectar em alguns segundos (proxy/firewall
+ * bloqueando UDP), cai automaticamente para o WebSocket (áudio-only) — sem o
+ * operador abrir porta nem escolher nada. Forçar ?transport= desliga o fallback.
  */
 
 export type Transport = "webrtc" | "websocket";
@@ -30,6 +28,32 @@ function normalize(v: string | null): Transport | null {
   if (s === "ws" || s === "websocket") return "websocket";
   if (s === "webrtc" || s === "rtc") return "webrtc";
   return null;
+}
+
+/**
+ * Modo de transporte, distinguindo escolha EXPLÍCITA de "auto" (nada escolhido).
+ *   - "webrtc" / "websocket": operador forçou via ?transport= ou localStorage.
+ *   - "auto" (padrão): sem escolha — o openAdaptiveCall tenta WebRTC e, se o ICE
+ *     não conectar, cai automaticamente para WebSocket (áudio-only). Isso faz a
+ *     chamada funcionar atrás de proxy/firewall que bloqueia UDP sem o operador
+ *     precisar abrir porta nem setar nada.
+ */
+export type TransportMode = "webrtc" | "websocket" | "auto";
+
+export function getTransportMode(): TransportMode {
+  try {
+    const fromQuery = normalize(new URLSearchParams(window.location.search).get("transport"));
+    if (fromQuery) return fromQuery;
+  } catch {
+    /* ambiente sem window.location — ignora */
+  }
+  try {
+    const fromStore = normalize(localStorage.getItem(STORAGE_KEY));
+    if (fromStore) return fromStore;
+  } catch {
+    /* localStorage indisponível — ignora */
+  }
+  return "auto";
 }
 
 /** Retorna o transporte selecionado (query param > localStorage > "webrtc"). */
