@@ -183,6 +183,15 @@ func (s *Session) messagePayload(evt *events.Message) map[string]any {
 			out["chatPhone"] = p
 		}
 	}
+	// telefone real (PN) de quem enviou a mensagem citada (o quotedParticipant
+	// chega como @lid); ajuda a integração a identificar o autor da citada.
+	if qp, ok := out["quotedParticipant"].(string); ok && qp != "" {
+		if jid, err := types.ParseJID(qp); err == nil {
+			if p := s.realPhone(jid); p != "" {
+				out["quotedParticipantPhone"] = p
+			}
+		}
+	}
 	return out
 }
 

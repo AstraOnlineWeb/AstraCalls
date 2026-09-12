@@ -67,6 +67,19 @@ func summarizeMessage(evt *events.Message) map[string]any {
 	if _, viewOnce := unwrapViewOnce(evt.Message); viewOnce {
 		out["viewOnce"] = true
 	}
+	// Citação (reply): expõe no TOPO do payload o id da mensagem citada e quem a
+	// enviou, pra integração não ter que cavar no raw.contextInfo — e funciona
+	// igual em 1:1 e GRUPO (o ContextInfo vem em qualquer tipo com citação;
+	// Conversation puro não tem citação). Espelha o par aceito no envio
+	// (quotedMessageId + quotedParticipant).
+	if ci := messageContextInfo(evt.Message); ci != nil {
+		if sid := ci.GetStanzaID(); sid != "" {
+			out["quotedMessageId"] = sid
+			if p := ci.GetParticipant(); p != "" {
+				out["quotedParticipant"] = p
+			}
+		}
+	}
 	// origem de anúncio (Click to WhatsApp): o "UTM" do WhatsApp, quando a msg
 	// foi a primeira resposta a um anúncio do Facebook/Instagram.
 	if ref := messageReferral(evt.Message); ref != nil {
