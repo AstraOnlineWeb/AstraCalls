@@ -185,6 +185,17 @@ func (d *webhookDeliverer) pushDLQ(sessionID, url, event string, body []byte, la
 	d.mu.Unlock()
 }
 
+// totalDLQ soma os itens em DLQ de todas as sessões (métrica).
+func (d *webhookDeliverer) totalDLQ() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for _, q := range d.dlq {
+		n += len(q)
+	}
+	return n
+}
+
 // dlqList devolve a DLQ da sessão (cópia).
 func (d *webhookDeliverer) dlqList(sessionID string) []whDLQItem {
 	d.mu.Lock()

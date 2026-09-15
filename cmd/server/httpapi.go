@@ -187,6 +187,11 @@ func (s *server) routes() http.Handler {
 	// não-enumerável e atua como capability.
 	mux.HandleFunc("GET /recordings/{id}", s.handleRecording)
 
+	// Observabilidade (aditivo, sem auth — fora de /api/): probes + métricas.
+	mux.HandleFunc("GET /livez", s.handleLivez)
+	mux.HandleFunc("GET /readyz", s.handleLivez)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
+
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
 	// Confiabilidade de entrega do webhook de sessão (circuit breaker + DLQ).
