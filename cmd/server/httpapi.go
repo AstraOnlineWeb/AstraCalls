@@ -178,6 +178,7 @@ func (s *server) routes() http.Handler {
 	// Votar numa enquete recebida
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll-vote", s.handlePollVote)
 	// Responder (RSVP) um evento recebido
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/event", s.handleSendEvent)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/event-response", s.handleEventResponse)
 	// Disparo em massa de ligações com áudio pré-gravado
 	mux.HandleFunc("POST /api/sessions/{sid}/broadcast", s.handleBroadcast)

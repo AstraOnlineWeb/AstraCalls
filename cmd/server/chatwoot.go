@@ -842,6 +842,15 @@ func shouldRelayWebhook(body map[string]any) bool {
 	if asStr(body["source_id"]) != "" {
 		return false
 	}
+	// Mensagem rica (produto/contato/pix/enquete/evento) que o AstraChat já
+	// enviou pela API direta (/messages/*) e só criou no timeline p/ o atendente
+	// ver. A flag content_attributes.astracall_rich_sent evita o reenvio como
+	// texto pelo bridge — senão o cliente receberia duplicado.
+	if ca, ok := body["content_attributes"].(map[string]any); ok {
+		if v, _ := ca["astracall_rich_sent"].(bool); v {
+			return false
+		}
+	}
 	return true
 }
 

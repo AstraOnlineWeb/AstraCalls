@@ -280,6 +280,50 @@ func (s *server) handleTyping(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleSendEvent cria/envia um EVENTO (EventMessage) do WhatsApp. Espelha o
+// padrão dos demais envios ricos. Se a conta/WhatsApp não suportar EventMessage,
+// o SendMessage retorna erro e ele é devolvido claro pela resposta.
+func (s *server) handleSendEvent(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b struct {
+		To          string `json:"to"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		StartTime   int64  `json:"startTime"` // epoch (segundos) do início
+		EndTime     int64  `json:"endTime"`   // opcional
+		Location    string `json:"location"`  // opcional (nome/endereço)
+		JoinLink    string `json:"joinLink"`  // opcional (link da call)
+		IsCanceled  bool   `json:"isCanceled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Name) == "" || b.StartTime <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and startTime (epoch seconds) required"})
+		return
+	}
+	ev := &waE2E.EventMessage{
+		Name:      proto.String(strings.TrimSpace(b.Name)),
+		StartTime: proto.Int64(b.StartTime),
+	}
+	if d := strings.TrimSpace(b.Description); d != "" {
+		ev.Description = proto.String(d)
+	}
+	if b.EndTime > 0 {
+		ev.EndTime = proto.Int64(b.EndTime)
+	}
+	if loc := strings.TrimSpace(b.Location); loc != "" {
+		ev.Location = &waE2E.LocationMessage{Name: proto.String(loc)}
+	}
+	if jl := strings.TrimSpace(b.JoinLink); jl != "" {
+		ev.JoinLink = proto.String(jl)
+	}
+	if b.IsCanceled {
+		ev.IsCanceled = proto.Bool(true)
+	}
+	s.send(sess, w, r, b.To, &waE2E.Message{EventMessage: ev})
+}
+
 // sendTo despacha uma mensagem já montada para um JID resolvido e devolve o
 // mesmo formato de resposta de send().
 func (s *server) sendTo(sess *Session, w http.ResponseWriter, r *http.Request, jid types.JID, msg *waE2E.Message) {
