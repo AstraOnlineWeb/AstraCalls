@@ -1,18 +1,13 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"net/http"
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/encoding/protojson"
 )
-
-var webhookClient = &http.Client{Timeout: 10 * time.Second}
 
 // dispatchWebhook envia um evento para a URL de webhook da sessão (se houver),
 // de forma assíncrona. Formato: {session, event, timestamp, data}.
@@ -30,19 +25,9 @@ func (s *Session) dispatchWebhook(event string, data any) {
 	if err != nil {
 		return
 	}
-	go func() {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := webhookClient.Do(req)
-		if err != nil {
-			s.log.Debug("webhook post failed", "url", url, "err", err)
-			return
-		}
-		_ = resp.Body.Close()
-	}()
+	// Entrega confiável (retry/backoff + circuit breaker + DLQ). O payload e os
+	// headers são exatamente os mesmos do POST antigo — só a robustez muda.
+	whDeliver.deliver(s.id, url, event, body)
 }
 
 // summarizeMessage extrai os campos úteis de uma mensagem recebida e inclui o
