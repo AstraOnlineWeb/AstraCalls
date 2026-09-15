@@ -179,6 +179,11 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll-vote", s.handlePollVote)
 	// Responder (RSVP) um evento recebido
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/event", s.handleSendEvent)
+	// Disparo (blast) com pacing anti-ban.
+	mux.HandleFunc("POST /api/sessions/{sid}/blast", s.handleBlast)
+	mux.HandleFunc("GET /api/sessions/{sid}/blasts", s.handleBlastList)
+	mux.HandleFunc("GET /api/sessions/{sid}/blasts/{id}", s.handleBlastGet)
+	mux.HandleFunc("POST /api/sessions/{sid}/blasts/{id}/cancel", s.handleBlastCancel)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/event-response", s.handleEventResponse)
 	// Disparo em massa de ligações com áudio pré-gravado
 	mux.HandleFunc("POST /api/sessions/{sid}/broadcast", s.handleBroadcast)
