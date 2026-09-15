@@ -1069,7 +1069,7 @@ func (c ChatwootConfig) messageSourceID(convID, msgID int) string {
 // nameHint/mimeHint vêm do payload do Chatwoot (file_name/content_type); são usados
 // no envio de documento para o WhatsApp Android não exibir o arquivo como ".bin".
 func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType, url, caption, nameHint, mimeHint string, quote *waE2E.ContextInfo) (string, error) {
-	data, httpCT, err := fetchMediaWithType("", url)
+	data, httpCT, err := fetchMediaWithType("", url, false) // data_url do Chatwoot (confiável, pode ser host interno)
 	if err != nil {
 		return "", err
 	}

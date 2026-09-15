@@ -44,7 +44,7 @@ func resolveRecipient(to string) (types.JID, error) {
 
 // fetchMedia obtém os bytes da mídia a partir de base64 (data) ou de uma URL.
 func fetchMedia(b64, url string) ([]byte, error) {
-	data, _, err := fetchMediaWithType(b64, url)
+	data, _, err := fetchMediaWithType(b64, url, true) // url do usuário -> com guarda SSRF
 	return data, err
 }
 
@@ -53,7 +53,10 @@ func fetchMedia(b64, url string) ([]byte, error) {
 // responde "application/pdf" mesmo quando o data_url não tem extensão, evitando
 // que o arquivo chegue como ".bin" no WhatsApp Android). Devolve "" quando não há
 // header (ex.: origem base64).
-func fetchMediaWithType(b64, url string) ([]byte, string, error) {
+// guarded=true aplica a guarda anti-SSRF (para URLs vindas do usuário via
+// /messages/*); false pula a guarda (para o data_url do Chatwoot, que pode ser
+// um host interno legítimo).
+func fetchMediaWithType(b64, url string, guarded bool) ([]byte, string, error) {
 	if b64 != "" {
 		if strings.HasPrefix(b64, "data:") {
 			ct := ""
@@ -70,7 +73,14 @@ func fetchMediaWithType(b64, url string) ([]byte, string, error) {
 		return data, "", err
 	}
 	if url != "" {
-		resp, err := mediaHTTP.Get(url)
+		client := mediaHTTP
+		if guarded {
+			if err := validateUserURL(url); err != nil {
+				return nil, "", err
+			}
+			client = guardedMediaHTTP // valida o IP no dial (anti-SSRF/rebinding)
+		}
+		resp, err := client.Get(url)
 		if err != nil {
 			return nil, "", err
 		}
