@@ -2,6 +2,7 @@ package call
 
 import (
 	"context"
+	"strings"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 	"wacalls/internal/voip/signaling"
@@ -293,22 +294,38 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 		m.mu.Unlock()
 		return
 	}
-	// Depois de um accept, só o device que atendeu pode encerrar. Um sibling que
-	// continuou tocando eventualmente dá timeout e manda o próprio reject/terminate,
-	// que não pode derrubar a chamada já ativa.
 	sender := wanode.AttrString(node.Attrs, "from")
-	if m.acceptedByJid != "" && sender != "" && sender != m.acceptedByJid && !call.IsEnded() {
-		m.mu.Unlock()
-		m.log.Info("terminate from non-answering device ignored",
-			"call_id", call.CallID, "from", sender, "accepted_by", m.acceptedByJid)
-		return
-	}
 	info := signaling.ExtractNodeInfo(node)
 	reason := core.EndCallReasonUserEnded
 	if info != nil {
 		if r := wanode.AttrString(info.InnerNode.Attrs, "reason"); r != "" {
 			reason = core.EndCallReason(r)
 		}
+	}
+
+	// Um device CAPI vinculado à nossa própria conta pode responder ao offer de
+	// entrada com "uncallable" antes de o operador atender. Esse reject descreve
+	// somente a incapacidade daquele device secundário; o chamador original segue
+	// tocando. Não deixe esse sibling encerrar a chamada recebida inteira.
+	if call.Direction == core.CallDirectionIncoming && call.CanAccept() &&
+		reason == core.EndCallReasonUncallable && info != nil &&
+		strings.EqualFold(info.PeerPlatform, "capi") &&
+		strings.HasSuffix(strings.ToLower(sender), "@hosted.lid") &&
+		sender != call.CallCreator && sender != call.PeerJid {
+		m.mu.Unlock()
+		m.log.Info("uncallable from secondary CAPI device ignored",
+			"call_id", call.CallID, "from", sender, "call_creator", call.CallCreator)
+		return
+	}
+
+	// Depois de um accept, só o device que atendeu pode encerrar. Um sibling que
+	// continuou tocando eventualmente dá timeout e manda o próprio reject/terminate,
+	// que não pode derrubar a chamada já ativa.
+	if m.acceptedByJid != "" && sender != "" && sender != m.acceptedByJid && !call.IsEnded() {
+		m.mu.Unlock()
+		m.log.Info("terminate from non-answering device ignored",
+			"call_id", call.CallID, "from", sender, "accepted_by", m.acceptedByJid)
+		return
 	}
 	m.log.Info("call terminated by peer", "call_id", call.CallID, "reason", string(reason))
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
