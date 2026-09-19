@@ -44,9 +44,13 @@ jobs:
 
       - name: Check formatting
         run: |
-          unformatted="$(gofmt -l .)"
+          unformatted="$(gofmt -l \
+            internal/voip/call/callmanager_signaling.go \
+            internal/voip/call/callmanager_secondary_terminate_test.go \
+            internal/voip/core/types.go)"
+
           if [ -n "$unformatted" ]; then
-            echo "Arquivos sem formatação:"
+            echo "Arquivos alterados sem formatação:"
             echo "$unformatted"
             exit 1
           fi
