@@ -303,17 +303,17 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 		}
 	}
 
-	// Um device CAPI vinculado à nossa própria conta pode responder ao offer de
-	// entrada com "uncallable" antes de o operador atender. Esse reject descreve
-	// somente a incapacidade daquele device secundário; o chamador original segue
-	// tocando. Não deixe esse sibling encerrar a chamada recebida inteira.
+		// Um device secundário hosted.lid vinculado à nossa própria conta pode responder
+	// ao offer de entrada com "uncallable" antes de o operador atender. O evento
+	// tipado CallReject do whatsmeow não preserva o atributo externo platform=capi,
+	// então usamos a identidade hosted.lid que permanece disponível. Esse reject
+	// descreve somente a incapacidade do sibling; o chamador original segue tocando.
 	if call.Direction == core.CallDirectionIncoming && call.CanAccept() &&
 		reason == core.EndCallReasonUncallable && info != nil &&
-		strings.EqualFold(info.PeerPlatform, "capi") &&
 		strings.HasSuffix(strings.ToLower(sender), "@hosted.lid") &&
 		sender != call.CallCreator && sender != call.PeerJid {
 		m.mu.Unlock()
-		m.log.Info("uncallable from secondary CAPI device ignored",
+		m.log.Info("uncallable from secondary hosted device ignored",
 			"call_id", call.CallID, "from", sender, "call_creator", call.CallCreator)
 		return
 	}
