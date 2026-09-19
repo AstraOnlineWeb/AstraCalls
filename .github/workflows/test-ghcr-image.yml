@@ -1,0 +1,127 @@
+name: Test image on GHCR
+
+on:
+  push:
+    branches:
+      - fix/ignore-secondary-capi-uncallable
+  workflow_dispatch:
+
+concurrency:
+  group: test-ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/gabsouzadev/astracalls
+  TEST_TAG: test-capi
+
+jobs:
+  validate:
+    name: Validate code
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify modules
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Arquivos sem formatação:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -count=1 ./...
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            suffix: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            suffix: arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish architecture
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_REV=${{ github.sha }}
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.TEST_TAG }}-${{ matrix.suffix }}
+          cache-from: type=gha,scope=test-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=test-${{ matrix.suffix }}
+
+  manifest:
+    name: Create multi-architecture image
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create and inspect manifest
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TEST_TAG}" \
+            "${IMAGE}:${TEST_TAG}-amd64" \
+            "${IMAGE}:${TEST_TAG}-arm64"
+
+          docker buildx imagetools inspect "${IMAGE}:${TEST_TAG}"
