@@ -303,7 +303,7 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 		}
 	}
 
-		// Um device secundário hosted.lid vinculado à nossa própria conta pode responder
+	// Um device secundário hosted.lid vinculado à nossa própria conta pode responder
 	// ao offer de entrada com "uncallable" antes de o operador atender. O evento
 	// tipado CallReject do whatsmeow não preserva o atributo externo platform=capi,
 	// então usamos a identidade hosted.lid que permanece disponível. Esse reject
