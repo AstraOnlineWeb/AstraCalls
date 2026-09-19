@@ -46,17 +46,17 @@ func terminalCallNode(tag, from, platform, reason string) *waBinary.Node {
 	}
 }
 
-func TestIncomingUncallableFromSecondaryCAPIHostedLIDIsIgnored(t *testing.T) {
+func TestIncomingUncallableFromSecondaryHostedLIDIsIgnored(t *testing.T) {
 	m := incomingRingingManager()
 	ended := false
 	m.OnEnded = func(*CallInfo) { ended = true }
 
 	m.HandleCallTerminate(terminalCallNode(
-		"reject", testHostedSecondary, "capi", "uncallable",
+		"reject", testHostedSecondary, "", "uncallable",
 	))
 
 	if ended {
-		t.Fatal("secondary CAPI uncallable must not fire OnEnded")
+		t.Fatal("secondary hosted uncallable must not fire OnEnded")
 	}
 	if !m.CurrentCall().CanAccept() {
 		t.Fatalf("incoming call must remain answerable, state=%s", m.CurrentCall().StateData.State)
@@ -88,7 +88,6 @@ func TestUncallableIgnoreRuleIsNarrow(t *testing.T) {
 		reason   string
 	}{
 		{name: "original caller", from: testIncomingPeer, platform: "android", reason: "uncallable"},
-		{name: "non CAPI hosted device", from: testHostedSecondary, platform: "android", reason: "uncallable"},
 		{name: "non hosted CAPI device", from: "173693040889958:99@lid", platform: "capi", reason: "uncallable"},
 		{name: "different reason", from: testHostedSecondary, platform: "capi", reason: "declined"},
 	}
