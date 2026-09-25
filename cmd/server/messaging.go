@@ -274,6 +274,37 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 	s.send(sess, w, r, b.To, msg)
 }
 
+// handleSendPtv envia uma NOTA DE VÍDEO (PTV — o "balãozinho" de vídeo redondo).
+// É um VideoMessage colocado no campo ptvMessage; o WhatsApp exibe redondo. Ideal:
+// vídeo curto (<60s) e quadrado. Não leva legenda (o app não mostra).
+func (s *server) handleSendPtv(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b struct {
+		To, Base64, URL, Mimetype    string
+		QuotedMessageID, Participant string
+		FromMe                       bool
+	}
+	_ = json.NewDecoder(r.Body).Decode(&b)
+	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaVideo)
+	if !ok {
+		return
+	}
+	mime := b.Mimetype
+	if mime == "" {
+		mime = "video/mp4"
+	}
+	msg := &waE2E.Message{PtvMessage: &waE2E.VideoMessage{
+		Mimetype: proto.String(mime),
+		URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+	}}
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, nil))
+	s.send(sess, w, r, b.To, msg)
+}
+
 // documentWithCaption monta a mensagem de documento, embrulhando-a em
 // documentWithCaptionMessage quando há legenda. É o formato que o WhatsApp oficial
 // usa para exibir a legenda do arquivo; um documentMessage.Caption "solto" muitas
