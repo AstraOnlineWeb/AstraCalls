@@ -344,7 +344,7 @@ func (s *server) sendTo(sess *Session, w http.ResponseWriter, r *http.Request, j
 	if id := messageIDFromRequest(r); id != "" {
 		extra = append(extra, whatsmeow.SendRequestExtra{ID: types.MessageID(id)})
 	}
-	resp, err := sess.client.SendMessage(r.Context(), jid, msg, extra...)
+	resp, err := sess.sendResolvingLID(r.Context(), jid, msg, extra...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

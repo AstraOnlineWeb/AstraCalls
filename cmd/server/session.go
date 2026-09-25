@@ -138,26 +138,29 @@ func (s *Session) selfSentOrigin(id string) (origin string, ok bool) {
 
 // sendAndMark envia uma mensagem, a registra como "enviada por nós" e devolve o
 // ID da mensagem do WhatsApp (usado p/ gravar o source_id no Chatwoot).
-func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) (string, error) {
-	resp, err := s.client.SendMessage(ctx, jid, msg)
+// sendResolvingLID envia a mensagem e, no erro "no LID found" (número sem
+// mapeamento PN↔LID no store — ex.: 9º dígito BR), resolve o LID+PN canônicos via
+// IsOnWhatsApp, GRAVA o mapeamento e reenvia PELO PN (e por fim pelo @lid cru).
+// Usado por TODOS os envios (sendTo/API e sendAndMark/Chatwoot) para que o 9º
+// dígito não quebre nenhum caminho de envio.
+func (s *Session) sendResolvingLID(ctx context.Context, jid types.JID, msg *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	resp, err := s.client.SendMessage(ctx, jid, msg, extra...)
 	if err != nil && isLIDResolveErr(err) && jid.Server == types.DefaultUserServer {
-		// "no LID found": o número não tem mapeamento PN↔LID no store (ex.: 9º
-		// dígito brasileiro). Resolvemos o LID+PN canônicos via IsOnWhatsApp,
-		// GRAVAMOS o mapeamento no store e reenviamos PELO PN — assim o whatsmeow
-		// entrega do jeito correto (resolve o LID internamente e anexa o
-		// peerRecipientPN). Antes reenviávamos pro @lid cru, que era ACEITO pelo
-		// servidor mas entregava de forma inconsistente (msg presa em "sent").
 		if lid, pn, ok := s.resolveCanonical(ctx, jid); ok {
 			s.client.StoreLIDPNMapping(ctx, lid, pn)
 			s.log.Info("reenvio após gravar mapeamento LID", "orig", jid.String(), "lid", lid.String(), "pn", pn.String())
-			resp, err = s.client.SendMessage(ctx, pn, msg)
+			resp, err = s.client.SendMessage(ctx, pn, msg, extra...)
 			if err != nil {
-				// último recurso: envia direto pro @lid (comportamento anterior).
 				s.log.Warn("envio pelo PN falhou; tentando @lid direto", "err", err, "lid", lid.String())
-				resp, err = s.client.SendMessage(ctx, lid, msg)
+				resp, err = s.client.SendMessage(ctx, lid, msg, extra...)
 			}
 		}
 	}
+	return resp, err
+}
+
+func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) (string, error) {
+	resp, err := s.sendResolvingLID(ctx, jid, msg)
 	if err != nil {
 		return "", err
 	}
