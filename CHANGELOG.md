@@ -2,7 +2,7 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
-## v1.1.0 — 2026-09-25
+## v1.0.2 — 2026-09-25
 
 Rodada de API de mensagens: **botões/listas interativas** que entregam de verdade,
 **agendamento**, **encaminhar**, **busca**, **webhook assinado**, envio idempotente
