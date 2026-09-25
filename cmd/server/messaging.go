@@ -12,6 +12,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -134,6 +135,38 @@ func (s *server) handleNewMessageID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": string(sess.client.GenerateMessageID())})
+}
+
+// handleForward encaminha uma mensagem já existente (recebida ou enviada) para
+// outro destino. Reconstrói a mensagem a partir do proto cru guardado no histórico
+// (reusa o mesmo ponteiro/mediaKey no caso de mídia) e a marca como encaminhada.
+// POST /api/sessions/{sid}/messages/forward {to, messageId}
+func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b struct {
+		To        string `json:"to"`
+		MessageID string `json:"messageId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.To) == "" || strings.TrimSpace(b.MessageID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to e messageId obrigatórios"})
+		return
+	}
+	_, _, _, raw, err := sess.mgr.store.findMessage(r.Context(), sess.id, b.MessageID)
+	if err != nil || len(raw) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "mensagem não encontrada no histórico"})
+		return
+	}
+	var msg waE2E.Message
+	if err := protojson.Unmarshal(raw, &msg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "falha ao reconstruir a mensagem: " + err.Error()})
+		return
+	}
+	// marca como encaminhada (label "Encaminhada" no WhatsApp)
+	applyContextInfo(&msg, &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(1)})
+	s.send(sess, w, r, b.To, &msg)
 }
 
 func (s *server) handleSendText(w http.ResponseWriter, r *http.Request) {
