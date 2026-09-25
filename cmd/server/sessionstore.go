@@ -86,6 +86,23 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages (session_id, chat_jid, ts DESC)`)
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_session_ts ON messages (session_id, ts DESC)`)
 
+	// Mensagens agendadas (send_at). A mensagem já vem montada (mídia já subida) e
+	// serializada em protojson; o worker (scheduled.go) envia na hora marcada.
+	// Sobrevive a restart.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS scheduled_messages (
+		id         BIGSERIAL PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		to_jid     TEXT NOT NULL,
+		msg        JSONB NOT NULL,
+		send_at    BIGINT NOT NULL,
+		status     TEXT NOT NULL DEFAULT 'pending',
+		last_error TEXT,
+		created_at BIGINT NOT NULL
+	)`); err != nil {
+		return nil, err
+	}
+	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS scheduled_due ON scheduled_messages (status, send_at)`)
+
 	// Fila de reentrega das entradas do Chatwoot (ver chatwoot_outbox.go). Sobrevive
 	// a restart do AstraCalls: se o Chatwoot cai, a mensagem fica aqui e é reentregue
 	// com backoff em vez de se perder.

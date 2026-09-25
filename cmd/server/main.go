@@ -73,6 +73,7 @@ func main() {
 	// Worker de reentrega ao Chatwoot: reenvia com backoff o que falhou (ex.:
 	// Chatwoot fora do ar) em vez de perder a mensagem.
 	go srv.sessions.runChatwootOutbox(ctx)
+	go srv.sessions.runScheduler(ctx)
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
 	go func() {
