@@ -45,88 +45,7 @@ type Pipeline struct {
 	transportSeq     uint16 // sequência transport (por pacote)
 	keyframeRequired bool   // o primeiro frame enviado precisa ser IDR
 
-	// DIAG recepção de vídeo do peer (câmera do cliente preta no painel).
-	rxPkts   uint64
-	rxErrs   uint64
-	rxFrames uint64
-	seenNAL  uint32 // bitmask de tipos NAL já vistos (bit n = tipo n)
-	maxFrame int
-
 	OnFrame func(au []byte)
-}
-
-// annexBNalSummary varre um buffer AnnexB e devolve os tipos NAL internos + tamanhos
-// (diagnóstico p/ ver se um "frame" empacotado contém SPS+PPS+IDR bem formados).
-func annexBNalSummary(b []byte) string {
-	var starts []int
-	for i := 0; i+3 < len(b); i++ {
-		if b[i] == 0 && b[i+1] == 0 {
-			if b[i+2] == 1 {
-				starts = append(starts, i+3)
-				i += 2
-			} else if i+3 < len(b) && b[i+2] == 0 && b[i+3] == 1 {
-				starts = append(starts, i+4)
-				i += 3
-			}
-		}
-	}
-	if len(starts) == 0 {
-		return "sem-startcode"
-	}
-	out := ""
-	for k, s := range starts {
-		end := len(b)
-		if k+1 < len(starts) {
-			end = starts[k+1] - 3
-		}
-		if s < len(b) {
-			t := b[s] & 0x1f
-			out += " " + nalDesc(t) + "(" + itoa(end-s) + "B)"
-		}
-	}
-	return out
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var d [20]byte
-	i := len(d)
-	for n > 0 {
-		i--
-		d[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		d[i] = '-'
-	}
-	return string(d[i:])
-}
-
-// nalDesc descreve o tipo NAL H264 (diagnóstico).
-func nalDesc(t byte) string {
-	switch t {
-	case 1:
-		return "slice não-IDR (P/B)"
-	case 5:
-		return "slice IDR (keyframe)"
-	case 7:
-		return "SPS"
-	case 8:
-		return "PPS"
-	case 6:
-		return "SEI"
-	case 9:
-		return "AUD"
-	default:
-		return "outro"
-	}
 }
 
 func New(log *slog.Logger, relay Relay) *Pipeline {
@@ -290,13 +209,7 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {
-		p.mu.Lock()
-		p.rxErrs++
-		e := p.rxErrs
-		p.mu.Unlock()
-		if e == 1 || e%100 == 0 {
-			p.log.Info("DIAGV: unprotect do peer falhou (perda/fragmento)", "erros", e, "ssrc", media.RTPSsrc(data))
-		}
+		p.log.Debug("video srtp unprotect error", "err", err)
 		return
 	}
 	if len(pkt.Payload) == 0 {
@@ -305,16 +218,7 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 	nalus := depack.Depacketize(pkt.Payload)
 
 	p.mu.Lock()
-	p.rxPkts++
-	rp := p.rxPkts
 	for _, nalu := range nalus {
-		if len(nalu) > 0 {
-			t := nalu[0] & 0x1f
-			if t < 32 && p.seenNAL&(1<<t) == 0 {
-				p.seenNAL |= 1 << t
-				p.log.Info("DIAGV: 1º NAL type do peer", "type", t, "após_pkts", rp, "desc", nalDesc(t))
-			}
-		}
 		p.frameBuf = append(p.frameBuf, annexBStartCode...)
 		p.frameBuf = append(p.frameBuf, nalu...)
 	}
@@ -324,15 +228,6 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 		p.frameBuf = nil
 	}
 	cb := p.OnFrame
-	if frame != nil {
-		p.rxFrames++
-		if len(frame) > p.maxFrame {
-			p.maxFrame = len(frame)
-		}
-		if p.rxFrames <= 3 || p.rxFrames%200 == 0 {
-			p.log.Info("DIAGV: frame ao painel", "frames", p.rxFrames, "bytes", len(frame), "maxBytes", p.maxFrame, "nalsInternos", annexBNalSummary(frame))
-		}
-	}
 	p.mu.Unlock()
 
 	if frame != nil && cb != nil {
