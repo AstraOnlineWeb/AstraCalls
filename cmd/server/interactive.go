@@ -354,6 +354,16 @@ func nativeFlowButton(typ, display, url, id, copyCode, phone string, idx int) (s
 		return "cta_copy", jsonStr(map[string]string{"display_text": display, "copy_code": copyCode, "id": copyCode})
 	case "cta_call":
 		return "cta_call", jsonStr(map[string]string{"display_text": display, "phone_number": phone})
+	case "webview", "form":
+		// Abre a URL numa WEBVIEW dentro do WhatsApp (tela cheia) — form-like sem WABA.
+		wb, _ := json.Marshal(map[string]any{
+			"display_text":         display,
+			"url":                  url,
+			"merchant_url":         url,
+			"webview_presentation": "full",
+			"webview_interaction":  true,
+		})
+		return "cta_url", string(wb)
 	default:
 		return "", ""
 	}

@@ -2540,9 +2540,9 @@ paths:
                   items:
                     type: object
                     properties:
-                      type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call] }
+                      type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview] }
                       displayText: { type: string }
-                      url: { type: string, description: "para cta_url" }
+                      url: { type: string, description: "para cta_url / webview (webview abre em tela cheia dentro do WhatsApp)" }
                       id: { type: string, description: "para quick_reply" }
                       copyCode: { type: string, description: "para cta_copy" }
                       phoneNumber: { type: string, description: "para cta_call" }
@@ -2624,6 +2624,91 @@ paths:
                             phoneNumber: { type: string }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/form:
+    post:
+      tags: [Interativas]
+      summary: Formulário (webview) — abre uma página de form DENTRO do WhatsApp
+      description: >
+        Envia uma mensagem interativa com um botão que abre uma WEBVIEW em tela
+        cheia dentro do próprio WhatsApp (não é o navegador externo), renderizando
+        um formulário com os campos informados. Ao enviar, as respostas: (1) caem
+        no Chatwoot como mensagem recebida do cliente, (2) disparam o webhook
+        `form_response` com os dados estruturados. Alternativa ao WhatsApp Flows
+        nativo (que exige conta oficial/WABA e NÃO funciona em número não-oficial).
+        As rotas `GET /forms/{token}` e `POST /forms/{token}/submit` são públicas
+        (o token assinado é a capability) e não exigem API key.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, fields]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                title: { type: string, example: "Cadastro rápido" }
+                body: { type: string, example: "Preencha seus dados 👇" }
+                footer: { type: string, example: "AstraCalls" }
+                buttonText: { type: string, example: "Abrir formulário", description: "Texto do botão que abre a webview" }
+                submitText: { type: string, example: "Enviar cadastro", description: "Texto do botão de envio dentro do form" }
+                fields:
+                  type: array
+                  description: "Campos do formulário, na ordem em que aparecem."
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name: { type: string, example: "email", description: "Chave do campo (vem no webhook)" }
+                      label: { type: string, example: "E-mail" }
+                      type:
+                        type: string
+                        enum: [text, email, tel, number, date, textarea, select]
+                        default: text
+                      options:
+                        type: array
+                        items: { type: string }
+                        description: "Opções (apenas para type=select)"
+                      placeholder: { type: string }
+                      required: { type: boolean, default: false }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /forms/{token}:
+    get:
+      tags: [Interativas]
+      summary: "Renderiza a página HTML do formulário (rota pública, sem API key)"
+      description: "Aberta pela webview no celular do cliente. O token assinado (HMAC) carrega a definição do form."
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "HTML do formulário" }
+        "400": { description: "Token inválido ou expirado" }
+
+  /forms/{token}/submit:
+    post:
+      tags: [Interativas]
+      summary: "Recebe o preenchimento do formulário (rota pública, sem API key)"
+      description: >
+        Enviado pela página do form (application/x-www-form-urlencoded). Injeta as
+        respostas como mensagem recebida do cliente (Chatwoot + webhook `message`)
+        e dispara o webhook `form_response`.
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+      responses:
+        "200": { description: "Página de confirmação (HTML)" }
+        "400": { description: "Token inválido" }
+        "410": { description: "Sessão indisponível" }
 
   # ─────────────────────────────────────────────────────────────────
   # Agendamento (send_at)

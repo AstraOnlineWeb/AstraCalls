@@ -69,6 +69,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/list", s.handleSendList)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/interactive", s.handleSendInteractive)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/carousel", s.handleSendCarousel)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/form", s.handleSendForm)
 	mux.HandleFunc("POST /api/sessions/{sid}/schedule", s.handleSchedule)
 	mux.HandleFunc("GET /api/sessions/{sid}/schedule", s.handleListScheduled)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/schedule/{id}", s.handleCancelScheduled)
@@ -202,6 +203,11 @@ func (s *server) routes() http.Handler {
 	// MP3 finalizado — rota pública (fora de /api/, sem API key): o id é
 	// não-enumerável e atua como capability.
 	mux.HandleFunc("GET /recordings/{id}", s.handleRecording)
+
+	// Formulários (webview) — rotas PÚBLICAS (fora de /api/): o celular do
+	// cliente abre a webview sem API key; o token assinado é a capability.
+	mux.HandleFunc("GET /forms/{token}", s.handleFormPage)
+	mux.HandleFunc("POST /forms/{token}/submit", s.handleFormSubmit)
 
 	// Observabilidade (aditivo, sem auth — fora de /api/): probes + métricas.
 	mux.HandleFunc("GET /livez", s.handleLivez)
