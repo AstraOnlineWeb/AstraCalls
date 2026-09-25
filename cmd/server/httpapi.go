@@ -58,6 +58,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 
 	// Mensageria (whatsmeow)
+	mux.HandleFunc("GET /api/sessions/{sid}/messages/new-message-id", s.handleNewMessageID)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/text", s.handleSendText)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/image", s.handleSendImage)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/audio", s.handleSendAudio)

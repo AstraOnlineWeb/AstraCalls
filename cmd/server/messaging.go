@@ -125,6 +125,17 @@ func (s *server) uploadMedia(sess *Session, w http.ResponseWriter, r *http.Reque
 
 // ---- Handlers de envio ----
 
+// GET /api/sessions/{sid}/messages/new-message-id → devolve um id de mensagem
+// pré-gerado. Use no envio (header X-Message-ID ou ?id=) para IDEMPOTÊNCIA: se o
+// envio for repetido (timeout/retry) com o mesmo id, o WhatsApp não duplica.
+func (s *server) handleNewMessageID(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": string(sess.client.GenerateMessageID())})
+}
+
 func (s *server) handleSendText(w http.ResponseWriter, r *http.Request) {
 	sess := s.pairedSession(w, r.PathValue("sid"))
 	if sess == nil {

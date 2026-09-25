@@ -6,10 +6,23 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
+
+// messageIDFromRequest lê um id de mensagem fornecido pelo cliente para
+// IDEMPOTÊNCIA no envio: header X-Message-ID ou query ?id=. Reenviar com o mesmo
+// id não duplica a mensagem no WhatsApp (mesmo id = mesma mensagem). Vazio = o
+// whatsmeow gera um id aleatório (comportamento antigo). Pegue um id novo em
+// GET /api/sessions/{sid}/messages/new-message-id.
+func messageIDFromRequest(r *http.Request) string {
+	if id := strings.TrimSpace(r.Header.Get("X-Message-ID")); id != "" {
+		return id
+	}
+	return strings.TrimSpace(r.URL.Query().Get("id"))
+}
 
 // msgTarget resolve o par (chat, remetente) de uma mensagem existente a partir do
 // corpo da requisição. Para ações como reação, edição, exclusão e "visto", o
@@ -327,7 +340,11 @@ func (s *server) handleSendEvent(w http.ResponseWriter, r *http.Request) {
 // sendTo despacha uma mensagem já montada para um JID resolvido e devolve o
 // mesmo formato de resposta de send().
 func (s *server) sendTo(sess *Session, w http.ResponseWriter, r *http.Request, jid types.JID, msg *waE2E.Message) {
-	resp, err := sess.client.SendMessage(r.Context(), jid, msg)
+	var extra []whatsmeow.SendRequestExtra
+	if id := messageIDFromRequest(r); id != "" {
+		extra = append(extra, whatsmeow.SendRequestExtra{ID: types.MessageID(id)})
+	}
+	resp, err := sess.client.SendMessage(r.Context(), jid, msg, extra...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
