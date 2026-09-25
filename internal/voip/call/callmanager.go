@@ -82,6 +82,7 @@ func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {
 	m.relay = relay
 	m.video = callvideo.New(log, relay)
 	m.video.OnFrame = func(au []byte) {
+		m.notePeerVideoActive()
 		if m.OnPeerVideo != nil {
 			m.OnPeerVideo(au)
 		}

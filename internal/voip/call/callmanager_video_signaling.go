@@ -20,6 +20,30 @@ func (m *CallManager) videoPeerLocked() types.JID {
 	return wanode.MustJID(m.currentCall.PeerJid)
 }
 
+// notePeerVideoActive marca a câmera do peer como ligada assim que chegam frames
+// de vídeo de verdade — sem depender da stanza <video state=1>. O WhatsApp nem
+// sempre entrega esse sinal tipado (ex.: vídeo desde o início da chamada, ou o
+// stanza cai fora do caminho tratado), e sem PeerVideoOn=true o painel não anexa o
+// <video> do peer e a câmera do cliente fica PRETA mesmo com os frames chegando.
+// Idempotente: só emite na transição off->on.
+func (m *CallManager) notePeerVideoActive() {
+	m.mu.Lock()
+	call := m.currentCall
+	if call == nil || !call.IsActive() || call.StateData.PeerVideoOn {
+		m.mu.Unlock()
+		return
+	}
+	call.StateData.PeerVideoOn = true
+	call.MediaType = core.CallMediaTypeVideo
+	cb := m.OnVideoStateChanged
+	c := call
+	m.mu.Unlock()
+	m.log.Info("peer video ativo (frames recebidos)", "call_id", c.CallID)
+	if cb != nil {
+		cb(c)
+	}
+}
+
 // HandleVideoState trata uma stanza <call><video state=N/></call> recebida no meio
 // de uma chamada ativa: manda o ack obrigatório, atualiza o estado de vídeo e
 // dispara os callbacks para a UI. Quando o peer aceita um upgrade que pedimos,
