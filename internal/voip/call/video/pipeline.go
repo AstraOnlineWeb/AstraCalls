@@ -55,6 +55,60 @@ type Pipeline struct {
 	OnFrame func(au []byte)
 }
 
+// annexBNalSummary varre um buffer AnnexB e devolve os tipos NAL internos + tamanhos
+// (diagnóstico p/ ver se um "frame" empacotado contém SPS+PPS+IDR bem formados).
+func annexBNalSummary(b []byte) string {
+	var starts []int
+	for i := 0; i+3 < len(b); i++ {
+		if b[i] == 0 && b[i+1] == 0 {
+			if b[i+2] == 1 {
+				starts = append(starts, i+3)
+				i += 2
+			} else if i+3 < len(b) && b[i+2] == 0 && b[i+3] == 1 {
+				starts = append(starts, i+4)
+				i += 3
+			}
+		}
+	}
+	if len(starts) == 0 {
+		return "sem-startcode"
+	}
+	out := ""
+	for k, s := range starts {
+		end := len(b)
+		if k+1 < len(starts) {
+			end = starts[k+1] - 3
+		}
+		if s < len(b) {
+			t := b[s] & 0x1f
+			out += " " + nalDesc(t) + "(" + itoa(end-s) + "B)"
+		}
+	}
+	return out
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var d [20]byte
+	i := len(d)
+	for n > 0 {
+		i--
+		d[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		d[i] = '-'
+	}
+	return string(d[i:])
+}
+
 // nalDesc descreve o tipo NAL H264 (diagnóstico).
 func nalDesc(t byte) string {
 	switch t {
@@ -275,8 +329,8 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 		if len(frame) > p.maxFrame {
 			p.maxFrame = len(frame)
 		}
-		if p.rxFrames == 1 || p.rxFrames%200 == 0 {
-			p.log.Info("DIAGV: frames encaminhados ao painel", "frames", p.rxFrames, "esteBytes", len(frame), "maxBytes", p.maxFrame, "temIDR", p.seenNAL&(1<<5) != 0)
+		if p.rxFrames <= 3 || p.rxFrames%200 == 0 {
+			p.log.Info("DIAGV: frame ao painel", "frames", p.rxFrames, "bytes", len(frame), "maxBytes", p.maxFrame, "nalsInternos", annexBNalSummary(frame))
 		}
 	}
 	p.mu.Unlock()
