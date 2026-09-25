@@ -183,7 +183,7 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 			Enabled: row.SIPExtEnabled, Host: row.SIPExtHost, Port: row.SIPExtPort,
 			User: row.SIPExtUser, Pass: row.SIPExtPass, Dest: row.SIPExtDest,
 		})
-		s.setWebhook(row.Webhook)
+		s.setWebhook(row.Webhook, row.WebhookSecret, splitEvents(row.WebhookEvents))
 		s.setRecording(row.Recording)
 		s.setProxy(row.Proxy)
 		if row.Chatwoot != "" {

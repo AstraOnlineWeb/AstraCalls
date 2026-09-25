@@ -16,6 +16,9 @@ func (s *Session) dispatchWebhook(event string, data any) {
 	if url == "" {
 		return
 	}
+	if !s.webhookWants(event) {
+		return // filtrado: a sessão não assina este tipo de evento
+	}
 	body, err := json.Marshal(map[string]any{
 		"session":   s.id,
 		"event":     event,
@@ -25,9 +28,9 @@ func (s *Session) dispatchWebhook(event string, data any) {
 	if err != nil {
 		return
 	}
-	// Entrega confiável (retry/backoff + circuit breaker + DLQ). O payload e os
-	// headers são exatamente os mesmos do POST antigo — só a robustez muda.
-	whDeliver.deliver(s.id, url, event, body)
+	// Entrega confiável (retry/backoff + circuit breaker + DLQ) + assinatura HMAC
+	// opcional (X-Webhook-Signature) quando há secret configurado na sessão.
+	whDeliver.deliver(s.id, url, event, body, s.getWebhookSecret())
 }
 
 // summarizeMessage extrai os campos úteis de uma mensagem recebida e inclui o

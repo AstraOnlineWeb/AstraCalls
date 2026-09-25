@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -49,6 +51,18 @@ type whDLQItem struct {
 	LastError string          `json:"lastError"`
 	Attempts  int             `json:"attempts"`
 	CreatedAt int64           `json:"createdAt"`
+	secret    string          // não serializado (não vaza na listagem da DLQ); usado no replay p/ reassinar
+}
+
+// signBody devolve a assinatura HMAC-SHA256 do corpo no formato "sha256=<hex>"
+// (mesmo formato do GitHub/waxum), ou "" se não houver secret configurado.
+func signBody(secret string, body []byte) string {
+	if secret == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 type whCircuit struct {
@@ -81,7 +95,7 @@ func whNewID() string {
 
 // deliver entrega (assíncrono) um evento já serializado à URL da sessão, com
 // retry/circuit breaker/DLQ. sessionID escopa o circuito e a DLQ.
-func (d *webhookDeliverer) deliver(sessionID, url, event string, body []byte) {
+func (d *webhookDeliverer) deliver(sessionID, url, event string, body []byte, secret string) {
 	d.mu.Lock()
 	c := d.circuits[sessionID]
 	if c == nil {
@@ -90,26 +104,26 @@ func (d *webhookDeliverer) deliver(sessionID, url, event string, body []byte) {
 	}
 	if c.disabled {
 		d.mu.Unlock()
-		d.pushDLQ(sessionID, url, event, body, "webhook disabled: "+c.disabledReason, 0)
+		d.pushDLQ(sessionID, url, event, body, "webhook disabled: "+c.disabledReason, 0, secret)
 		return
 	}
 	if time.Now().Before(c.openUntil) {
 		d.mu.Unlock()
-		d.pushDLQ(sessionID, url, event, body, "webhook circuit is OPEN", 0)
+		d.pushDLQ(sessionID, url, event, body, "webhook circuit is OPEN", 0, secret)
 		return
 	}
 	d.mu.Unlock()
 
-	go d.attempt(sessionID, url, event, body)
+	go d.attempt(sessionID, url, event, body, secret)
 }
 
-func (d *webhookDeliverer) attempt(sessionID, url, event string, body []byte) {
+func (d *webhookDeliverer) attempt(sessionID, url, event string, body []byte, secret string) {
 	var lastErr string
 	for i := 0; i < whMaxAttempts; i++ {
 		if delay := whBackoff[i]; delay > 0 {
 			time.Sleep(delay)
 		}
-		code, err := d.post(url, body)
+		code, err := d.post(url, body, secret)
 		if err == nil && code >= 200 && code < 300 {
 			d.onSuccess(sessionID)
 			return
@@ -120,15 +134,18 @@ func (d *webhookDeliverer) attempt(sessionID, url, event string, body []byte) {
 			lastErr = http.StatusText(code)
 		}
 	}
-	d.onFailure(sessionID, url, event, body, lastErr)
+	d.onFailure(sessionID, url, event, body, lastErr, secret)
 }
 
-func (d *webhookDeliverer) post(url string, body []byte) (int, error) {
+func (d *webhookDeliverer) post(url string, body []byte, secret string) (int, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if sig := signBody(secret, body); sig != "" {
+		req.Header.Set("X-Webhook-Signature", sig)
+	}
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return 0, err
@@ -146,7 +163,7 @@ func (d *webhookDeliverer) onSuccess(sessionID string) {
 	d.mu.Unlock()
 }
 
-func (d *webhookDeliverer) onFailure(sessionID, url, event string, body []byte, lastErr string) {
+func (d *webhookDeliverer) onFailure(sessionID, url, event string, body []byte, lastErr, secret string) {
 	d.mu.Lock()
 	c := d.circuits[sessionID]
 	if c == nil {
@@ -166,14 +183,14 @@ func (d *webhookDeliverer) onFailure(sessionID, url, event string, body []byte, 
 	if d.log != nil {
 		d.log.Warn("webhook: entrega falhou (foi pra DLQ)", "session", sessionID, "event", event, "consecFails", fails, "err", lastErr)
 	}
-	d.pushDLQ(sessionID, url, event, body, lastErr, whMaxAttempts)
+	d.pushDLQ(sessionID, url, event, body, lastErr, whMaxAttempts, secret)
 }
 
-func (d *webhookDeliverer) pushDLQ(sessionID, url, event string, body []byte, lastErr string, attempts int) {
+func (d *webhookDeliverer) pushDLQ(sessionID, url, event string, body []byte, lastErr string, attempts int, secret string) {
 	item := whDLQItem{
 		ID: whNewID(), Event: event, URL: url,
 		Body: append(json.RawMessage(nil), body...), LastError: lastErr,
-		Attempts: attempts, CreatedAt: time.Now().UnixMilli(),
+		Attempts: attempts, CreatedAt: time.Now().UnixMilli(), secret: secret,
 	}
 	d.mu.Lock()
 	q := d.dlq[sessionID]
@@ -233,7 +250,7 @@ func (d *webhookDeliverer) dlqReplay(sessionID, id string) error {
 	item := q[idx]
 	d.dlq[sessionID] = append(q[:idx:idx], q[idx+1:]...)
 	d.mu.Unlock()
-	d.deliver(sessionID, item.URL, item.Event, item.Body)
+	d.deliver(sessionID, item.URL, item.Event, item.Body, item.secret)
 	return nil
 }
 
