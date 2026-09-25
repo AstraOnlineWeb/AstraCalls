@@ -2,6 +2,87 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.0.0 — 2026-09-25
+
+Primeira versão estável. 🎉 Rodada grande de confiabilidade de chamada (não cair
+aos ~20s, recusa que para o telefone, religar vídeo), **disparo em massa**,
+**entrega confiável de webhook**, **observabilidade**, **anti-SSRF** e transporte
+de chamada **auto/WebSocket** que conecta mesmo atrás de firewall.
+
+### ☎️ Chamadas — confiabilidade
+
+- **Consent freshness (RFC 7675).** A chamada WebRTC **não cai mais sozinha por
+  volta dos ~20s**: o keepalive do relay renova o consent com STUN Binding
+  periódico (período base 5s, randomizado 4–6s conforme a RFC). Antes o WhatsApp
+  derrubava a mídia mesmo com áudio fluindo.
+- **Recusa (`/reject`) para o telefone de quem ligou.** O `<reject>` passou a
+  levar `count="0"` **e** `from=ownID` (alinhado ao `RejectCall` do whatsmeow) —
+  antes o aparelho do chamador continuava tocando até o timeout.
+- **Chamada recebida não cai sozinha antes de atender.** Um dispositivo secundário
+  `@hosted.lid` da própria conta que responde `uncallable` não derruba mais a
+  chamada — os controles Atender/Recusar continuam disponíveis. (#27 / #28)
+- **Timeout de toque.** Chamada de entrada que nunca recebe o encerramento expira
+  sozinha, sem prender a vaga da sessão.
+
+### 📹 Vídeo
+
+- **Religar a câmera no meio da chamada funciona.** Desligar e ligar o vídeo de
+  novo agora envia `<video state=1>` (em vez de um novo pedido de upgrade), então
+  a câmera reativa no aparelho do cliente.
+
+### 📞 Transporte de chamada (áudio no navegador)
+
+- **Fallback automático WebRTC → WebSocket** (modo `auto`, padrão): se o WebRTC não
+  fecha (ex.: UDP bloqueado por firewall), cai para WebSocket automaticamente — a
+  chamada conecta **sem precisar abrir portas**.
+- **`WACALLS_DEFAULT_TRANSPORT`**: fixa o transporte por instância
+  (`websocket` | `webrtc` | `auto`).
+- **WebSocket no widget de chamada do Chatwoot** (áudio full-duplex, sem depender
+  de UDP).
+- **`no-cache` no `index.html`** do painel: o navegador sempre carrega a última
+  versão publicada.
+
+### 💬 Envio & mensagens
+
+- **Correção do 9º dígito BR / erro `no LID found`.** Resolve o JID canônico
+  (via `IsOnWhatsApp`), grava o mapeamento **PN↔LID** e reenvia pelo PN —
+  mensagens que falhavam/duplicavam passam a entregar corretamente.
+- **O webhook do Chatwoot não engole mais falha de envio:** responde **502**
+  quando o WhatsApp recusa (antes retornava 200 em qualquer caso).
+- **`POST /messages/event`** (envia mensagem de evento) e a flag
+  `astracall_rich_sent` para o Chatwoot **não reenviar** mensagem rica já enviada
+  pela API.
+- **`quotedMessageId` / `quotedParticipant`** expostos no evento de mensagem do
+  webhook (inclusive em grupos).
+
+### 📢 Disparo em massa (novo)
+
+- **`POST /blast`**: campanha de texto ou imagem com **pacing anti-ban** (worker
+  sequencial, delay + jitter aleatório entre envios, retry por destinatário e
+  cancelamento). Endpoints de status, listagem e cancelamento.
+
+### 🔁 Entrega confiável de webhook (novo)
+
+- **Retry com backoff**, **circuit breaker** por sessão, **DLQ** (dead-letter
+  queue) consultável e **replay** por endpoint. Payload e headers idênticos — nada
+  muda para quem consome (ex.: AstraChat).
+
+### 📊 Observabilidade (novo)
+
+- **`GET /livez`, `/readyz`, `/metrics`** (formato Prometheus, sem dependência
+  nova): número de sessões carregadas, itens em DLQ e uptime.
+
+### 🔒 Segurança
+
+- **Guarda anti-SSRF** no download de mídia por URL do usuário (bloqueia IPs
+  internos/privados; isenta o `data_url` do próprio Chatwoot).
+
+### 🐳 Infra / CI
+
+- Tag da imagem com prefixo **`v`** (`type=ref,event=tag`) e publicação de
+  **`:latest`** nas tags `v*`; build multi-arch (amd64 + arm64) nativo por
+  arquitetura.
+
 ## v0.0.9 — 2026-09-09
 
 Correções de confiabilidade nas chamadas (recusa e encerramento) e imagem
