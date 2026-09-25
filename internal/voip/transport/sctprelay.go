@@ -15,6 +15,11 @@ import (
 const (
 	relayConnectionTimeout = 20 * time.Second
 	relayKeepaliveInterval = 1100 * time.Millisecond
+	// relayConsentInterval renova o consent freshness (RFC 7675) no par ativo. O
+	// WhatsApp derruba a mídia por volta dos ~20s se não receber Binding requests
+	// periódicos; o WhatsAppPing sozinho (keepalive) não renova esse consent. 4s
+	// fica bem dentro da janela de 30s da RFC com folga.
+	relayConsentInterval = 4 * time.Second
 
 	// maxDialRelays limita quantos relays são discados por chamada (corta
 	// goroutines/conexões desnecessárias quando o WhatsApp anuncia muitos relays).
@@ -361,7 +366,9 @@ func (m *SctpRelayManager) startKeepalive(conn *relayConnection) {
 	m.sendRaw(conn, BuildWhatsAppPing())
 	ticker := time.NewTicker(relayKeepaliveInterval)
 	conn.keepalive = ticker
+	consent := time.NewTicker(relayConsentInterval)
 	go func() {
+		defer consent.Stop()
 		for {
 			select {
 			case <-ticker.C:
@@ -369,12 +376,50 @@ func (m *SctpRelayManager) startKeepalive(conn *relayConnection) {
 					return
 				}
 				m.sendRaw(conn, BuildWhatsAppPing())
+			case <-consent.C:
+				if conn.state != relayStateOpen || conn.channel == nil {
+					return
+				}
+				m.sendConsentBinding(conn)
 			case <-conn.stopCh:
 				ticker.Stop()
 				return
 			}
 		}
 	}()
+}
+
+// sendConsentBinding reenvia o STUN Binding request autenticado (com as
+// subscriptions) no par ativo, renovando o consent freshness (RFC 7675). Sem
+// esse Binding periódico o WhatsApp expira o consent e encerra a mídia por volta
+// dos ~20s, mesmo com áudio fluindo nos dois sentidos. Reaproveita exatamente os
+// mesmos pacotes que sendStunRegistration já manda no setup.
+func (m *SctpRelayManager) sendConsentBinding(conn *relayConnection) {
+	info := conn.info
+	remoteUfrag := info.AuthToken
+	if remoteUfrag == "" {
+		remoteUfrag = info.Token
+	}
+	localUfrag := conn.localUfrag
+	if remoteUfrag == "" || localUfrag == "" {
+		return
+	}
+	ssrc := m.subscriptionSsrc
+	if ssrc == 0 {
+		ssrc = m.audioSsrc
+	}
+	if ssrc == 0 {
+		return
+	}
+	hmacKey := []byte(info.Key)
+	subs := BuildSenderSubscriptions(ssrc)
+
+	username := []byte(remoteUfrag + ":" + localUfrag)
+	m.sendRaw(conn, BuildBindingRequestWithSubs(username, hmacKey, subs, true, true))
+	if info.Token != "" && info.Token != remoteUfrag {
+		username2 := []byte(info.Token + ":" + localUfrag)
+		m.sendRaw(conn, BuildBindingRequestWithSubs(username2, hmacKey, subs, true, true))
+	}
 }
 
 func (m *SctpRelayManager) sendRaw(conn *relayConnection, data []byte) {
