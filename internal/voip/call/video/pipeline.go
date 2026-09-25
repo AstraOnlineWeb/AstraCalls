@@ -45,7 +45,34 @@ type Pipeline struct {
 	transportSeq     uint16 // sequência transport (por pacote)
 	keyframeRequired bool   // o primeiro frame enviado precisa ser IDR
 
+	// DIAG recepção de vídeo do peer (câmera do cliente preta no painel).
+	rxPkts   uint64
+	rxErrs   uint64
+	rxFrames uint64
+	seenNAL  uint32 // bitmask de tipos NAL já vistos (bit n = tipo n)
+	maxFrame int
+
 	OnFrame func(au []byte)
+}
+
+// nalDesc descreve o tipo NAL H264 (diagnóstico).
+func nalDesc(t byte) string {
+	switch t {
+	case 1:
+		return "slice não-IDR (P/B)"
+	case 5:
+		return "slice IDR (keyframe)"
+	case 7:
+		return "SPS"
+	case 8:
+		return "PPS"
+	case 6:
+		return "SEI"
+	case 9:
+		return "AUD"
+	default:
+		return "outro"
+	}
 }
 
 func New(log *slog.Logger, relay Relay) *Pipeline {
@@ -108,9 +135,9 @@ func buildWhatsappVideoExt(mediaFrameInfo uint8, frameNumber *uint16, transportS
 	} else {
 		ext = append(ext, 0x30, mediaFrameInfo) // id3, len1
 	}
-	ext = append(ext, 0x51, 0x00, 0x00)                                     // id5 InitialBandwidth=0
-	ext = append(ext, 0x61, 0x00, 0x00)                                     // id6 ShortOffset=0
-	ext = append(ext, 0x91, byte(transportSeq>>8), byte(transportSeq))      // id9 TransportSequence
+	ext = append(ext, 0x51, 0x00, 0x00)                                // id5 InitialBandwidth=0
+	ext = append(ext, 0x61, 0x00, 0x00)                                // id6 ShortOffset=0
+	ext = append(ext, 0x91, byte(transportSeq>>8), byte(transportSeq)) // id9 TransportSequence
 	for len(ext)%4 != 0 {
 		ext = append(ext, 0x00) // padding até fronteira de 4 bytes
 	}
@@ -209,7 +236,13 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {
-		p.log.Debug("video srtp unprotect error", "err", err)
+		p.mu.Lock()
+		p.rxErrs++
+		e := p.rxErrs
+		p.mu.Unlock()
+		if e == 1 || e%100 == 0 {
+			p.log.Info("DIAGV: unprotect do peer falhou (perda/fragmento)", "erros", e, "ssrc", media.RTPSsrc(data))
+		}
 		return
 	}
 	if len(pkt.Payload) == 0 {
@@ -218,7 +251,16 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 	nalus := depack.Depacketize(pkt.Payload)
 
 	p.mu.Lock()
+	p.rxPkts++
+	rp := p.rxPkts
 	for _, nalu := range nalus {
+		if len(nalu) > 0 {
+			t := nalu[0] & 0x1f
+			if t < 32 && p.seenNAL&(1<<t) == 0 {
+				p.seenNAL |= 1 << t
+				p.log.Info("DIAGV: 1º NAL type do peer", "type", t, "após_pkts", rp, "desc", nalDesc(t))
+			}
+		}
 		p.frameBuf = append(p.frameBuf, annexBStartCode...)
 		p.frameBuf = append(p.frameBuf, nalu...)
 	}
@@ -228,6 +270,15 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 		p.frameBuf = nil
 	}
 	cb := p.OnFrame
+	if frame != nil {
+		p.rxFrames++
+		if len(frame) > p.maxFrame {
+			p.maxFrame = len(frame)
+		}
+		if p.rxFrames == 1 || p.rxFrames%200 == 0 {
+			p.log.Info("DIAGV: frames encaminhados ao painel", "frames", p.rxFrames, "esteBytes", len(frame), "maxBytes", p.maxFrame, "temIDR", p.seenNAL&(1<<5) != 0)
+		}
+	}
 	p.mu.Unlock()
 
 	if frame != nil && cb != nil {
