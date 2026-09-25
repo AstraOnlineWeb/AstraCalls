@@ -152,6 +152,30 @@ func (s *sessionStore) listMessages(ctx context.Context, sessionID, chatJID stri
 	return scanMessages(rows)
 }
 
+// searchMessages busca por texto no corpo das mensagens (ILIKE, case-insensitive).
+// Se chatJID != "", limita ao chat. Mais recentes primeiro.
+func (s *sessionStore) searchMessages(ctx context.Context, sessionID, query, chatJID string, limit int) ([]storedMessage, error) {
+	like := "%" + query + "%"
+	var rows *sql.Rows
+	var err error
+	if chatJID != "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT chat_jid, sender_jid, msg_id, from_me, ts, type, COALESCE(body, ''), NULL
+			FROM messages WHERE session_id = $1 AND chat_jid = $2 AND body ILIKE $3
+			ORDER BY ts DESC LIMIT $4`, sessionID, chatJID, like, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT chat_jid, sender_jid, msg_id, from_me, ts, type, COALESCE(body, ''), NULL
+			FROM messages WHERE session_id = $1 AND body ILIKE $2
+			ORDER BY ts DESC LIMIT $3`, sessionID, like, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
 func scanMessages(rows *sql.Rows) ([]storedMessage, error) {
 	out := []storedMessage{}
 	for rows.Next() {

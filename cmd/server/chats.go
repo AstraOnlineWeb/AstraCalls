@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // queryPage lê limit/offset da query string com defaults sensatos.
@@ -49,6 +50,36 @@ func (s *server) handleChatMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, offset := queryPage(r, 50)
 	msgs, err := s.sessions.store.listMessages(r.Context(), sess.id, chat.String(), limit, offset, r.URL.Query().Get("raw") == "true")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, msgs)
+}
+
+// GET /api/sessions/{sid}/messages/search?q=&chatId=&limit=
+// Busca full-text (ILIKE) no corpo das mensagens do histórico.
+func (s *server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q required"})
+		return
+	}
+	chatJID := ""
+	if c := strings.TrimSpace(r.URL.Query().Get("chatId")); c != "" {
+		chat, err := resolveRecipient(c)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		chatJID = chat.String()
+	}
+	limit, _ := queryPage(r, 50)
+	msgs, err := s.sessions.store.searchMessages(r.Context(), sess.id, q, chatJID, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

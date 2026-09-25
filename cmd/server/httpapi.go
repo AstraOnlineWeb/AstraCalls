@@ -155,6 +155,7 @@ func (s *server) routes() http.Handler {
 	// Histórico de conversas/mensagens
 	mux.HandleFunc("GET /api/sessions/{sid}/chats", s.handleListChats)
 	mux.HandleFunc("GET /api/sessions/{sid}/chats/{chatId}/messages", s.handleChatMessages)
+	mux.HandleFunc("GET /api/sessions/{sid}/messages/search", s.handleSearchMessages)
 	mux.HandleFunc("GET /api/sessions/{sid}/messages", s.handleQueryMessages)
 
 	// Webhook por sessão (recebimento -> Chatwoot etc.)
