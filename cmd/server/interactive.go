@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"go.mau.fi/whatsmeow"
@@ -86,6 +87,31 @@ func (s *server) handleSendButtons(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// Em GRUPO, reply buttons postariam a escolha pro grupo inteiro ("marca geral").
+	// Converte pra interactiveMessage com cta_url wa.me (abre PV, não posta no grupo).
+	if jid.Server == types.GroupServer {
+		nbtns := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(b.Buttons))
+		for i, bt := range b.Buttons {
+			name, params := sess.groupSafeButton(true, "quick_reply", bt.Text, "", bt.ID, "", "", i)
+			nbtns = append(nbtns, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+				Name: proto.String(name), ButtonParamsJSON: proto.String(params),
+			})
+		}
+		msg := &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Body:   &waE2E.InteractiveMessage_Body{Text: proto.String(b.Text)},
+				Footer: &waE2E.InteractiveMessage_Footer{Text: proto.String(b.Footer)},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: nbtns, MessageParamsJSON: proto.String(""), MessageVersion: proto.Int32(1),
+					},
+				},
+			},
+			MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: newMessageSecret()},
+		}
+		s.sendNativeFlow(sess, w, r, jid, msg)
+		return
+	}
 	btns := make([]*waE2E.ButtonsMessage_Button, 0, len(b.Buttons))
 	for i, bt := range b.Buttons {
 		id := bt.ID
@@ -144,9 +170,10 @@ func (s *server) handleSendInteractive(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	isGroup := jid.Server == types.GroupServer
 	nbtns := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(b.Buttons))
 	for i, bt := range b.Buttons {
-		name, params := nativeFlowButton(bt.Type, bt.DisplayText, bt.URL, bt.ID, bt.CopyCode, bt.PhoneNumber, i)
+		name, params := sess.groupSafeButton(isGroup, bt.Type, bt.DisplayText, bt.URL, bt.ID, bt.CopyCode, bt.PhoneNumber, i)
 		if name == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type inválido (quick_reply|cta_url|cta_copy|cta_call)"})
 			return
@@ -287,6 +314,7 @@ func (s *server) handleSendCarousel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	isGroup := jid.Server == types.GroupServer
 	cards := make([]*waE2E.InteractiveMessage, 0, len(b.Cards))
 	for _, c := range b.Cards {
 		up, ok := s.uploadMedia(sess, w, r, c.Base64, c.ImageURL, whatsmeow.MediaImage)
@@ -300,7 +328,7 @@ func (s *server) handleSendCarousel(w http.ResponseWriter, r *http.Request) {
 		}
 		nbtns := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(c.Buttons))
 		for i, bt := range c.Buttons {
-			name, params := nativeFlowButton(bt.Type, bt.DisplayText, bt.URL, bt.ID, bt.CopyCode, bt.PhoneNumber, i)
+			name, params := sess.groupSafeButton(isGroup, bt.Type, bt.DisplayText, bt.URL, bt.ID, bt.CopyCode, bt.PhoneNumber, i)
 			if name == "" {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type de botão inválido no card"})
 				return
@@ -335,6 +363,33 @@ func (s *server) handleSendCarousel(w http.ResponseWriter, r *http.Request) {
 		MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: newMessageSecret()},
 	}
 	s.sendNativeFlow(sess, w, r, jid, msg)
+}
+
+// ownNumber devolve o número (PN, sem sufixo de device) da conta conectada.
+func (s *Session) ownNumber() string {
+	if id := s.client.Store.ID; id != nil {
+		return id.ToNonAD().User
+	}
+	return ""
+}
+
+// groupSafeButton monta o botão convertendo quick_reply -> cta_url wa.me QUANDO o
+// destino é um GRUPO. Motivo: em grupo, tocar num quick_reply POSTA a escolha pro
+// grupo inteiro (todo mundo é notificado = "marca geral"). Convertido pra wa.me, o
+// toque abre o PV com a gente (texto pronto) e NÃO posta nada no grupo. Fora de
+// grupo (1:1), mantém o comportamento normal.
+func (s *Session) groupSafeButton(isGroup bool, typ, display, url2, id, copyCode, phone string, idx int) (string, string) {
+	if isGroup && typ == "quick_reply" {
+		if num := s.ownNumber(); num != "" {
+			text := display
+			if text == "" {
+				text = id
+			}
+			waURL := "https://wa.me/" + num + "?text=" + url.QueryEscape(text)
+			return "cta_url", jsonStr(map[string]string{"display_text": display, "url": waURL, "merchant_url": waURL})
+		}
+	}
+	return nativeFlowButton(typ, display, url2, id, copyCode, phone, idx)
 }
 
 // nativeFlowButton monta (name, buttonParamsJSON) de um botão nativeFlow.

@@ -2495,7 +2495,13 @@ paths:
     post:
       tags: [Interativas]
       summary: Botões de resposta (reply, até 3)
-      description: "Renderiza no app do WhatsApp e no Web."
+      description: >
+        Renderiza no app do WhatsApp e no Web. Em GRUPO, tocar num botão de
+        resposta postaria a escolha pro grupo inteiro (todos notificados =
+        "marca geral"); por isso, quando o destino é um grupo, o backend
+        converte automaticamente os botões de resposta em botões cta_url wa.me
+        (abrem o PV com o texto pronto, sem postar no grupo). O mesmo vale para
+        quick_reply em /messages/interactive e /messages/carousel.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
