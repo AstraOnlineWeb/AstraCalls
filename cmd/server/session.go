@@ -584,8 +584,13 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 	if creator == "" {
 		creator = from.String()
 	}
-	reject := signaling.BuildRejectStanza(from, info.CallID, wanode.MustJID(creator))
-	_ = wa.NewSocket(s.client).SendNode(ctx, reject)
+	sock := wa.NewSocket(s.client)
+	own := sock.OwnLID()
+	if from.Server == types.DefaultUserServer {
+		own = sock.OwnPN()
+	}
+	reject := signaling.BuildRejectStanza(from, info.CallID, wanode.MustJID(creator), own)
+	_ = sock.SendNode(ctx, reject)
 	s.log.Info("inbound call rejected: session at capacity", "call_id", info.CallID)
 }
 

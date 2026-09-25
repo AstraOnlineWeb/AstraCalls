@@ -61,10 +61,19 @@ func TestBuildTerminateElsewhereStanza(t *testing.T) {
 func TestBuildRejectStanzaHasCount(t *testing.T) {
 	peer := types.NewJID("62440234549366", types.HiddenUserServer)
 	creator := types.NewJID("62440234549366", types.HiddenUserServer)
+	own := types.NewJID("111222333", types.HiddenUserServer)
+	own.Device = 3 // deve ser normalizado (ToNonAD) no from
 
-	node := BuildRejectStanza(peer, "CID", creator)
+	node := BuildRejectStanza(peer, "CID", creator, own)
 	if node.Tag != "call" {
 		t.Fatalf("wrapper tag = %q", node.Tag)
+	}
+	// o <call> precisa carregar from=ownID (ToNonAD) e to=callFrom
+	if f := wanode.AttrString(node.Attrs, "from"); f != own.ToNonAD().String() {
+		t.Fatalf("from = %q, want %q", f, own.ToNonAD())
+	}
+	if to := wanode.AttrString(node.Attrs, "to"); to != peer.String() {
+		t.Fatalf("to = %q, want %q", to, peer)
 	}
 	rej := findChild(&node, "reject")
 	if rej == nil {
