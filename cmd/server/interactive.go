@@ -50,13 +50,13 @@ func (s *server) handleSendButtons(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	ht := waE2E.ButtonsMessage_EMPTY
-	msg := &waE2E.Message{ButtonsMessage: &waE2E.ButtonsMessage{
+	msg := viewOnceWrap(&waE2E.Message{ButtonsMessage: &waE2E.ButtonsMessage{
 		Header:      &waE2E.ButtonsMessage_Text{Text: b.Text},
 		ContentText: proto.String(b.Text),
 		FooterText:  proto.String(b.Footer),
 		Buttons:     btns,
 		HeaderType:  &ht,
-	}}
+	}})
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -104,10 +104,10 @@ func (s *server) handleSendList(w http.ResponseWriter, r *http.Request) {
 	if btnText == "" {
 		btnText = "Ver opções"
 	}
-	msg := &waE2E.Message{ListMessage: &waE2E.ListMessage{
+	msg := viewOnceWrap(&waE2E.Message{ListMessage: &waE2E.ListMessage{
 		Title: proto.String(b.Title), Description: proto.String(b.Text), ButtonText: proto.String(btnText),
 		FooterText: proto.String(b.Footer), ListType: &lt, Sections: secs,
-	}}
+	}})
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -147,7 +147,7 @@ func (s *server) handleSendInteractive(w http.ResponseWriter, r *http.Request) {
 			Name: proto.String(name), ButtonParamsJSON: proto.String(params),
 		})
 	}
-	msg := &waE2E.Message{InteractiveMessage: &waE2E.InteractiveMessage{
+	msg := viewOnceWrap(&waE2E.Message{InteractiveMessage: &waE2E.InteractiveMessage{
 		Body:   &waE2E.InteractiveMessage_Body{Text: proto.String(b.Body)},
 		Footer: &waE2E.InteractiveMessage_Footer{Text: proto.String(b.Footer)},
 		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
@@ -155,7 +155,7 @@ func (s *server) handleSendInteractive(w http.ResponseWriter, r *http.Request) {
 				Buttons: nbtns, MessageVersion: proto.Int32(1),
 			},
 		},
-	}}
+	}})
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -181,4 +181,16 @@ func nativeFlowButton(typ, display, url, id, copyCode, phone string, idx int) (s
 func jsonStr(m map[string]string) string {
 	b, _ := json.Marshal(m)
 	return string(b)
+}
+
+// viewOnceWrap embrulha uma mensagem interativa (buttons/list/interactive) num
+// viewOnceMessage com messageContextInfo (deviceListMetadataVersion=2). É o truque
+// que o Baileys usa para o WhatsApp ENTREGAR/RENDERIZAR interativos em número
+// não-oficial — enviado "cru" o servidor aceita mas engole (não entrega).
+func viewOnceWrap(inner *waE2E.Message) *waE2E.Message {
+	inner.MessageContextInfo = &waE2E.MessageContextInfo{
+		DeviceListMetadata:        &waE2E.DeviceListMetadata{},
+		DeviceListMetadataVersion: proto.Int32(2),
+	}
+	return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: inner}}
 }
