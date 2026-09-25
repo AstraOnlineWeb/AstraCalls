@@ -166,10 +166,14 @@ func BuildTerminateElsewhereStanza(peerJid types.JID, callID string, callCreator
 	})
 }
 
+// BuildRejectStanza monta o <reject> enviado ao chamador quando recusamos uma
+// chamada recebida. O atributo count="0" é obrigatório (é o que o whatsmeow envia
+// no RejectCall de referência): sem ele o chamador não registra a recusa e o
+// aparelho dele continua tocando até o timeout.
 func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
 	return callWrap(peerJid, waBinary.Node{
 		Tag:   "reject",
-		Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
+		Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator, "count": "0"},
 	})
 }
 
