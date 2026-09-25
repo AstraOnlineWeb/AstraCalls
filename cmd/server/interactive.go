@@ -252,6 +252,91 @@ func (s *server) handleSendList(w http.ResponseWriter, r *http.Request) {
 	s.sendNativeFlow(sess, w, r, jid, msg)
 }
 
+// POST /api/sessions/{sid}/messages/carousel
+// {to, body, cards:[{imageUrl|base64, title?, body, buttons:[{type,displayText,url?,id?,copyCode?,phoneNumber?}]}]}
+// Carrossel de cards (imagem + texto + botões nativeFlow). Mesmo envelope <biz>.
+func (s *server) handleSendCarousel(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b struct {
+		To    string `json:"to"`
+		Body  string `json:"body"`
+		Cards []struct {
+			ImageURL string `json:"imageUrl"`
+			Base64   string `json:"base64"`
+			Title    string `json:"title"`
+			Body     string `json:"body"`
+			Buttons  []struct {
+				Type        string `json:"type"`
+				DisplayText string `json:"displayText"`
+				URL         string `json:"url"`
+				ID          string `json:"id"`
+				CopyCode    string `json:"copyCode"`
+				PhoneNumber string `json:"phoneNumber"`
+			} `json:"buttons"`
+		} `json:"cards"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.To) == "" || len(b.Cards) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to e cards obrigatórios"})
+		return
+	}
+	jid, err := resolveRecipient(b.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	cards := make([]*waE2E.InteractiveMessage, 0, len(b.Cards))
+	for _, c := range b.Cards {
+		up, ok := s.uploadMedia(sess, w, r, c.Base64, c.ImageURL, whatsmeow.MediaImage)
+		if !ok {
+			return // uploadMedia já respondeu o erro
+		}
+		img := &waE2E.ImageMessage{
+			Mimetype: proto.String("image/jpeg"),
+			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		}
+		nbtns := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(c.Buttons))
+		for i, bt := range c.Buttons {
+			name, params := nativeFlowButton(bt.Type, bt.DisplayText, bt.URL, bt.ID, bt.CopyCode, bt.PhoneNumber, i)
+			if name == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type de botão inválido no card"})
+				return
+			}
+			nbtns = append(nbtns, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+				Name: proto.String(name), ButtonParamsJSON: proto.String(params),
+			})
+		}
+		cards = append(cards, &waE2E.InteractiveMessage{
+			Header: &waE2E.InteractiveMessage_Header{
+				Title:              proto.String(c.Title),
+				HasMediaAttachment: proto.Bool(true),
+				Media:              &waE2E.InteractiveMessage_Header_ImageMessage{ImageMessage: img},
+			},
+			Body: &waE2E.InteractiveMessage_Body{Text: proto.String(c.Body)},
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+					Buttons: nbtns, MessageParamsJSON: proto.String(""), MessageVersion: proto.Int32(1),
+				},
+			},
+		})
+	}
+	msg := &waE2E.Message{
+		InteractiveMessage: &waE2E.InteractiveMessage{
+			Body: &waE2E.InteractiveMessage_Body{Text: proto.String(b.Body)},
+			InteractiveMessage: &waE2E.InteractiveMessage_CarouselMessage_{
+				CarouselMessage: &waE2E.InteractiveMessage_CarouselMessage{
+					Cards: cards, MessageVersion: proto.Int32(1),
+				},
+			},
+		},
+		MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: newMessageSecret()},
+	}
+	s.sendNativeFlow(sess, w, r, jid, msg)
+}
+
 // nativeFlowButton monta (name, buttonParamsJSON) de um botão nativeFlow.
 func nativeFlowButton(typ, display, url, id, copyCode, phone string, idx int) (string, string) {
 	switch typ {

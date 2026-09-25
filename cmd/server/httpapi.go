@@ -68,6 +68,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/buttons", s.handleSendButtons)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/list", s.handleSendList)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/interactive", s.handleSendInteractive)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/carousel", s.handleSendCarousel)
 	mux.HandleFunc("POST /api/sessions/{sid}/schedule", s.handleSchedule)
 	mux.HandleFunc("GET /api/sessions/{sid}/schedule", s.handleListScheduled)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/schedule/{id}", s.handleCancelScheduled)
