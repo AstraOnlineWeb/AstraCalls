@@ -2,6 +2,20 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.0.1 — 2026-09-25
+
+Correção pontual no vídeo recebido.
+
+### 📹 Vídeo
+
+- **Câmera do cliente não fica mais preta no painel.** O vídeo do peer só era
+  exibido quando o WhatsApp mandava a sinalização `<video state=1>` — o que nem
+  sempre acontece (vídeo desde o início da chamada, ou sinal fora do caminho
+  tratado). Nesses casos o vídeo do cliente chegava e era decodificado, mas o
+  painel não o exibia (ficava preto), embora o operador aparecesse normalmente
+  para o cliente. Agora, assim que chegam **frames de vídeo reais** do peer, o
+  painel passa a exibir a câmera dele — sem depender apenas da sinalização.
+
 ## v1.0.0 — 2026-09-25
 
 Primeira versão estável. 🎉 Rodada grande de confiabilidade de chamada (não cair
