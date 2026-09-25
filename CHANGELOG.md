@@ -2,6 +2,49 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.1.0 — 2026-09-25
+
+Rodada de API de mensagens: **botões/listas interativas** que entregam de verdade,
+**agendamento**, **encaminhar**, **busca**, **webhook assinado**, envio idempotente
+e mais robustez no envio.
+
+### 🔘 Mensagens interativas (novo)
+
+- **Botões que renderizam no WhatsApp** (número não-oficial): `POST /messages/interactive`
+  (CTA — abrir URL, copiar código, ligar, resposta rápida), `POST /messages/buttons`
+  (botões de resposta, até 3) e `POST /messages/list` (menu de lista). Usa o formato
+  native flow com o stanza correto que faz o WhatsApp entregar/exibir. *A lista só
+  renderiza no aplicativo do celular — no WhatsApp Web ela pede "use o celular"
+  (limitação do Web).* Para botão com garantia total, a API oficial (coexistência)
+  segue sendo o caminho.
+
+### 💬 Envio & mensagens (novo)
+
+- **Envio idempotente:** `GET /messages/new-message-id` gera um id, e o envio aceita
+  um `id` do cliente (header `X-Message-ID` ou `?id=`) em **todos** os endpoints —
+  reenviar com o mesmo id **não duplica** a mensagem (ótimo para retry).
+- **Agendamento (`send_at`):** `POST /schedule` agenda texto/imagem para o futuro;
+  `GET /schedule` lista e `DELETE /schedule/{id}` cancela. Persiste (sobrevive a
+  restart) e um worker envia na hora marcada.
+- **Encaminhar:** `POST /messages/forward {to, messageId}` encaminha uma mensagem
+  do histórico (inclusive mídia), marcada como encaminhada.
+- **Busca:** `GET /messages/search?q=&chatId=` procura no histórico de mensagens.
+- **Nota de vídeo (PTV):** `POST /messages/ptv` envia o "balãozinho" de vídeo redondo.
+
+### 🔒 Webhook
+
+- **Assinatura HMAC-SHA256:** configure um `secret` no `POST /webhook` e cada
+  entrega leva o header `X-Webhook-Signature: sha256=…` para o consumidor verificar
+  a autenticidade. O `GET` não devolve o segredo em claro.
+- **Filtro de eventos:** `POST /webhook {events:[...]}` entrega só os tipos de
+  evento assinados (vazio = todos), reduzindo ruído.
+
+### 🛠️ Robustez de envio
+
+- **Correção do 9º dígito (LID) em TODOS os envios diretos.** Antes só o caminho do
+  Chatwoot resolvia o LID; agora os endpoints de envio da API também reenviam
+  corretamente quando o servidor retorna "no LID found" (comum no 9º dígito BR).
+
 ## v1.0.1 — 2026-09-25
 
 Correção pontual no vídeo recebido.
