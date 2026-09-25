@@ -226,6 +226,37 @@ func messageText(m *waE2E.Message) string {
 		return contactText(m.GetContactMessage())
 	case m.GetContactsArrayMessage() != nil:
 		return contactsArrayText(m.GetContactsArrayMessage())
+	// Respostas a botões/listas/carrossel (o interlocutor TOCOU num botão): vira o
+	// texto/opção escolhida, pra aparecer como mensagem normal dele no webhook/Chatwoot.
+	case m.GetButtonsResponseMessage() != nil:
+		return m.GetButtonsResponseMessage().GetSelectedDisplayText()
+	case m.GetTemplateButtonReplyMessage() != nil:
+		return m.GetTemplateButtonReplyMessage().GetSelectedDisplayText()
+	case m.GetListResponseMessage() != nil:
+		return m.GetListResponseMessage().GetTitle()
+	case m.GetInteractiveResponseMessage() != nil:
+		return interactiveResponseText(m.GetInteractiveResponseMessage())
+	}
+	return ""
+}
+
+// interactiveResponseText extrai a escolha de uma resposta interativa (nativeFlow:
+// quick_reply/cta). Usa o Body se houver; senão o "id" do buttonParamsJson.
+func interactiveResponseText(ir *waE2E.InteractiveResponseMessage) string {
+	if b := ir.GetBody(); b != nil && b.GetText() != "" {
+		return b.GetText()
+	}
+	if nf := ir.GetNativeFlowResponseMessage(); nf != nil {
+		var p map[string]any
+		if json.Unmarshal([]byte(nf.GetParamsJSON()), &p) == nil {
+			if id, ok := p["id"].(string); ok && id != "" {
+				return id
+			}
+			if dt, ok := p["display_text"].(string); ok && dt != "" {
+				return dt
+			}
+		}
+		return nf.GetParamsJSON()
 	}
 	return ""
 }
@@ -261,6 +292,9 @@ func messageType(m *waE2E.Message) string {
 		return interactiveType(m.GetInteractiveMessage())
 	case m.GetEventMessage() != nil:
 		return "event"
+	case m.GetButtonsResponseMessage() != nil || m.GetTemplateButtonReplyMessage() != nil ||
+		m.GetListResponseMessage() != nil || m.GetInteractiveResponseMessage() != nil:
+		return "text" // resposta de botão/lista/carrossel = escolha do interlocutor (texto)
 	}
 	return "unknown"
 }
