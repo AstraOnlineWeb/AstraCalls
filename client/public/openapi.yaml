@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AstraCalls API
-  version: "1.0.0"
+  version: "1.0.2"
   description: |
     API HTTP do **AstraCalls** — chamadas de voz do WhatsApp pelo navegador.
 
@@ -39,6 +39,12 @@ tags:
   - name: Chatwoot
     description: "Integração nativa com Chatwoot (canal API): WhatsApp <-> caixa de entrada"
   - name: Eventos & Histórico
+  - name: Interativas
+    description: "Botões, listas e carrossel (native flow). Renderizam no app; garantia total só via API oficial."
+  - name: Disparo
+    description: "Disparo em massa (blast) com pacing anti-ban"
+  - name: Observabilidade
+    description: "Health checks e métricas (liveness/readiness/Prometheus)"
 
 security:
   - apiKeyAuth: []
@@ -702,6 +708,8 @@ paths:
               required: [url]
               properties:
                 url: { type: string, example: "https://meu-sistema/webhook/wacalls" }
+                secret: { type: string, description: "Opcional. Assina cada entrega com HMAC-SHA256 no header X-Webhook-Signature: sha256=<hex>." }
+                events: { type: array, items: { type: string }, description: "Opcional. Só entrega estes tipos de evento (vazio = todos).", example: ["message", "receipt"] }
       responses:
         "200":
           description: Salvo
@@ -2403,3 +2411,368 @@ paths:
         - { name: conversation_id, in: query, required: true, schema: { type: string } }
       responses:
         "200": { description: Dados resolvidos }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Mensagens — extras (idempotência, PTV, encaminhar, busca)
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/messages/new-message-id:
+    get:
+      tags: [Mensagens]
+      summary: Gera um id de mensagem (para envio idempotente)
+      description: >-
+        Devolve um id pré-gerado. Use no envio (header `X-Message-ID` ou `?id=`) para
+        idempotência: reenviar com o mesmo id NÃO duplica a mensagem no WhatsApp.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: id gerado
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string } } }
+
+  /api/sessions/{sid}/messages/ptv:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma nota de vídeo (PTV, vídeo redondo)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                base64: { type: string, description: "Vídeo em base64 (ou use url)" }
+                url: { type: string, description: "URL do vídeo (o servidor baixa)" }
+                mimetype: { type: string, example: "video/mp4" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+        "503": { description: Conta não pareada }
+
+  /api/sessions/{sid}/messages/forward:
+    post:
+      tags: [Mensagens]
+      summary: Encaminha uma mensagem existente do histórico
+      description: Reconstrói a mensagem pelo id (inclusive mídia) e reenvia marcada como encaminhada.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, messageId]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                messageId: { type: string, description: "id da mensagem a encaminhar (do histórico)" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+        "404": { description: Mensagem não encontrada no histórico }
+
+  /api/sessions/{sid}/messages/search:
+    get:
+      tags: [Mensagens]
+      summary: Busca no histórico de mensagens (texto)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: q, in: query, required: true, schema: { type: string }, description: "Texto a buscar (ILIKE)" }
+        - { name: chatId, in: query, required: false, schema: { type: string }, description: "Limita a um chat" }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50 } }
+      responses:
+        "200": { description: Mensagens encontradas }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Interativas (native flow) — botões, lista, carrossel
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/messages/buttons:
+    post:
+      tags: [Interativas]
+      summary: Botões de resposta (reply, até 3)
+      description: "Renderiza no app do WhatsApp e no Web."
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, buttons]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                text: { type: string, example: "Escolha:" }
+                footer: { type: string }
+                buttons:
+                  type: array
+                  items: { type: object, properties: { id: { type: string }, text: { type: string } } }
+                  example: [{ id: "sim", text: "Sim" }, { id: "nao", text: "Não" }]
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/interactive:
+    post:
+      tags: [Interativas]
+      summary: Botões de ação (CTA — URL, copiar, ligar, quick reply)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, buttons]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                body: { type: string, example: "Fale com a gente:" }
+                footer: { type: string }
+                buttons:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call] }
+                      displayText: { type: string }
+                      url: { type: string, description: "para cta_url" }
+                      id: { type: string, description: "para quick_reply" }
+                      copyCode: { type: string, description: "para cta_copy" }
+                      phoneNumber: { type: string, description: "para cta_call" }
+                  example:
+                    - { type: cta_url, displayText: "Abrir site", url: "https://astraonline.com.br" }
+                    - { type: cta_copy, displayText: "Copiar cupom", copyCode: "ASTRA10" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/list:
+    post:
+      tags: [Interativas]
+      summary: Menu de lista (single select)
+      description: "Renderiza no app do celular; no WhatsApp Web pede para usar o celular (limitação do Web)."
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, sections]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                body: { type: string }
+                footer: { type: string }
+                buttonText: { type: string, example: "Abrir menu" }
+                sections:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      title: { type: string }
+                      rows:
+                        type: array
+                        items: { type: object, properties: { id: { type: string }, title: { type: string }, description: { type: string } } }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  /api/sessions/{sid}/messages/carousel:
+    post:
+      tags: [Interativas]
+      summary: Carrossel de cards (imagem + texto + botões)
+      description: "Até ~10 cards, cada um com imagem, título, texto e botões (CTA/quick reply)."
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, cards]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                body: { type: string, example: "🎠 Nossos planos" }
+                cards:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      imageUrl: { type: string, description: "URL da imagem do card (ou base64)" }
+                      base64: { type: string }
+                      title: { type: string }
+                      body: { type: string }
+                      buttons:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call] }
+                            displayText: { type: string }
+                            url: { type: string }
+                            id: { type: string }
+                            copyCode: { type: string }
+                            phoneNumber: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Agendamento (send_at)
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/schedule:
+    post:
+      tags: [Mensagens]
+      summary: Agenda uma mensagem (texto ou imagem) para o futuro
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, sendAt]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                sendAt: { type: integer, format: int64, description: "epoch (ms ou s) no futuro" }
+                text: { type: string }
+                imageUrl: { type: string }
+                base64: { type: string }
+                caption: { type: string }
+      responses:
+        "200":
+          description: Agendada
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: integer }, sendAt: { type: integer }, status: { type: string } } }
+    get:
+      tags: [Mensagens]
+      summary: Lista as mensagens agendadas da sessão
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200": { description: Lista de agendamentos }
+  /api/sessions/{sid}/schedule/{id}:
+    delete:
+      tags: [Mensagens]
+      summary: Cancela um agendamento pendente
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Cancelado }
+        "404": { description: Não encontrado ou já processado }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Disparo em massa (blast)
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/blast:
+    post:
+      tags: [Disparo]
+      summary: Dispara uma campanha (texto ou imagem) com pacing anti-ban
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: array, items: { type: string }, description: "Lista de destinatários" }
+                text: { type: string }
+                imageUrl: { type: string }
+                base64: { type: string }
+                caption: { type: string }
+                delayMs: { type: integer, description: "Atraso base entre envios (padrão 3000)" }
+                jitterMs: { type: integer, description: "Variação aleatória adicional" }
+      responses:
+        "200":
+          description: Campanha iniciada
+          content:
+            application/json:
+              schema: { type: object, properties: { jobId: { type: string }, status: { type: string }, total: { type: integer } } }
+  /api/sessions/{sid}/blasts:
+    get:
+      tags: [Disparo]
+      summary: Lista as campanhas da sessão
+      parameters: [ { $ref: "#/components/parameters/Sid" } ]
+      responses: { "200": { description: Lista de campanhas } }
+  /api/sessions/{sid}/blasts/{id}:
+    get:
+      tags: [Disparo]
+      summary: Status de uma campanha (com resultados por destinatário)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Status da campanha }, "404": { description: Não encontrada } }
+  /api/sessions/{sid}/blasts/{id}/cancel:
+    post:
+      tags: [Disparo]
+      summary: Cancela uma campanha em andamento
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Cancelando } }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Webhook — status/DLQ/replay/reenable
+  # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/webhooks/status:
+    get:
+      tags: [Webhook]
+      summary: Estado do circuito de entrega do webhook (circuit breaker + DLQ)
+      parameters: [ { $ref: "#/components/parameters/Sid" } ]
+      responses: { "200": { description: "state (closed|open|disabled), consecutiveFailures, dlqSize" } }
+  /api/sessions/{sid}/webhooks/dlq:
+    get:
+      tags: [Webhook]
+      summary: Lista os eventos na dead-letter queue (falharam a entrega)
+      parameters: [ { $ref: "#/components/parameters/Sid" } ]
+      responses: { "200": { description: Itens da DLQ } }
+  /api/sessions/{sid}/webhooks/dlq/{id}/replay:
+    post:
+      tags: [Webhook]
+      summary: Reenvia um item da DLQ
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: Reenviado }, "404": { description: Item não encontrado }, "409": { description: Circuito aberto/desabilitado } }
+  /api/sessions/{sid}/webhooks/reenable:
+    post:
+      tags: [Webhook]
+      summary: Religa um webhook desabilitado/aberto (zera o circuito)
+      parameters: [ { $ref: "#/components/parameters/Sid" } ]
+      responses: { "200": { description: OK } }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Observabilidade (sem autenticação, fora de /api)
+  # ─────────────────────────────────────────────────────────────────
+  /livez:
+    get:
+      tags: [Observabilidade]
+      summary: Liveness probe
+      security: []
+      responses: { "200": { description: ok } }
+  /readyz:
+    get:
+      tags: [Observabilidade]
+      summary: Readiness probe
+      security: []
+      responses: { "200": { description: ok } }
+  /metrics:
+    get:
+      tags: [Observabilidade]
+      summary: Métricas Prometheus (texto)
+      security: []
+      responses: { "200": { description: "wacalls_sessions / wacalls_webhook_dlq_total / wacalls_uptime_seconds" } }
