@@ -155,7 +155,9 @@ func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
 	})
 
 	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-		log.Debug("browser ice state", "state", s.String())
+		log.Debug("browser ice state",
+			"ice_connection_state", s.String(),
+			"browser_peerconnection_state", pc.ConnectionState().String())
 		if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed {
 			if br.OnTerminalICE != nil && !br.terminateDisabled.Load() {
 				br.OnTerminalICE()

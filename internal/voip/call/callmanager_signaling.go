@@ -94,6 +94,23 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 }
 
 func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node, peerJid types.JID) {
+	info := signaling.ExtractNodeInfo(node)
+	callID := ""
+	if info != nil {
+		callID = info.CallID
+		creator := ""
+		if info.InnerNode != nil {
+			creator = wanode.AttrString(info.InnerNode.Attrs, "call-creator")
+		}
+		m.log.Debug("handle call accept",
+			"call_id", callID,
+			"peer_jid", peerJid.String(),
+			"peer_device_jid", ensureDeviceJid(peerJid.String()),
+			"call_creator", creator,
+			"canonical_peer", wanode.CleanJID(peerJid.String()),
+			"event_type", "accept")
+	}
+
 	m.mu.Lock()
 	call := m.currentCall
 	// First accept wins: um accept posterior de OUTRO device (sibling) não pode
@@ -108,9 +125,35 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	}
 	m.mu.Unlock()
 	if call == nil {
+		m.log.Debug("accept ignored: no current call", "call_id", callID, "peer", peerJid.String(), "event_type", "accept")
 		return
 	}
-	info := signaling.ExtractNodeInfo(node)
+
+	// Uma chamada inbound (nós somos o destino) não deve processar um accept
+	// remoto como se fôssemos a origem. O WhatsApp entrega o accept aos
+	// dispositivos do destino para sincronização; processá-lo localmente criaria
+	// uma segunda sessão de mídia proprietária da mesma call_id — exatamente o
+	// bug observado quando o mesmo servidor hospeda sessões de origem e destino.
+	if !call.IsInitiator() {
+		m.log.Info("accept ignored on inbound leg: remote answered elsewhere",
+			"call_id", call.CallID, "peer_jid", peerJid.String(),
+			"call_creator", call.CallCreator, "direction", call.Direction,
+			"event_type", "accept")
+		m.mu.Lock()
+		if !call.IsEnded() {
+			_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: core.EndCallReasonAcceptedElsewhere})
+			ended := call
+			m.emitState()
+			m.mu.Unlock()
+			if m.OnEnded != nil {
+				m.OnEnded(ended)
+			}
+			m.cleanupMedia()
+		} else {
+			m.mu.Unlock()
+		}
+		return
+	}
 	if info == nil {
 		return
 	}
@@ -156,7 +199,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 
 	m.relay.ResendSubscriptions()
 
-	callID := call.CallID
+	callID = call.CallID
 	creator := wanode.MustJID(call.CallCreator)
 	if len(siblings) > 0 {
 		elsewhere := signaling.BuildTerminateElsewhereStanza(wanode.MustJID(basePeer), callID, creator, siblings)

@@ -258,7 +258,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		}
 		// grava o lado do peer (WhatsApp) mesmo se o navegador ainda não estiver pronto
 		ac.recorder.writePeer(pcm16)
-		if ac.bridge == nil || ac.browserOpus == nil {
+		if ac.browserOpus == nil {
 			return
 		}
 		pcm48 := media.Upsample16to48(pcm16)
@@ -266,7 +266,15 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if err != nil || len(opus) == 0 {
 			return
 		}
-		_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
+		// Envia o áudio do peer para ambas as pontes ativas. Durante troca de
+		// bridge (WebRTC <-> WS) ambas podem coexistir; nunca devemos perder o
+		// fallback WS porque ac.bridge passou a ser nil.
+		if ac.bridge != nil {
+			_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
+		}
+		if ac.wsBridge != nil {
+			_ = ac.wsBridge.WriteOpus(opus, 60*time.Millisecond)
+		}
 	}
 	cm.OnPeerVideo = func(au []byte) {
 		ac, ok := s.reg.get(callID)
@@ -309,7 +317,18 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 	if callID == "" {
 		return nil, false
 	}
-	return s.reg.get(callID)
+	ac, ok := s.reg.get(callID)
+	if ok {
+		chatwoot := s.getChatwoot()
+		s.log.Debug("call event routed to session",
+			"call_id", callID,
+			"session_id", s.id,
+			"account_id", chatwoot.AccountID,
+			"inbox_id", chatwoot.InboxID,
+			"peer_jid", from.String(),
+			"event_type", data.Tag)
+	}
+	return ac, ok
 }
 
 func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {

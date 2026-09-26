@@ -29,14 +29,29 @@ func (fakeRelay) HasConnection() bool                     { return false }
 func (fakeRelay) ConnectedCount() int                     { return 0 }
 func (fakeRelay) Cleanup()                                {}
 
+// connectedRelay simula um relay já conectado para que o accept ative a chamada.
+type connectedRelay struct{ fakeRelay }
+
+func (connectedRelay) HasConnection() bool { return true }
+
 // deviceSock estende fakeSock devolvendo uma lista fixa de devices do destino.
 type deviceSock struct {
 	fakeSock
 	devices []types.JID
+	lidMap  map[string]types.JID // PN string -> LID
 }
 
 func (d *deviceSock) GetUSyncDevices(context.Context, []types.JID) ([]types.JID, error) {
 	return d.devices, nil
+}
+
+func (d *deviceSock) ResolveLIDForPN(_ context.Context, pn types.JID) types.JID {
+	if d.lidMap != nil {
+		if lid, ok := d.lidMap[pn.String()]; ok {
+			return lid
+		}
+	}
+	return pn
 }
 
 func lidDevice(user string, device uint16) types.JID {
@@ -195,6 +210,25 @@ func TestSameDeviceAcceptRetryDoesNotRepeatElsewhereFanout(t *testing.T) {
 	}
 }
 
+func TestAcceptOnInboundLegIsIgnored(t *testing.T) {
+	primary := lidDevice("62440234549366", 0)
+	caller := lidDevice("24017624899709", 17)
+	sock := &deviceSock{devices: []types.JID{primary}}
+	m := NewCallManager(sock, slog.Default())
+	m.relay = fakeRelay{}
+	m.currentCall = NewIncomingCall("CALL1", caller.String(), caller.String(), "", core.CallMediaTypeAudio)
+	m.calleeDevices = []types.JID{primary}
+
+	m.HandleCallAccept(context.Background(), acceptNode("CALL1", caller), caller)
+
+	if !m.CurrentCall().IsEnded() {
+		t.Fatal("accept em chamada inbound deve encerrar o leg local (answered elsewhere)")
+	}
+	if m.CurrentCall().StateData.EndReason != core.EndCallReasonAcceptedElsewhere {
+		t.Fatalf("reason deve ser accepted_elsewhere, veio %q", m.CurrentCall().StateData.EndReason)
+	}
+}
+
 func TestLateRejectFromNonAnsweringDeviceKeepsCall(t *testing.T) {
 	primary := lidDevice("62440234549366", 0)
 	companion := lidDevice("62440234549366", 33)
@@ -210,5 +244,100 @@ func TestLateRejectFromNonAnsweringDeviceKeepsCall(t *testing.T) {
 	m.HandleCallTerminate(terminateNode("CALL1", companion))
 	if !m.CurrentCall().IsEnded() {
 		t.Fatal("terminate do device que atendeu deve encerrar a chamada")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regressão: outbound PN/LID e dupla sessão local
+// ---------------------------------------------------------------------------
+
+func TestOutboundWithPNStartsWithResolvedLID(t *testing.T) {
+	pn := types.JID{User: "553488775588", Server: types.DefaultUserServer}
+	lid := lidDevice("49989292171350", 0)
+	sock := &deviceSock{
+		devices: []types.JID{lid},
+		lidMap:  map[string]types.JID{pn.String(): lid},
+	}
+	m := NewCallManager(sock, slog.Default())
+	m.relay = fakeRelay{}
+	t.Cleanup(m.cleanupMedia)
+
+	if err := m.StartCall(context.Background(), "CID", pn, false); err != nil {
+		t.Fatalf("start call: %v", err)
+	}
+	if got := m.CurrentCall().PeerJid; got != lid.String() {
+		t.Fatalf("outbound com PN deve resolver para LID: peer=%q, want %q", got, lid)
+	}
+}
+
+func TestOutboundWithLIDStartsDirectly(t *testing.T) {
+	lid := lidDevice("49989292171350", 0)
+	sock := &deviceSock{devices: []types.JID{lid}}
+	m := NewCallManager(sock, slog.Default())
+	m.relay = fakeRelay{}
+	t.Cleanup(m.cleanupMedia)
+
+	if err := m.StartCall(context.Background(), "CID", lid, false); err != nil {
+		t.Fatalf("start call: %v", err)
+	}
+	if got := m.CurrentCall().PeerJid; got != lid.String() {
+		t.Fatalf("outbound com LID deve manter LID: peer=%q, want %q", got, lid)
+	}
+}
+
+// TestSingleCallCannotOwnTwoLocalSessions reproduz o bug da call
+// A68D3997844AFEDDC9FD6F2E12AE0C26: o mesmo servidor hospedava o leg de origem
+// (outbound) e o leg de destino (inbound) da mesma chamada. O accept do destino
+// não pode criar uma segunda sessão proprietária local.
+func TestSingleCallCannotOwnTwoLocalSessions(t *testing.T) {
+	callID := "A68D3997844AFEDDC9FD6F2E12AE0C26"
+	caller := lidDevice("24017624899709", 17)
+	callee := lidDevice("49989292171350", 0)
+
+	// Sessão do originador (outbound) — a única que pode processar o accept.
+	originSock := &deviceSock{devices: []types.JID{callee}}
+	origin := NewCallManager(originSock, slog.Default())
+	origin.relay = connectedRelay{}
+	origin.currentCall = NewOutgoingCall(callID, callee.String(), caller.String(), core.CallMediaTypeAudio)
+	_ = origin.currentCall.ApplyTransition(Transition{Type: TransitionOfferSent})
+	origin.calleeDevices = []types.JID{callee}
+
+	// Sessão do destinatário (inbound) — mesma call_id, mas deve ignorar o accept.
+	inboundSock := &deviceSock{devices: []types.JID{callee}}
+	inbound := NewCallManager(inboundSock, slog.Default())
+	inbound.relay = fakeRelay{}
+	inbound.currentCall = NewIncomingCall(callID, caller.String(), caller.String(), "", core.CallMediaTypeAudio)
+
+	// O accept chega primeiro no leg inbound (sincronização do WhatsApp).
+	inbound.HandleCallAccept(context.Background(), acceptNode(callID, caller), caller)
+	if !inbound.CurrentCall().IsEnded() {
+		t.Fatal("accept no leg inbound deve encerrar a sessão local (answered elsewhere)")
+	}
+	if inbound.CurrentCall().StateData.EndReason != core.EndCallReasonAcceptedElsewhere {
+		t.Fatalf("leg inbound deve terminar com accepted_elsewhere, veio %q", inbound.CurrentCall().StateData.EndReason)
+	}
+
+	// O accept chega depois no leg originador e estabelece a chamada.
+	origin.HandleCallAccept(context.Background(), acceptNode(callID, callee), callee)
+	if !origin.CurrentCall().IsActive() {
+		t.Fatalf("leg originador deve ficar ativo após accept: state=%q", origin.CurrentCall().StateData.State)
+	}
+}
+
+func TestOutboundAcceptKeepsMediaStateActive(t *testing.T) {
+	primary := lidDevice("62440234549366", 0)
+	sock := &deviceSock{devices: []types.JID{primary}}
+	m := NewCallManager(sock, slog.Default())
+	m.relay = connectedRelay{}
+	call := NewOutgoingCall("CALL1", primary.String(), "caller@lid", core.CallMediaTypeAudio)
+	_ = call.ApplyTransition(Transition{Type: TransitionOfferSent})
+	call.EncryptionKey = make([]byte, 32)
+	m.currentCall = call
+	m.calleeDevices = []types.JID{primary}
+
+	m.HandleCallAccept(context.Background(), acceptNode("CALL1", primary), primary)
+
+	if !m.CurrentCall().IsActive() {
+		t.Fatalf("outbound deve ficar active após accept com relay conectado: state=%q", m.CurrentCall().StateData.State)
 	}
 }

@@ -29,14 +29,15 @@ const (
 type EndCallReason string
 
 const (
-	EndCallReasonUserEnded    EndCallReason = "user_ended"
-	EndCallReasonDeclined     EndCallReason = "declined"
-	EndCallReasonTimeout      EndCallReason = "timeout"
-	EndCallReasonBusy         EndCallReason = "busy"
-	EndCallReasonCancelled    EndCallReason = "cancelled"
-	EndCallReasonFailed       EndCallReason = "failed"
-	EndCallReasonDoNotDisturb EndCallReason = "do_not_disturb"
-	EndCallReasonUnknown      EndCallReason = "unknown"
+	EndCallReasonUserEnded         EndCallReason = "user_ended"
+	EndCallReasonDeclined          EndCallReason = "declined"
+	EndCallReasonTimeout           EndCallReason = "timeout"
+	EndCallReasonBusy              EndCallReason = "busy"
+	EndCallReasonCancelled         EndCallReason = "cancelled"
+	EndCallReasonFailed            EndCallReason = "failed"
+	EndCallReasonDoNotDisturb      EndCallReason = "do_not_disturb"
+	EndCallReasonUnknown           EndCallReason = "unknown"
+	EndCallReasonAcceptedElsewhere EndCallReason = "accepted_elsewhere"
 )
 
 const (
