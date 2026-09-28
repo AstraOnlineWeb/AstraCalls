@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"mime"
 	"mime/multipart"
@@ -681,6 +682,13 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, alt
 				continue
 			}
 			if id := asInt(m["id"]); id != 0 {
+				if phone != "" && phoneQueries[query] &&
+					digitsOnly(asStr(m["phone_number"])) != digitsOnly(phone) {
+					slog.Info("chatwoot brazil phone alias matched",
+						"account_id", c.AccountID,
+						"inbox_id", c.InboxID,
+						"contact_id", id)
+				}
 				c.syncAvatar(id, avatarURL)
 				// backfill: contato encontrado sem telefone ou com um número realmente
 				// diferente recebe o PN resolvido. Variações brasileiras com e sem o nono
