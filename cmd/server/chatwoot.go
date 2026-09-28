@@ -559,6 +559,60 @@ func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
 // avatarSynced evita re-sincronizar a foto a cada mensagem (1x por contato/processo).
 var avatarSynced sync.Map
 
+// brazilPhoneAliases devolve os formatos equivalentes de um celular brasileiro.
+//
+// Exemplos:
+//
+//	5511912345678 -> 5511912345678, 551112345678
+//	551112345678  -> 551112345678, 5511912345678
+//
+// A regra é limitada ao Brasil, aos comprimentos esperados e às faixas
+// utilizadas por celulares. Telefones fixos não recebem variação.
+func brazilPhoneAliases(phone string) []string {
+	phone = digitsOnly(phone)
+	if phone == "" {
+		return nil
+	}
+
+	aliases := []string{phone}
+
+	if !strings.HasPrefix(phone, "55") {
+		return aliases
+	}
+
+	switch {
+	case len(phone) == 12 && phone[4] >= '6' && phone[4] <= '9':
+		aliases = append(aliases, phone[:4]+"9"+phone[4:])
+
+	case len(phone) == 13 &&
+		phone[4] == '9' &&
+		phone[5] >= '6' &&
+		phone[5] <= '9':
+		aliases = append(aliases, phone[:4]+phone[5:])
+	}
+
+	return aliases
+}
+
+// equivalentPhone informa se dois telefones são iguais ou se representam
+// as variantes brasileiras com e sem o nono dígito.
+func equivalentPhone(first, second string) bool {
+	first = digitsOnly(first)
+	second = digitsOnly(second)
+
+	if first == "" || second == "" {
+		return false
+	}
+
+	for _, alias := range brazilPhoneAliases(first) {
+		if alias == second {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ensureContact acha (por telefone, ou por identifier quando phone == "" no caso
 // de grupos/canais) ou cria o contato e garante o source_id da inbox.
 func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, altIDs ...string) (contactID int, sourceID string, err error) {
@@ -566,9 +620,14 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, alt
 	// quaisquer identificadores alternativos (ex.: o JID @lid do contato), para
 	// reencontrar um contato criado ANTES de resolvermos o número real e fazer o
 	// backfill do telefone nele — em vez de criar um contato duplicado.
-	queries := make([]string, 0, 1+len(altIDs))
+	queries := make([]string, 0, 2+len(altIDs))
+	phoneQueries := map[string]bool{}
+
 	if phone != "" {
-		queries = append(queries, phone)
+		for _, alias := range brazilPhoneAliases(phone) {
+			queries = append(queries, alias)
+			phoneQueries[alias] = true
+		}
 	} else {
 		queries = append(queries, chatID)
 	}
@@ -600,16 +659,33 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, alt
 			if isGroupChatID(attr) && attr != chatID {
 				continue
 			}
+
+			// O endpoint de busca do Chatwoot utiliza correspondência parcial.
+			// Em buscas por telefone, só reutilizamos contatos cujo telefone seja
+			// exatamente igual ou uma variante brasileira válida.
+			if phone != "" && phoneQueries[query] {
+				candidatePhone := asStr(m["phone_number"])
+				if !equivalentPhone(phone, candidatePhone) {
+					continue
+				}
+			}
+			// Quando a busca auxiliar é feita por um @lid, aceita somente o contato que
+			// já possui exatamente esse mesmo identificador. O @lid não será usado como
+			// telefone: depois de localizado, o contato continua vinculado ao número real.
+			if phone != "" && !phoneQueries[query] && ident != query && attr != query {
+				continue
+			}
+
 			// grupos/canais (busca por identifier): exige match exato do JID/attr.
 			if phone == "" && ident != chatID && attr != chatID {
 				continue
 			}
 			if id := asInt(m["id"]); id != 0 {
 				c.syncAvatar(id, avatarURL)
-				// backfill: contato achado mas sem telefone ou com um número errado
-				// (ex.: criado a partir de um @lid antes de o PN resolver). Agora que
-				// temos o telefone real, corrige o phone_number. Best-effort.
-				if phone != "" && digitsOnly(asStr(m["phone_number"])) != phone {
+				// backfill: contato encontrado sem telefone ou com um número realmente
+				// diferente recebe o PN resolvido. Variações brasileiras com e sem o nono
+				// dígito são equivalentes e não devem provocar alteração do contato.
+				if phone != "" && !equivalentPhone(asStr(m["phone_number"]), phone) {
 					c.backfillPhone(id, phone)
 				}
 				if sid := sourceIDForInbox(m, c.InboxID); sid != "" {
