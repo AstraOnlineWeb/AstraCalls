@@ -192,6 +192,57 @@ func scanMessages(rows *sql.Rows) ([]storedMessage, error) {
 	return out, rows.Err()
 }
 
+// anchorMessage é a mensagem mais antiga conhecida de um chat 1:1 — usada como
+// âncora no pedido de HistorySync SOB DEMANDA (pede mensagens mais antigas que ela).
+type anchorMessage struct {
+	ChatJID string
+	MsgID   string
+	TS      int64 // epoch ms
+	FromMe  bool
+}
+
+// oldestPerChat devolve a msg mais antiga de cada chat 1:1 (@s.whatsapp.net/@lid),
+// mais recentes primeiro, até limitChats chats. Ignora grupos e canais.
+func (s *sessionStore) oldestPerChat(ctx context.Context, sessionID string, limitChats int) ([]anchorMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT chat_jid, msg_id, ts, from_me FROM (
+			SELECT DISTINCT ON (chat_jid) chat_jid, msg_id, ts, from_me
+			FROM messages
+			WHERE session_id = $1
+			  AND chat_jid NOT LIKE '%@g.us'
+			  AND chat_jid NOT LIKE '%@newsletter'
+			  AND chat_jid NOT LIKE '%@broadcast'
+			ORDER BY chat_jid, ts ASC
+		) t
+		ORDER BY ts DESC LIMIT $2`, sessionID, limitChats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []anchorMessage{}
+	for rows.Next() {
+		var a anchorMessage
+		if err := rows.Scan(&a.ChatJID, &a.MsgID, &a.TS, &a.FromMe); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// oldestInChat devolve a msg mais antiga de um chat específico (âncora on-demand).
+func (s *sessionStore) oldestInChat(ctx context.Context, sessionID, chatJID string) (anchorMessage, error) {
+	var a anchorMessage
+	err := s.db.QueryRowContext(ctx, `
+		SELECT chat_jid, msg_id, ts, from_me FROM messages
+		WHERE session_id = $1 AND chat_jid = $2
+		ORDER BY ts ASC LIMIT 1`, sessionID, chatJID).Scan(&a.ChatJID, &a.MsgID, &a.TS, &a.FromMe)
+	if err == sql.ErrNoRows {
+		return a, nil
+	}
+	return a, err
+}
+
 // listChats devolve uma visão geral das conversas (uma linha por chat_jid),
 // ordenadas pela última mensagem.
 func (s *sessionStore) listChats(ctx context.Context, sessionID string, limit, offset int) ([]chatOverview, error) {

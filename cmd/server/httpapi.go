@@ -176,6 +176,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{sid}/chatwoot", s.handleGetChatwoot)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/chatwoot", s.handleDeleteChatwoot)
 	mux.HandleFunc("POST /api/sessions/{sid}/chatwoot/webhook", s.handleChatwootWebhook)
+	mux.HandleFunc("POST /api/sessions/{sid}/chatwoot/import-history", s.handleImportHistoryNow)
 	mux.HandleFunc("GET /api/chatwoot/resolve", s.handleChatwootResolve)
 	// Abrir sob demanda uma conversa de grupo/canal no Chatwoot
 	mux.HandleFunc("POST /api/sessions/{sid}/chatwoot/groups/{gid}/open", s.handleChatwootOpenGroup)

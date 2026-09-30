@@ -852,6 +852,39 @@ paths:
       responses:
         "200": { description: Processado }
 
+  /api/sessions/{sid}/chatwoot/import-history:
+    post:
+      tags: [Chatwoot]
+      summary: Importar histórico AGORA (sob demanda, sessão já conectada)
+      description: >
+        Importa histórico sem precisar reparear. O WhatsApp só manda o histórico
+        automaticamente no pareamento; este endpoint pede o histórico SOB DEMANDA
+        (BuildHistorySyncRequest) para cada conversa 1:1 conhecida, usando a msg mais
+        antiga que já temos como âncora e pedindo N mensagens mais antigas. A resposta
+        chega em segundos/minutos e é importada automaticamente pro Chatwoot. Liga a
+        flag import_history da sessão (se estiver desligada). Requer a integração
+        Chatwoot configurada e ao menos uma mensagem conhecida do chat (âncora).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count: { type: integer, default: 100, description: "Mensagens por conversa (teto 500)" }
+                chat: { type: string, description: "Importar só este chat (JID/telefone). Vazio = todas as 1:1 conhecidas." }
+                maxChats: { type: integer, default: 50, description: "Máx. de conversas quando chat não é informado" }
+      responses:
+        "200":
+          description: Pedido(s) enviado(s)
+          content:
+            application/json:
+              schema: { type: object, properties: { requested: { type: integer }, count_per_chat: { type: integer }, note: { type: string } } }
+        "400": { description: "Chatwoot não configurado / chat inválido" }
+        "503": { description: "Sessão não conectada" }
+
   /api/sessions/{sid}/history:
     get:
       tags: [Eventos & Histórico]

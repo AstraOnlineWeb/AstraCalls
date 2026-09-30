@@ -2,13 +2,118 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"sort"
+	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
 )
+
+// handleImportHistoryNow importa histórico SOB DEMANDA, com a sessão já conectada
+// (sem precisar reparear). Para cada chat 1:1 conhecido, usa a msg mais antiga que
+// temos como ÂNCORA e pede N mensagens mais antigas ao WhatsApp; a resposta chega
+// como events.HistorySync ON_DEMAND e é importada pelo fluxo existente
+// (importHistorySync -> Chatwoot).
+//
+// POST /api/sessions/{sid}/chatwoot/import-history  {count?, chat?, maxChats?}
+func (s *server) handleImportHistoryNow(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	cfg := sess.getChatwoot()
+	if !cfg.valid() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "integração Chatwoot não configurada nesta sessão"})
+		return
+	}
+	ownID := sess.client.Store.ID
+	if ownID == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "sessão não conectada"})
+		return
+	}
+	var b struct {
+		Count    int    `json:"count"`
+		Chat     string `json:"chat"`
+		MaxChats int    `json:"maxChats"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&b)
+	count := b.Count
+	if count <= 0 {
+		count = 100
+	}
+	if count > importHistoryMaxPerChat {
+		count = importHistoryMaxPerChat
+	}
+	maxChats := b.MaxChats
+	if maxChats <= 0 {
+		maxChats = 50
+	}
+
+	// A resposta ON_DEMAND passa pelo importHistorySync, que DESCARTA se ImportHistory
+	// estiver desligado. Como o usuário pediu explicitamente pra importar, liga a flag
+	// (persistente) — assim também vale pras próximas reconexões.
+	if !cfg.ImportHistory {
+		cfg.ImportHistory = true
+		sess.setChatwoot(cfg)
+		if nb, err := json.Marshal(cfg); err == nil && sess.mgr.store != nil {
+			_ = sess.mgr.store.setChatwoot(r.Context(), sess.id, string(nb))
+		}
+	}
+
+	// âncoras: um chat específico OU a msg mais antiga de cada chat 1:1
+	var anchors []anchorMessage
+	if strings.TrimSpace(b.Chat) != "" {
+		jid, err := resolveRecipient(b.Chat)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if sess.mgr.store != nil {
+			if a, err := sess.mgr.store.oldestInChat(r.Context(), sess.id, jid.String()); err == nil && a.MsgID != "" {
+				anchors = []anchorMessage{a}
+			}
+		}
+	} else if sess.mgr.store != nil {
+		anchors, _ = sess.mgr.store.oldestPerChat(r.Context(), sess.id, maxChats)
+	}
+	if len(anchors) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"requested": 0,
+			"note":      "nenhuma mensagem conhecida p/ ancorar o pedido. Troque ao menos uma mensagem com o contato (ou reconecte a sessão) e tente de novo — a importação parte da msg mais antiga que já temos.",
+		})
+		return
+	}
+
+	requested := 0
+	for _, a := range anchors {
+		chat, err := types.ParseJID(a.ChatJID)
+		if err != nil {
+			continue
+		}
+		info := &types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: chat, IsFromMe: a.FromMe},
+			ID:            a.MsgID,
+			Timestamp:     time.UnixMilli(a.TS),
+		}
+		reqMsg := sess.client.BuildHistorySyncRequest(info, count)
+		if _, err := sess.client.SendMessage(r.Context(), *ownID, reqMsg, whatsmeow.SendRequestExtra{Peer: true}); err != nil {
+			sess.log.Warn("import histórico on-demand: falha ao pedir", "chat", a.ChatJID, "err", err)
+			continue
+		}
+		requested++
+		time.Sleep(200 * time.Millisecond) // respeita rate-limit do WhatsApp
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requested":      requested,
+		"count_per_chat": count,
+		"note":           "pedido enviado ao WhatsApp; o histórico chega em segundos/minutos e é importado automaticamente pro Chatwoot.",
+	})
+}
 
 // importHistorySync processa um chunk do HistorySync (conversas antigas que o
 // WhatsApp envia ao parear) e importa as conversas 1:1 para o Chatwoot, na ordem
