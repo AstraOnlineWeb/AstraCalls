@@ -591,6 +591,32 @@ paths:
         "200": { $ref: "#/components/responses/SendOK" }
         "503": { description: Conta não pareada }
 
+  /api/sessions/{sid}/messages/disappearing:
+    post:
+      tags: [Mensagens]
+      summary: Texto que some DEPOIS de lido (afterReadDuration)
+      description: >
+        Envia um texto que desaparece X segundos DEPOIS que o destinatário LÊ —
+        diferente do temporário normal do WhatsApp, que conta a partir do envio.
+        Bom para senha/código/link sensível. Só texto por enquanto.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, text]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                text: { type: string, example: "sua senha: 1234" }
+                afterReadSeconds: { type: integer, default: 5, description: "Segundos até sumir DEPOIS de lida (padrão 5)" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+        "503": { description: Conta não pareada }
+
   /api/sessions/{sid}/messages/image:
     post:
       tags: [Mensagens]
