@@ -415,9 +415,13 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		// telefone real (PN) e, se der, pro nome do contato — senão a UI/widget
 		// mostra o LID cru (issue #9).
 		phone, name := s.resolvePeer(c.PeerJid)
-		// peer EXPOSTO = PN resolvido ou vazio, NUNCA o LID cru (senão o
+		// se o LID não resolveu pelo mapa local, usa o caller_pn que o offer trouxe.
+		if phone == "" && c.CallerPn != "" {
+			phone = digitsOnly(c.CallerPn)
+		}
+		// peer EXPOSTO = PN (resolvido ou do offer) ou vazio, NUNCA o LID cru (senão o
 		// widget/integração faz `phone || peer` e cria contato lixo — bug 01/10).
-		peerOut := s.callPeerOut(c.PeerJid)
+		peerOut := phone
 		s.mgr.broker.upsertCall(CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: peerOut,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
@@ -464,8 +468,12 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			dir = "inbound"
 		}
 		existing, _ := s.mgr.broker.getCall(c.CallID)
+		peerOut := s.callPeerOut(c.PeerJid)
+		if peerOut == "" && c.CallerPn != "" {
+			peerOut = digitsOnly(c.CallerPn)
+		}
 		rec := CallRecord{
-			SessionID: s.id, CallID: c.CallID, Direction: dir, Peer: s.callPeerOut(c.PeerJid),
+			SessionID: s.id, CallID: c.CallID, Direction: dir, Peer: peerOut,
 			StartedAt: time.Now().UnixMilli(), Status: mapStatus(c.StateData.State),
 			Held: c.StateData.State == core.CallStateOnHold,
 		}
@@ -579,7 +587,16 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 		return
 	}
 	cm := s.createCall(callID, s.getRecording())
-	cm.HandleCallOffer(ctx, node, evt.From)
+	// telefone real do chamador: o offer traz caller_pn em CallCreatorAlt quando o
+	// creator é LID; ou o próprio CallCreator já é PN. Evita "desconhecido" sem
+	// depender do mapa local de LID (bug 01/10).
+	callerPn := ""
+	if evt.CallCreator.Server == types.DefaultUserServer {
+		callerPn = evt.CallCreator.User
+	} else if evt.CallCreatorAlt.Server == types.DefaultUserServer {
+		callerPn = evt.CallCreatorAlt.User
+	}
+	cm.HandleCallOffer(ctx, node, evt.From, callerPn)
 	s.armRingTimeout(callID)
 }
 

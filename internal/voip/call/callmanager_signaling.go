@@ -12,7 +12,10 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, peerJid types.JID) {
+// callerPn é o telefone real (PN) do chamador quando o offer o traz (atributo
+// caller_pn, exposto pelo whatsmeow em CallOffer.CallCreatorAlt). Vem vazio quando
+// só há LID. Guardamos em CallInfo.CallerPn p/ não depender do mapa local de LID.
+func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, peerJid types.JID, callerPn string) {
 	info := signaling.ExtractNodeInfo(node)
 	if info == nil {
 		return
@@ -39,7 +42,7 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	}
 
 	m.mu.Lock()
-	call := NewIncomingCall(callID, peerJid.String(), creator, "", mediaType)
+	call := NewIncomingCall(callID, peerJid.String(), creator, callerPn, mediaType)
 	if callKey != nil {
 		call.EncryptionKey = callKey
 	}
