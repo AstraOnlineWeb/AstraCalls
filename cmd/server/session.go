@@ -415,8 +415,11 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		// telefone real (PN) e, se der, pro nome do contato — senão a UI/widget
 		// mostra o LID cru (issue #9).
 		phone, name := s.resolvePeer(c.PeerJid)
+		// peer EXPOSTO = PN resolvido ou vazio, NUNCA o LID cru (senão o
+		// widget/integração faz `phone || peer` e cria contato lixo — bug 01/10).
+		peerOut := s.callPeerOut(c.PeerJid)
 		s.mgr.broker.upsertCall(CallRecord{
-			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
+			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: peerOut,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
 		// diagnóstico: mostra o account_id da sessão e quantos assinantes vão
@@ -426,7 +429,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		acct, total, matched, otherAcct := s.mgr.broker.subscriberScope(s.id)
 		s.log.Info("incoming call: broadcasting", "callID", c.CallID, "peer", c.PeerJid,
 			"acct", acct, "subs_total", total, "subs_matched", matched, "subs_widget_other_acct", otherAcct)
-		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, name, c.MediaType == core.CallMediaTypeVideo)
+		s.mgr.broker.emitIncoming(s.id, c.CallID, peerOut, phone, name, c.MediaType == core.CallMediaTypeVideo)
 		// se um tronco SIP está registrado, toca essa chamada no ramal também.
 		if s.mgr.sipInbound != nil {
 			s.mgr.sipInbound(s, c.CallID, sipUserPart(c.PeerJid))
@@ -462,7 +465,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		}
 		existing, _ := s.mgr.broker.getCall(c.CallID)
 		rec := CallRecord{
-			SessionID: s.id, CallID: c.CallID, Direction: dir, Peer: c.PeerJid,
+			SessionID: s.id, CallID: c.CallID, Direction: dir, Peer: s.callPeerOut(c.PeerJid),
 			StartedAt: time.Now().UnixMilli(), Status: mapStatus(c.StateData.State),
 			Held: c.StateData.State == core.CallStateOnHold,
 		}

@@ -175,6 +175,21 @@ func (s *Session) directIdentity(chat, alt types.JID) (phone, chatID, altID stri
 // resolvePeer converte o JID cru do peer de uma chamada (que costuma vir como
 // LID) no telefone real (PN) e, quando o contato é conhecido, no nome — para a
 // UI/widget mostrarem algo legível em vez de "123@lid" (issue #9).
+// callPeerOut devolve o identificador do peer que PODE sair em eventos/records de
+// chamada (SSE incoming/call): o telefone real (PN) quando resolvível, ou VAZIO.
+// NUNCA o LID cru — o widget/integração faz `phone || peer` e usaria o LID como
+// telefone, criando contato lixo (bug 01/10). Com peer vazio vira "desconhecido".
+func (s *Session) callPeerOut(peerJidStr string) string {
+	jid, err := types.ParseJID(peerJidStr)
+	if err != nil {
+		return ""
+	}
+	if p, ok := s.resolvedPhone(jid); ok {
+		return p
+	}
+	return ""
+}
+
 func (s *Session) resolvePeer(jidStr string) (phone, name string) {
 	jid, err := types.ParseJID(jidStr)
 	if err != nil {
