@@ -178,9 +178,15 @@ func (s *Session) directIdentity(chat, alt types.JID) (phone, chatID, altID stri
 func (s *Session) resolvePeer(jidStr string) (phone, name string) {
 	jid, err := types.ParseJID(jidStr)
 	if err != nil {
-		return jidStr, ""
+		return "", ""
 	}
-	phone = s.realPhone(jid)
+	// SÓ telefone real (PN). Se for um LID não resolvível, phone fica VAZIO — NUNCA
+	// os dígitos do LID. Senão o integrador (AstraChat) cria contato com número lixo
+	// a partir do evento de ligação (bug reportado 01/10: contatos +63.../+226...).
+	// O JID cru segue no campo `peer` do evento p/ a UI exibir algo legível.
+	if p, ok := s.resolvedPhone(jid); ok {
+		phone = p
+	}
 	// tenta o nome tanto pelo JID original quanto pelo JID de telefone (os
 	// contatos costumam estar indexados pelo PN, não pelo LID).
 	lookup := []types.JID{jid}
