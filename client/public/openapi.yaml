@@ -378,7 +378,10 @@ paths:
               properties:
                 audio_url: { type: string, description: "URL da mídia (áudio, ou o VÍDEO quando video:true) — mais leve p/ lotes" }
                 audio_base64: { type: string, description: "ou a mídia em base64" }
-                video: { type: boolean, default: false, description: "true = ligação de VÍDEO tocando o arquivo (frames H264 160x120/15fps + áudio do arquivo)" }
+                video: { type: boolean, default: false, description: "true = ligação de VÍDEO tocando o arquivo (frames H264 preservando a proporção + áudio do arquivo)" }
+                video_max: { type: integer, default: 180, description: "QUALIDADE (vídeo): lado maior em px, preservando proporção (120-480). Maior = mais nítido, porém mais pesado (pode cair frame na chamada)." }
+                video_bitrate: { type: integer, default: 80, description: "QUALIDADE (vídeo): bitrate alvo em kbps (40-1200). Padrão leve 80." }
+                video_fps: { type: integer, default: 15, description: "QUALIDADE (vídeo): quadros por segundo (8-30)." }
                 numbers: { type: array, items: { type: string }, example: ["5561999998888", "5561999997777"] }
                 concurrency: { type: integer, default: 1, description: "ligações simultâneas (limitado ao máx. da conta)" }
                 gap_ms: { type: integer, default: 1500, description: "intervalo (+jitter) entre disparos" }

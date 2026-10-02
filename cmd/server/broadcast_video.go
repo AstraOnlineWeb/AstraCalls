@@ -16,27 +16,69 @@ import (
 // (quando houver) é tocado em paralelo pelo pumpAudio.
 
 const (
-	bcVideoW   = 160
-	bcVideoH   = 120
-	bcVideoFPS = 15
+	// PADRÕES (leves). O lado maior cabe em bcVideoMax preservando a proporção
+	// (vertical continua vertical) — sem pad/tarjas. Cliente pode aumentar via
+	// video_max/video_bitrate/video_fps no endpoint.
+	bcVideoMax      = 180
+	bcVideoFPS      = 15
+	bcVideoBitrateK = 80
 )
 
+// videoOpts controla a qualidade do vídeo do broadcast. Zero = usa o padrão (leve).
+type videoOpts struct {
+	MaxDim     int // lado maior em px (preserva proporção). Padrão bcVideoMax.
+	BitrateK   int // bitrate alvo em kbps. Padrão bcVideoBitrateK.
+	FPS        int // quadros/s. Padrão bcVideoFPS.
+}
+
+// normalize aplica padrões e limites seguros (evita estourar o canal da chamada).
+func (o videoOpts) normalize() videoOpts {
+	if o.MaxDim <= 0 {
+		o.MaxDim = bcVideoMax
+	}
+	o.MaxDim = clampInt(o.MaxDim, 120, 480)
+	if o.BitrateK <= 0 {
+		o.BitrateK = bcVideoBitrateK
+	}
+	o.BitrateK = clampInt(o.BitrateK, 40, 1200)
+	if o.FPS <= 0 {
+		o.FPS = bcVideoFPS
+	}
+	o.FPS = clampInt(o.FPS, 8, 30)
+	return o
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 // decodeVideoFrames usa ffmpeg para transformar qualquer vídeo em frames H264
-// Annex-B no perfil da chamada (160x120, 15fps, baseline). Cada elemento do slice
-// é UM access unit (1 frame), já com SPS/PPS nos keyframes (libx264 emite SPS/PPS
-// antes de cada IDR no Annex-B cru) e delimitado por AUD. O 1º frame é IDR.
-func decodeVideoFrames(data []byte) ([][]byte, error) {
-	vf := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=%d",
-		bcVideoW, bcVideoH, bcVideoW, bcVideoH, bcVideoFPS)
+// Annex-B no perfil da chamada (baseline), preservando a proporção. Cada elemento
+// do slice é UM access unit (1 frame), com SPS/PPS nos keyframes e delimitado por
+// AUD. O 1º frame é IDR. opts controla resolução/bitrate/fps (0 = padrão leve).
+func decodeVideoFrames(path string, opts videoOpts) ([][]byte, error) {
+	o := opts.normalize()
+	// preserva a proporção (sem pad): cabe na caixa o.MaxDim x o.MaxDim, lados
+	// pares (H264 exige). Vertical sai vertical, horizontal sai horizontal.
+	vf := fmt.Sprintf("scale=w=%d:h=%d:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=%d",
+		o.MaxDim, o.MaxDim, o.FPS)
+	maxrate := o.BitrateK * 4 / 3
 	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error",
-		"-i", "pipe:0", "-an",
+		"-i", path, "-an",
 		"-vf", vf,
 		"-c:v", "libx264", "-profile:v", "baseline", "-pix_fmt", "yuv420p",
-		"-g", fmt.Sprintf("%d", bcVideoFPS), "-keyint_min", fmt.Sprintf("%d", bcVideoFPS),
-		"-b:v", "60k", "-maxrate", "80k", "-bufsize", "120k",
+		"-g", fmt.Sprintf("%d", o.FPS), "-keyint_min", fmt.Sprintf("%d", o.FPS),
+		"-b:v", fmt.Sprintf("%dk", o.BitrateK),
+		"-maxrate", fmt.Sprintf("%dk", maxrate),
+		"-bufsize", fmt.Sprintf("%dk", o.BitrateK*2),
 		"-bsf:v", "h264_metadata=aud=insert",
 		"-f", "h264", "pipe:1")
-	cmd.Stdin = bytes.NewReader(data)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

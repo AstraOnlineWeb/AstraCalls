@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -49,6 +50,17 @@ type broadcastRequest struct {
 	// é decodificado em frames H264 e injetado na chamada de vídeo; o áudio do
 	// arquivo (se houver) toca junto. Sem câmera ao vivo.
 	Video bool `json:"video"`
+	// Qualidade do vídeo (opcional; 0 = padrão leve). Aumentar melhora a nitidez mas
+	// pesa no canal da chamada (pode cair frame). video_max=lado maior em px (120-480,
+	// padrão 180), video_bitrate=kbps (40-1200, padrão 80), video_fps (8-30, padrão 15).
+	VideoMax     int `json:"video_max"`
+	VideoBitrate int `json:"video_bitrate"`
+	VideoFps     int `json:"video_fps"`
+}
+
+// videoOpts extrai as opções de qualidade de vídeo do request.
+func (b broadcastRequest) videoOpts() videoOpts {
+	return videoOpts{MaxDim: b.VideoMax, BitrateK: b.VideoBitrate, FPS: b.VideoFps}
 }
 
 type broadcastResult struct {
@@ -111,12 +123,30 @@ func (s *broadcastStore) get(id string) *broadcastCampaign {
 	return s.m[id]
 }
 
+// mediaToTemp grava os bytes da mídia num arquivo temporário e devolve o caminho +
+// uma função de limpeza. Necessário porque formatos como MP4 NÃO são decodificáveis
+// por pipe/stdin (o ffmpeg precisa de arquivo seekável para achar o moov atom).
+func mediaToTemp(data []byte) (string, func(), error) {
+	f, err := os.CreateTemp("", "wacalls-bc-*.media")
+	if err != nil {
+		return "", func() {}, err
+	}
+	path := f.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	f.Close()
+	return path, cleanup, nil
+}
+
 // decodePCM16 usa ffmpeg para transformar qualquer áudio em PCM float32 mono
-// @ 16 kHz (a taxa do pipeline de chamada). Feito uma vez por campanha.
-func decodePCM16(data []byte) ([]float32, error) {
+// @ 16 kHz (a taxa do pipeline de chamada). Lê de um arquivo (seekável).
+func decodePCM16(path string) ([]float32, error) {
 	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error",
-		"-i", "pipe:0", "-ac", "1", "-ar", "16000", "-f", "f32le", "pipe:1")
-	cmd.Stdin = bytes.NewReader(data)
+		"-i", path, "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "pipe:1")
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -155,8 +185,15 @@ func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baixar mídia: " + err.Error()})
 		return
 	}
+	// grava num arquivo temporário (MP4 etc. não decodificam por pipe).
+	mpath, cleanup, err := mediaToTemp(media)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "arquivo temp: " + err.Error()})
+		return
+	}
+	defer cleanup()
 	// áudio: no disparo de vídeo é opcional (o arquivo pode não ter faixa de áudio).
-	pcm, err := decodePCM16(media)
+	pcm, err := decodePCM16(mpath)
 	if err != nil && !b.Video {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -168,7 +205,7 @@ func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
 	// vídeo: decodifica os frames H264 do mesmo arquivo.
 	var frames [][]byte
 	if b.Video {
-		frames, err = decodeVideoFrames(media)
+		frames, err = decodeVideoFrames(mpath, b.videoOpts())
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -311,16 +348,17 @@ func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []flo
 	emit("answered", nil)
 
 	var dur int
+	vfps := req.videoOpts().normalize().FPS // fps real usado no encode (pra bater o pump)
 	switch {
 	case req.Video && len(pcm) >= bcFrameSamples:
 		// vídeo + áudio: o áudio comanda a duração; o vídeo roda em loop junto.
 		stop := make(chan struct{})
-		go s.pumpVideo(callID, frames, bcVideoFPS, stop, 0)
+		go s.pumpVideo(callID, frames, vfps, stop, 0)
 		dur = s.pumpAudio(callID, pcm, req.HangupAfterMs)
 		close(stop)
 	case req.Video:
 		// vídeo sem áudio: o vídeo comanda — toca 1x (ou até hangupAfterMs).
-		dur = s.pumpVideo(callID, frames, bcVideoFPS, nil, req.HangupAfterMs)
+		dur = s.pumpVideo(callID, frames, vfps, nil, req.HangupAfterMs)
 	default:
 		dur = s.pumpAudio(callID, pcm, req.HangupAfterMs)
 	}
