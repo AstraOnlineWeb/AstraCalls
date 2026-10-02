@@ -25,7 +25,15 @@ func (m *CallManager) initCodec() {
 	if m.codec != nil {
 		return
 	}
-	codec, err := media.NewMLowCodec(media.DefaultCodecOptions)
+	opts := media.DefaultCodecOptions
+	// Áudio e vídeo DIVIDEM o mesmo canal do relay. Em chamada de VÍDEO, áudio alto
+	// (16k) rouba a banda do vídeo e trava. Então em vídeo usa áudio enxuto (sem FEC)
+	// pra sobrar banda; em chamada só de áudio mantém o 16k+FEC (voz nítida).
+	if m.currentCall != nil && m.currentCall.MediaType == core.CallMediaTypeVideo {
+		opts.Bitrate = media.VideoCallAudioBitrate
+		opts.FEC = false
+	}
+	codec, err := media.NewMLowCodec(opts)
 	if err != nil {
 		m.log.Warn("MLow codec unavailable — call will run signaling-only (no audio)", "err", err)
 		return

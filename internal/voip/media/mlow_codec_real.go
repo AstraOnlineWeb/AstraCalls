@@ -38,13 +38,14 @@ const (
 	mlowChannels        = 1
 	opusApplicationVOIP = 2048
 
-	ctlSetBitrate    = 4002
-	ctlSetComplexity = 4010
-	ctlSetSignal     = 4024
-	ctlSetInbandFEC  = 4012
-	ctlSetDTX        = 4016
-	ctlSetUsingSmpl  = 4050
-	ctlSignalVoice   = 3001
+	ctlSetBitrate        = 4002
+	ctlSetComplexity     = 4010
+	ctlSetSignal         = 4024
+	ctlSetInbandFEC      = 4012
+	ctlSetPacketLossPerc = 4014
+	ctlSetDTX            = 4016
+	ctlSetUsingSmpl      = 4050
+	ctlSignalVoice       = 3001
 
 	mlowMaxOut = 5760
 )
@@ -88,6 +89,10 @@ func NewMLowCodec(opts CodecOptions) (Codec, error) {
 		fec = 1
 	}
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetInbandFEC), C.int(fec))
+	if opts.FEC {
+		// FEC só é útil se o encoder sabe a perda esperada (redundância dimensionada).
+		C.mlow_enc_ctl(c.encoder, C.int(ctlSetPacketLossPerc), C.int(10))
+	}
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetDTX), C.int(1))
 
 	return c, nil

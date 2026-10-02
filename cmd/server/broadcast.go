@@ -203,7 +203,7 @@ func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// vídeo: decodifica os frames H264 do mesmo arquivo.
-	var frames [][]byte
+	var frames []vframe
 	if b.Video {
 		frames, err = decodeVideoFrames(mpath, b.videoOpts())
 		if err != nil {
@@ -254,7 +254,7 @@ func (s *server) handleBroadcastStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // runCampaign disca todos os números respeitando a concorrência e o gap.
-func (s *Session) runCampaign(camp *broadcastCampaign, pcm []float32, frames [][]byte, req broadcastRequest) {
+func (s *Session) runCampaign(camp *broadcastCampaign, pcm []float32, frames []vframe, req broadcastRequest) {
 	conc := req.Concurrency
 	if conc < 1 {
 		conc = 1
@@ -290,7 +290,7 @@ func (s *Session) runCampaign(camp *broadcastCampaign, pcm []float32, frames [][
 	s.dispatchWebhook("broadcast", map[string]any{"campaignId": camp.ID, "event": "campaign_done", "total": camp.Total})
 }
 
-func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []float32, frames [][]byte, req broadcastRequest) {
+func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []float32, frames []vframe, req broadcastRequest) {
 	emit := func(status string, extra map[string]any) {
 		m := map[string]any{"campaignId": camp.ID, "number": number, "status": status}
 		for k, v := range extra {
