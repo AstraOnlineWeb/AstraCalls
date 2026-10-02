@@ -2,6 +2,61 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.1.0 — 2026-10-02
+
+Rodada grande de funcionalidades: **carrossel**, **formulário (webview)**, **mensagem
+que some após leitura**, **disparo em massa de ligações de VÍDEO**, **importar
+histórico sob demanda**, **áudio de chamada muito melhor (MLow 16k)** e a **versão do
+build no painel** — além de correções importantes em ligações e botões.
+
+### 🆕 Mensagens interativas & formulários
+
+- **Carrossel de cards:** `POST /messages/carousel` — vários cards com imagem, título,
+  texto e botões.
+- **Formulário dentro do WhatsApp (webview):** `POST /messages/form` — botão que abre
+  um formulário em tela cheia dentro do app (campos texto/email/tel/select etc.). As
+  respostas caem no Chatwoot como mensagem do cliente + webhook `form_response`. Rotas
+  públicas `GET/POST /forms/{token}` (token HMAC como capability, sem API key).
+- **Resposta de botão/lista/carrossel:** o **toque** do interlocutor agora vira a
+  **escolha dele** (texto) no webhook e no Chatwoot — antes caía como "unknown".
+
+### 🔇 Mensagem que some depois de lida
+
+- `POST /messages/disappearing` — texto que desaparece X segundos **após o destinatário
+  ler** (afterReadDuration), diferente do temporário normal. Bom para senha/código.
+
+### 📞 Ligações em massa de VÍDEO + áudio melhor
+
+- **Disparo de ligação de VÍDEO:** `POST /broadcast` com `video:true` — liga em vídeo e
+  **toca um arquivo gravado** na chamada (decodifica em H.264 e injeta). Preserva a
+  **proporção** (vertical fica vertical), **qualidade ajustável** (`video_max`,
+  `video_bitrate`, `video_fps`) e **pacing** para não congelar.
+- **Áudio da chamada muito melhor (MLow):** de 6kbps → **16kbps + complexity 9 + FEC**
+  (voz bem mais limpa) em chamadas de áudio. Em **videochamada**, o áudio fica enxuto
+  automaticamente para não roubar banda do vídeo (áudio e vídeo dividem o canal).
+  _Obs.: a qualidade de vídeo na chamada é limitada pela banda do relay (~50-60kbps) —
+  para vídeo nítido, use vídeo-mensagem._
+
+### 📥 Chatwoot — importar histórico sob demanda
+
+- `POST /sessions/{sid}/chatwoot/import-history` — importa o histórico do WhatsApp para o
+  Chatwoot **com a sessão já conectada** (antes só vinha no pareamento do dispositivo).
+
+### 🏷️ Painel
+
+- Mostra o **canal do build** (develop / vX.Y.Z) ao lado da logo; o commit aparece no
+  tooltip. Exposto também em `GET /api/config` (`version`/`commit`).
+
+### 🐞 Correções
+
+- **Ligação recebida não cria mais "contato lixo":** o telefone do chamador vai com o
+  **número real (E.164)** ou **vazio** — nunca o LID cru. Usa o `caller_pn` do offer
+  para identificar o chamador (menos "desconhecido").
+- **Ligação de saída que "não tocava":** o destino era resolvido por um LID stale/errado;
+  agora resolve pelo **IsOnWhatsApp** (LID correto).
+- **Botão em grupo não "marca geral":** em grupo, o botão de resposta vira um link
+  `wa.me` que abre o privado, em vez de postar para o grupo inteiro.
+
 ## v1.0.2 — 2026-09-25
 
 Rodada de API de mensagens: **botões/listas interativas** que entregam de verdade,
