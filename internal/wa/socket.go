@@ -99,10 +99,37 @@ func (s *Socket) ResolveLIDForPN(ctx context.Context, pn types.JID) types.JID {
 	if pn.Server == types.HiddenUserServer {
 		return pn
 	}
+
+	// 1) canonicaliza o PN (corrige 9º dígito BR/formato). O store e o usync são
+	//    chaveados pelo PN canônico, não pelo número como foi digitado.
+	canonical := pn
+	if s.cli != nil {
+		if resp, err := s.cli.IsOnWhatsApp(ctx, []string{"+" + pn.User}); err == nil && len(resp) > 0 && resp[0].IsIn {
+			if jid := resp[0].JID; !jid.IsEmpty() {
+				canonical = jid
+			}
+		}
+	}
+	if canonical.Server == types.HiddenUserServer {
+		return canonical
+	}
+
+	// 2) LID já conhecido no store (chave = PN canônico)
 	if s.cli.Store != nil && s.cli.Store.LIDs != nil {
-		if lid, err := s.cli.Store.LIDs.GetLIDForPN(ctx, pn); err == nil && !lid.IsEmpty() {
+		if lid, err := s.cli.Store.LIDs.GetLIDForPN(ctx, canonical); err == nil && !lid.IsEmpty() {
 			return lid
 		}
 	}
-	return pn
+
+	// 3) usync: pede o LID ao servidor. Chamar ligações endereçadas por LID só
+	//    tocando quando o offer vai para o LID (meowcaller / issue 439).
+	if s.cli != nil {
+		if resp, err := s.cli.GetUserInfo(ctx, []types.JID{canonical}); err == nil {
+			if info, ok := resp[canonical]; ok && !info.LID.IsEmpty() {
+				return info.LID
+			}
+		}
+	}
+
+	return canonical
 }
