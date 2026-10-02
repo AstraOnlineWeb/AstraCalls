@@ -354,11 +354,14 @@ paths:
   /api/sessions/{sid}/broadcast:
     post:
       tags: [Sessões]
-      summary: Disparo em massa de ligações com áudio pré-gravado
+      summary: Disparo em massa de ligações com áudio OU vídeo pré-gravado
       description: |
-        Liga para cada número e, ao atender, toca o áudio (mixado no codec do
-        WhatsApp) e desliga ao fim. Concorrência limitada ao máximo de chamadas
-        simultâneas da conta. Emite eventos `broadcast` no webhook da sessão
+        Liga para cada número e, ao atender, toca a mídia pré-gravada e desliga ao
+        fim. Áudio (padrão) toca o som no codec do WhatsApp. Com `video:true`, faz
+        ligação de VÍDEO: o mesmo arquivo é decodificado em frames H264 (160x120,
+        15fps) e injetado na chamada; se o arquivo tiver faixa de áudio, ela toca
+        junto. Concorrência limitada ao máximo de chamadas simultâneas da conta.
+        Emite eventos `broadcast` no webhook da sessão
         (ringing/answered/completed/no-answer/failed) para rastrear o lote.
 
         ⚠️ Use apenas com contatos que consentiram (opt-in). Ligação em massa não
@@ -373,8 +376,9 @@ paths:
               type: object
               required: [numbers]
               properties:
-                audio_url: { type: string, description: "URL do áudio (mais leve p/ lotes)" }
-                audio_base64: { type: string, description: "ou o áudio em base64" }
+                audio_url: { type: string, description: "URL da mídia (áudio, ou o VÍDEO quando video:true) — mais leve p/ lotes" }
+                audio_base64: { type: string, description: "ou a mídia em base64" }
+                video: { type: boolean, default: false, description: "true = ligação de VÍDEO tocando o arquivo (frames H264 160x120/15fps + áudio do arquivo)" }
                 numbers: { type: array, items: { type: string }, example: ["5561999998888", "5561999997777"] }
                 concurrency: { type: integer, default: 1, description: "ligações simultâneas (limitado ao máx. da conta)" }
                 gap_ms: { type: integer, default: 1500, description: "intervalo (+jitter) entre disparos" }

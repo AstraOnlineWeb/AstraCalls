@@ -45,6 +45,10 @@ type broadcastRequest struct {
 	GapMs         int      `json:"gap_ms"`
 	MaxRingMs     int      `json:"max_ring_ms"`
 	HangupAfterMs int      `json:"hangup_after_ms"`
+	// Video=true faz disparo de ligação de VÍDEO: o mesmo arquivo (audio_url/base64)
+	// é decodificado em frames H264 e injetado na chamada de vídeo; o áudio do
+	// arquivo (se houver) toca junto. Sem câmera ao vivo.
+	Video bool `json:"video"`
 }
 
 type broadcastResult struct {
@@ -143,22 +147,32 @@ func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.AudioURL == "" && b.AudioBase64 == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "audio_url ou audio_base64 obrigatório"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "audio_url ou audio_base64 obrigatório (no vídeo, é o próprio arquivo de vídeo)"})
 		return
 	}
 	media, err := fetchMedia(b.AudioBase64, b.AudioURL)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baixar áudio: " + err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baixar mídia: " + err.Error()})
 		return
 	}
+	// áudio: no disparo de vídeo é opcional (o arquivo pode não ter faixa de áudio).
 	pcm, err := decodePCM16(media)
-	if err != nil {
+	if err != nil && !b.Video {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if len(pcm) < bcFrameSamples {
+	if !b.Video && len(pcm) < bcFrameSamples {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "áudio vazio/curto demais"})
 		return
+	}
+	// vídeo: decodifica os frames H264 do mesmo arquivo.
+	var frames [][]byte
+	if b.Video {
+		frames, err = decodeVideoFrames(media)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 
 	camp := &broadcastCampaign{
@@ -172,13 +186,16 @@ func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
 	}
 	broadcasts.add(camp)
 
-	go sess.runCampaign(camp, pcm, b)
+	go sess.runCampaign(camp, pcm, frames, b)
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"campaignId": camp.ID,
-		"total":      camp.Total,
-		"seconds":    len(pcm) / bcSampleRate,
-	})
+	resp := map[string]any{"campaignId": camp.ID, "total": camp.Total, "video": b.Video}
+	if len(pcm) > 0 {
+		resp["seconds"] = len(pcm) / bcSampleRate
+	}
+	if b.Video {
+		resp["videoFrames"] = len(frames)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // GET /api/sessions/{sid}/broadcast/{cid}
@@ -200,7 +217,7 @@ func (s *server) handleBroadcastStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // runCampaign disca todos os números respeitando a concorrência e o gap.
-func (s *Session) runCampaign(camp *broadcastCampaign, pcm []float32, req broadcastRequest) {
+func (s *Session) runCampaign(camp *broadcastCampaign, pcm []float32, frames [][]byte, req broadcastRequest) {
 	conc := req.Concurrency
 	if conc < 1 {
 		conc = 1
@@ -224,7 +241,7 @@ func (s *Session) runCampaign(camp *broadcastCampaign, pcm []float32, req broadc
 		go func(num string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.broadcastOne(camp, num, pcm, req)
+			s.broadcastOne(camp, num, pcm, frames, req)
 		}(number)
 		// gap + jitter entre disparos (evita padrão robótico)
 		time.Sleep(time.Duration(gap+rand.Intn(gap+1)) * time.Millisecond)
@@ -236,7 +253,7 @@ func (s *Session) runCampaign(camp *broadcastCampaign, pcm []float32, req broadc
 	s.dispatchWebhook("broadcast", map[string]any{"campaignId": camp.ID, "event": "campaign_done", "total": camp.Total})
 }
 
-func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []float32, req broadcastRequest) {
+func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []float32, frames [][]byte, req broadcastRequest) {
 	emit := func(status string, extra map[string]any) {
 		m := map[string]any{"campaignId": camp.ID, "number": number, "status": status}
 		for k, v := range extra {
@@ -254,7 +271,7 @@ func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []flo
 		fail("número inválido")
 		return
 	}
-	callID, err := s.startOutgoing(s.mgr.appCtx, peer, false, false)
+	callID, err := s.startOutgoing(s.mgr.appCtx, peer, req.Video, false)
 	if err != nil {
 		fail(err.Error())
 		return
@@ -293,7 +310,20 @@ func (s *Session) broadcastOne(camp *broadcastCampaign, number string, pcm []flo
 	camp.set(number, func(r *broadcastResult) { r.Status = "answered" })
 	emit("answered", nil)
 
-	dur := s.pumpAudio(callID, pcm, req.HangupAfterMs)
+	var dur int
+	switch {
+	case req.Video && len(pcm) >= bcFrameSamples:
+		// vídeo + áudio: o áudio comanda a duração; o vídeo roda em loop junto.
+		stop := make(chan struct{})
+		go s.pumpVideo(callID, frames, bcVideoFPS, stop, 0)
+		dur = s.pumpAudio(callID, pcm, req.HangupAfterMs)
+		close(stop)
+	case req.Video:
+		// vídeo sem áudio: o vídeo comanda — toca 1x (ou até hangupAfterMs).
+		dur = s.pumpVideo(callID, frames, bcVideoFPS, nil, req.HangupAfterMs)
+	default:
+		dur = s.pumpAudio(callID, pcm, req.HangupAfterMs)
+	}
 	s.terminateCall(callID, core.EndCallReasonUserEnded)
 	camp.set(number, func(r *broadcastResult) { r.Status = "completed"; r.DurationMs = dur })
 	emit("completed", map[string]any{"durationMs": dur})
