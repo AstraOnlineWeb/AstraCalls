@@ -107,6 +107,11 @@ func (s *Socket) ResolveLIDForPN(ctx context.Context, pn types.JID) types.JID {
 		if resp, err := s.cli.IsOnWhatsApp(ctx, []string{pn.User}); err == nil {
 			for _, r := range resp {
 				if r.IsIn && r.JID.Server == types.HiddenUserServer && !r.JID.IsEmpty() {
+					// Grava o par PN<->LID no store. Além de ajudar a resolução futura,
+					// é o que faz o espelhamento do TC token (privacy token) funcionar no
+					// SQL (whatsmeow_lid_map) — ter o token sob um dos JIDs e o par
+					// mapeado evita o 463/shadow-ban no envio de mensagem.
+					s.cli.StoreLIDPNMapping(ctx, r.JID, pn)
 					return r.JID
 				}
 			}

@@ -474,6 +474,51 @@ paths:
       responses:
         "204": { description: Desconectada }
 
+  /api/sessions/{sid}/restriction-status:
+    get:
+      tags: [Sessão]
+      summary: Estado de restrição/shadow-ban (time-lock 463) do número
+      description: >
+        Informa se o WhatsApp aplicou uma restrição de alcance (time-lock / 463)
+        neste número — quando ativa, mensagens e chamadas para quem ainda não te
+        respondeu podem "sumir" em silêncio. O WhatsApp só EMPURRA esse estado (não
+        há consulta ativa no protocolo), então o retorno é o do último evento
+        recebido (em cache). Com `?peer=<telefone>` também diz se há token de
+        privacidade e mapeamento LID para aquele contato (diagnóstico anti-463).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+        - name: peer
+          in: query
+          required: false
+          schema: { type: string }
+          description: Telefone do contato para checar token/LID (ex. 5511999999999)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session: { type: string, example: "astrachat_acc12" }
+                  restriction:
+                    type: object
+                    properties:
+                      active: { type: boolean, example: true }
+                      enforcement_type: { type: string, example: "reachout_timelock" }
+                      ends_at: { type: integer, example: 1730600000000, description: "epoch ms (0 se desconhecido)" }
+                      seconds_remaining: { type: integer, example: 54231 }
+                      updated_at: { type: integer, example: 1730545769000 }
+                  peer:
+                    type: object
+                    description: Só quando ?peer= é passado
+                    properties:
+                      pn: { type: string, example: "5511999999999@s.whatsapp.net" }
+                      lid: { type: string }
+                      lid_mapped: { type: boolean }
+                      has_tctoken: { type: boolean }
+        "404": { description: Sessão inexistente }
   /api/sessions/{sid}/calls:
     get:
       tags: [Chamadas]

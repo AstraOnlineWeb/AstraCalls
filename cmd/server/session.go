@@ -80,6 +80,15 @@ type Session struct {
 	// enquanto ela segue caída; volta a false ao reconectar (events.Connected).
 	downAlerted bool
 
+	// Estado da última restrição/time-lock (shadow-ban 463) que o WhatsApp empurra
+	// via NotifyAccountReachoutTimelock. O protocolo não tem consulta — só push —,
+	// então guardamos o último estado em cache. Protegido por s.mu.
+	restrictionActive    bool
+	restrictionType      string
+	restrictionEndsAt    time.Time
+	restrictionUpdatedAt time.Time
+	restrictionAlerted   bool // evita repetir o alerta no Chatwoot enquanto ativa
+
 	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou, com a origem
 	// (API ou agente do Chatwoot), para decidir o que fazer quando voltarem como
 	// evento from_me. msgID -> selfSent.
@@ -704,6 +713,10 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.ClientOutdated:
 		go s.notifyDisconnected("recusada pelo WhatsApp: cliente desatualizado",
 			"É necessário atualizar o AstraCalls. Avise o suporte técnico.")
+	case *events.NotifyAccountReachoutTimelock:
+		// Restrição/time-lock (shadow-ban 463): o WhatsApp limita o alcance do número
+		// (mensagem/chamada "somem" em silêncio). Único sinal programático da restrição.
+		go s.handleReachoutTimelock(evt)
 	case *events.Message:
 		switch {
 		case evt.Message.GetPollUpdateMessage() != nil:
