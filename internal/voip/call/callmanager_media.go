@@ -39,6 +39,12 @@ func (m *CallManager) initCodec() {
 		return
 	}
 	m.codec = codec
+	// Diagnóstico opt-in: loga quando o payload MLow vem embrulhado (container 0x92 de
+	// vídeo+DTX, ou RED) — confirma em produção qual camada está chegando.
+	if mediaDebugEnabled && media.MLowDebug == nil {
+		log := m.log
+		media.MLowDebug = func(msg string, kv ...any) { log.Info("mlow depacket", append([]any{"ev", msg}, kv...)...) }
+	}
 }
 
 func (m *CallManager) FeedCapturedPCM(data []float32) {
