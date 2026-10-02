@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+// version é a revisão do build (commit), injetada via ldflags no Docker
+// (-X main.version=$BUILD_REV). "dev" em builds locais. Exposta em /api/config
+// e mostrada no painel ao lado da logo.
+var version = "dev"
+
 // envInt lê um inteiro de uma variável de ambiente (com valor padrão).
 func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {

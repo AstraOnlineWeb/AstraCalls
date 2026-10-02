@@ -5,9 +5,11 @@ import { isAuthed, clearAuth } from "@/lib/auth";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
+import { useVersion } from "@/hooks/useVersion";
 
 export const AppShell = ({ children }: { children: ReactNode }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const version = useVersion();
 
   return (
     <div className="min-h-screen bg-background p-3 sm:p-4">
@@ -40,6 +42,11 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
               <h1 className="hidden truncate text-2xl font-bold tracking-tight text-foreground md:block">
                 Chamadas
               </h1>
+              {version && (
+                <span className="font-mono text-[0.6rem] leading-none text-muted-foreground md:hidden" title="Versão rodando">
+                  {version}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className="rounded-full" asChild>
