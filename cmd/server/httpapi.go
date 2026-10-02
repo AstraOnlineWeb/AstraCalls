@@ -409,8 +409,10 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// Transporte de mídia padrão da chamada (ex.: "websocket") — o widget do
 		// Chatwoot lê isso p/ usar WS por padrão onde o WebRTC (UDP) não fecha.
 		"defaultTransport": strings.TrimSpace(os.Getenv("WACALLS_DEFAULT_TRANSPORT")),
-		// Versão (commit) do build rodando — o painel mostra ao lado da logo.
+		// Build rodando — o painel mostra `version` (canal: develop/vX.Y.Z) ao lado da
+		// logo e `commit` (SHA) no tooltip.
 		"version": version,
+		"commit":  commit,
 	})
 }
 

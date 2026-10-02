@@ -1,15 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 
-// useVersion busca a versão (commit) do build rodando, exposta em /api/config,
-// para mostrar no painel ao lado da logo. Encurta o SHA do git p/ 7 chars.
-export const useVersion = (): string => {
+// useVersion busca o build rodando (exposto em /api/config): `label` é o canal
+// (nome do branch/tag: "develop", "v1.0.2"...) mostrado ao lado da logo, e `commit`
+// é o SHA curto, usado no tooltip.
+export const useVersion = (): { label: string; commit: string } => {
   const { data } = useQuery({
     queryKey: ["config-version"],
-    queryFn: () => apiGet<{ version?: string }>("/api/config").then((c) => c.version ?? ""),
+    queryFn: () => apiGet<{ version?: string; commit?: string }>("/api/config"),
     staleTime: Infinity,
     retry: false,
   });
-  const v = data ?? "";
-  return v.length > 12 ? v.slice(0, 7) : v; // SHA longo -> curto; "dev" fica "dev"
+  const label = data?.version ?? "";
+  const c = data?.commit ?? "";
+  const commit = c.length > 12 ? c.slice(0, 7) : c; // SHA longo -> curto
+  return { label, commit };
 };

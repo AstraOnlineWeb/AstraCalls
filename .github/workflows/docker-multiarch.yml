@@ -70,6 +70,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BUILD_REV=${{ github.sha }}
+            BUILD_VERSION=${{ github.ref_name }}
           labels: ${{ steps.meta.outputs.labels }}
           # Publica sem tag, apenas por digest; a tag final vem do job "merge".
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true

@@ -9,7 +9,7 @@ import { useVersion } from "@/hooks/useVersion";
 
 export const AppShell = ({ children }: { children: ReactNode }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const version = useVersion();
+  const { label: version, commit } = useVersion();
 
   return (
     <div className="min-h-screen bg-background p-3 sm:p-4">
@@ -43,7 +43,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
                 Chamadas
               </h1>
               {version && (
-                <span className="font-mono text-[0.6rem] leading-none text-muted-foreground md:hidden" title="Versão rodando">
+                <span className="font-mono text-[0.6rem] leading-none text-muted-foreground md:hidden" title={commit ? `commit ${commit}` : "Versão rodando"}>
                   {version}
                 </span>
               )}

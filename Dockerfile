@@ -66,9 +66,11 @@ COPY --from=opus /opt/libopus_mlow.so /src/native/libopus_mlow.so
 ENV CGO_ENABLED=1 \
     CC=gcc \
     CGO_LDFLAGS="-L/src/native -Wl,-rpath,/usr/local/lib"
-# BUILD_REV (commit) entra no binário via ldflags -> exposto em /api/config e no painel.
+# BUILD_VERSION (canal: develop/vX.Y.Z) e BUILD_REV (commit) entram no binário via
+# ldflags -> expostos em /api/config e no painel (version ao lado da logo).
+ARG BUILD_VERSION=dev
 ARG BUILD_REV=dev
-RUN go build -tags mlow -ldflags "-X main.version=${BUILD_REV}" -o /wacalls ./cmd/server
+RUN go build -tags mlow -ldflags "-X main.version=${BUILD_VERSION} -X main.commit=${BUILD_REV}" -o /wacalls ./cmd/server
 
 # ---------- Stage 4: runtime enxuto ----------
 FROM debian:bookworm-slim AS runtime

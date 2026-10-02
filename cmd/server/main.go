@@ -13,10 +13,14 @@ import (
 	"time"
 )
 
-// version é a revisão do build (commit), injetada via ldflags no Docker
-// (-X main.version=$BUILD_REV). "dev" em builds locais. Exposta em /api/config
-// e mostrada no painel ao lado da logo.
-var version = "dev"
+// version é o CANAL do build (nome do branch/tag: "develop", "v1.0.2"...), injetado
+// via ldflags no Docker (-X main.version=$BUILD_VERSION). commit é o SHA do git
+// (-X main.commit=$BUILD_REV). "dev" em builds locais. Expostos em /api/config; o
+// painel mostra `version` ao lado da logo e o `commit` no tooltip.
+var (
+	version = "dev"
+	commit  = "dev"
+)
 
 // envInt lê um inteiro de uma variável de ambiente (com valor padrão).
 func envInt(key string, def int) int {

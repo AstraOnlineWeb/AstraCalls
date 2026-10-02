@@ -25,7 +25,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
   const activeId = useSessions((s) => s.activeId);
   const [creating, setCreating] = useState(false);
   const [toDelete, setToDelete] = useState<SessionInfo | null>(null);
-  const version = useVersion();
+  const { label: version, commit } = useVersion();
 
   const onNew = async () => {
     setCreating(true);
@@ -55,7 +55,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
           <img src="/logoCalls.png" alt="AstraCalls" className="h-7 w-auto select-none" draggable={false} />
         </span>
         {version && (
-          <span className="font-mono text-[0.6rem] leading-none text-muted-foreground" title="Versão rodando">
+          <span className="font-mono text-[0.6rem] leading-none text-muted-foreground" title={commit ? `commit ${commit}` : "Versão rodando"}>
             {version}
           </span>
         )}
