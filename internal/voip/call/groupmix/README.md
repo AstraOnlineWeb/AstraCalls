@@ -13,6 +13,27 @@ incompatíveis, puxaria um 2º whatsmeow e exigiria 2 sessões. => **portar**, n
 - `internal/voip/call/groupmix/` — mixer de áudio multi-participante (soma + clamp) e
   reenquadramento em frames de 960, Go puro, com testes. Portado de
   `meowcaller/group_audio_mixer.go`.
+- `internal/voip/media/group_crypto.go` — derivação de chave de epoch + SSRC de grupo +
+  FormatParticipantID. **Validado byte-a-byte** contra o meowcaller (vetores dourados em
+  `group_crypto_test.go`). Reusa a nossa SRTP (idêntica à E2E do meowcaller).
+- `internal/voip/signaling/group.go` — signaling de grupo portada (offer+group_info,
+  group_update, enc_rekey; build e parse).
+- `internal/voip/transport/subscriptions.go` — `BuildGroupSubscriptionList` (N PIDs).
+- `internal/voip/call/groupcall.go` — `GroupCallManager`: offer, roster, distribuir/ingerir
+  a chave de epoch (reusa CreateParticipantNodes/DecryptCallKey), per-participant SRTP+codec,
+  demux de recepção por SSRC → mixer → áudio, loop de envio. Atrás da flag.
+- `cmd/server/groupcall.go` — endpoints `POST /calls/group` e `/calls/group/{id}/end`
+  (501 sem a flag `WACALLS_GROUP_CALLS=1`); roteamento de eventos de grupo no
+  handleUnknownCall. Documentado no OpenAPI.
+
+## Precisa de CHAMADA REAL pra validar/fechar (não dá pra testar sem número)
+- Aceitação do offer de grupo pelo servidor (formato do group_info/capability).
+- Estrutura do RELAY de grupo (tokens/WARP/HBH-FEC diferem do 1:1): o mapeamento em
+  `connectRelay` é best-effort; os PIDs por participante na assinatura
+  (`BuildGroupSubscriptionList`) ainda não estão ligados ao allocate do relay.
+- Ligar o áudio ao navegador: `gc.OnPeerAudio` (saída mixada) e `gc.FeedCapturedPCM`
+  (entrada do atendente) ao bridge WS, como no 1:1.
+- Vídeo de grupo, call-links e waiting-room (fases seguintes).
 
 ## O que falta (ordem sugerida) — tudo valida só em CHAMADA REAL
 1. **Estado (callstate.go):** roster `[]Participant` (device, participantID/PID, estado),

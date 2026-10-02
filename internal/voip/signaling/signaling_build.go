@@ -19,6 +19,10 @@ var (
 	capabilityPreaccept  = []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x07}
 )
 
+// CapabilityOffer expõe a capability de offer (bytes) p/ o pacote call montar o
+// device próprio no offer de GRUPO.
+var CapabilityOffer = capabilityOffer
+
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, []types.JID, error) {
 	creator := sock.OwnLID()
 	if creator.IsEmpty() {

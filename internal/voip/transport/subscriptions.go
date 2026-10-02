@@ -33,27 +33,43 @@ func BuildSenderSubscriptions(ssrc uint32) []byte {
 
 func BuildSSRCSubscriptionList(selfSsrcs, peerSsrcs []uint32, selfPid, peerPid int) []byte {
 	var entries [][]byte
-	for _, ssrc := range selfSsrcs {
+	entries = append(entries, subscriptionEntries(selfPid, selfSsrcs)...)
+	entries = append(entries, subscriptionEntries(peerPid, peerSsrcs)...)
+	return concat(entries...)
+}
+
+// subscriptionEntries monta as entradas {pid, 1, ssrc} de um participante.
+func subscriptionEntries(pid int, ssrcs []uint32) [][]byte {
+	var entries [][]byte
+	for _, ssrc := range ssrcs {
 		if ssrc == 0 {
 			continue
 		}
 		inner := concat(
-			encodeProtobufVarintField(1, uint64(selfPid)),
+			encodeProtobufVarintField(1, uint64(pid)),
 			encodeProtobufVarintField(2, 1),
 			encodeProtobufVarintField(3, uint64(ssrc)),
 		)
 		entries = append(entries, encodeProtobufLengthDelimited(1, inner))
 	}
-	for _, ssrc := range peerSsrcs {
-		if ssrc == 0 {
-			continue
-		}
-		inner := concat(
-			encodeProtobufVarintField(1, uint64(peerPid)),
-			encodeProtobufVarintField(2, 1),
-			encodeProtobufVarintField(3, uint64(ssrc)),
-		)
-		entries = append(entries, encodeProtobufLengthDelimited(1, inner))
+	return entries
+}
+
+// GroupSub é a assinatura de UM participante de chamada em grupo: o PID que o
+// group_update atribuiu e os SSRCs de stream dele.
+type GroupSub struct {
+	Pid   int
+	Ssrcs []uint32
+}
+
+// BuildGroupSubscriptionList monta a lista de assinatura para uma chamada em GRUPO:
+// as entradas do próprio (selfPid) + as de cada participante remoto com o PID dele.
+// Mesmo formato por-entrada do 1:1, mas com N PIDs distintos (em 1:1 era sempre 0).
+func BuildGroupSubscriptionList(selfPid int, selfSsrcs []uint32, peers []GroupSub) []byte {
+	var entries [][]byte
+	entries = append(entries, subscriptionEntries(selfPid, selfSsrcs)...)
+	for _, p := range peers {
+		entries = append(entries, subscriptionEntries(p.Pid, p.Ssrcs)...)
 	}
 	return concat(entries...)
 }

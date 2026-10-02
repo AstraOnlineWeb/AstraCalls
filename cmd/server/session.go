@@ -101,6 +101,10 @@ type Session struct {
 	// chegam em goroutines separadas e criariam contatos/conversas duplicados no
 	// Chatwoot se rodassem ensureContact/ensureConversation concorrentemente.
 	importMu sync.Mutex
+
+	// Chamada em GRUPO (experimental, atrás da flag WACALLS_GROUP_CALLS). Criado sob
+	// demanda. Protegido por s.mu.
+	groupCall *call.GroupCallManager
 }
 
 // Origem de uma mensagem enviada por nós. O agente do Chatwoot nunca é espelhado
@@ -784,6 +788,12 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 	}
 	callID := callIDFromNode(evt.Node)
 	if callID == "" {
+		return
+	}
+	// Chamada em GRUPO (experimental): eventos de controle (group_update/enc_rekey)
+	// não entram no registro de chamadas 1:1. Se a flag estiver ligada e for um
+	// evento do grupo ativo, trata aqui e encerra.
+	if s.routeGroupUnknownCall(ctx, evt.Node) {
 		return
 	}
 	ac, ok := s.reg.get(callID)

@@ -474,6 +474,57 @@ paths:
       responses:
         "204": { description: Desconectada }
 
+  /api/sessions/{sid}/calls/group:
+    post:
+      tags: [Chamadas]
+      summary: "[EXPERIMENTAL] Inicia uma chamada em GRUPO (áudio)"
+      description: >
+        Cria uma chamada em grupo ad-hoc (2+ números). EXPERIMENTAL e desligado por
+        padrão — requer a env `WACALLS_GROUP_CALLS=1` no servidor; sem ela retorna 501.
+        O control plane (offer, roster, troca da chave de epoch) e a criptografia estão
+        implementados e validados; o acoplamento com o relay de grupo precisa de
+        validação em chamada real.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [numbers]
+              properties:
+                numbers:
+                  type: array
+                  items: { type: string }
+                  minItems: 2
+                  example: ["5511999990001", "5511999990002"]
+                groupJid: { type: string, example: "1234-5678@g.us" }
+                video: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Offer de grupo enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  callId: { type: string }
+                  targets: { type: integer }
+                  video: { type: boolean }
+        "501": { description: Chamada em grupo desligada (experimental) }
+  /api/sessions/{sid}/calls/group/{id}/end:
+    post:
+      tags: [Chamadas]
+      summary: "[EXPERIMENTAL] Encerra a chamada em grupo ativa"
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Encerrada }
+        "404": { description: Nenhuma chamada em grupo ativa }
   /api/sessions/{sid}/restriction-status:
     get:
       tags: [Sessão]
