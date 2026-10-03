@@ -19,9 +19,15 @@ var (
 	capabilityPreaccept  = []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x07}
 )
 
-// CapabilityOffer expõe a capability de offer (bytes) p/ o pacote call montar o
-// device próprio no offer de GRUPO.
+// CapabilityOffer expõe a capability de offer (bytes) p/ o pacote call.
 var CapabilityOffer = capabilityOffer
+
+// CapabilityGroupOffer é a capability que o WhatsApp Web envia no offer de GRUPO
+// (capturada de uma chamada de grupo REAL do WhatsApp Web, 2026-10-03). Difere da de
+// 1:1 (f7...13) em 2 bytes (f5...53) — é o bit que diz ao servidor "este cliente faz
+// chamada de grupo". Usar a de 1:1 fazia o servidor recusar o offer de grupo com 427.
+var capabilityGroupOffer = []byte{0x01, 0x05, 0xf5, 0x09, 0xe0, 0xbb, 0x53}
+var CapabilityGroupOffer = capabilityGroupOffer
 
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, []types.JID, error) {
 	creator := sock.OwnLID()

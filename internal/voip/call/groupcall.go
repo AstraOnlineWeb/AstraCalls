@@ -117,7 +117,7 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 	participants := []signaling.GroupCallParticipant{{
 		JID: self.ToNonAD(),
 		Devices: []signaling.GroupCallDevice{{
-			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), signaling.CapabilityOffer...),
+			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), signaling.CapabilityGroupOffer...),
 		}},
 	}}
 	for _, t := range targets {
