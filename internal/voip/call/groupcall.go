@@ -445,7 +445,9 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 		if gp.videoPipe == nil {
 			if km, err := media.DeriveGroupSrtpKeying(m.epochKey, gp.participantID); err == nil {
 				pipe := callvideo.New(m.log, groupVideoRelay{})
-				if err := pipe.SetupGroup(0, core.SrtpKeyingMaterial{}, km); err == nil {
+				// Pipe só de RECEPÇÃO: usa km nos dois lados (o contexto de ENVIO nunca é
+				// chamado). NÃO passar keying vazio — deriveSrtpKey estoura com salt vazio.
+				if err := pipe.SetupGroup(0, km, km); err == nil {
 					pid := gp.participantID
 					pipe.OnFrame = func(au []byte) {
 						m.mu.Lock()
@@ -520,7 +522,9 @@ func (m *GroupCallManager) tryStartRelay() {
 		if vs, err := media.DeriveParticipantSSRC(m.callID, m.selfID, media.GroupVideoSlotWord); err == nil {
 			if km, err := media.DeriveGroupSrtpKeying(m.epochKey, m.selfID); err == nil {
 				pipe := callvideo.New(m.log, groupVideoRelay{ch: ch})
-				if err := pipe.SetupGroup(vs, km, core.SrtpKeyingMaterial{}); err == nil {
+				// Pipe só de ENVIO: usa km nos dois lados (o contexto de RECEPÇÃO nunca é
+				// chamado). NÃO passar keying vazio — deriveSrtpKey estoura com salt vazio.
+				if err := pipe.SetupGroup(vs, km, km); err == nil {
 					m.sendVideoPipe = pipe
 				}
 			}
@@ -555,6 +559,7 @@ func (m *GroupCallManager) tryStartRelay() {
 // groupAllocateKeepalive envia o Allocate de grupo logo e a cada 1s (mantém a
 // assinatura no relay e atualiza os PIDs conforme os participantes conectam).
 func (m *GroupCallManager) groupAllocateKeepalive(ch *transport.GroupRelayChannel, stop chan struct{}, allocate func() []byte) {
+	defer m.recoverGroup("groupAllocateKeepalive")
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	sendAlloc := func() bool {
@@ -584,8 +589,17 @@ func (m *GroupCallManager) groupAllocateKeepalive(ch *transport.GroupRelayChanne
 	}
 }
 
+// recoverGroup evita que um panic no código EXPERIMENTAL de grupo derrube o processo
+// (o gateway atende clientes reais). Chamar como `defer m.recoverGroup("<onde>")`.
+func (m *GroupCallManager) recoverGroup(where string) {
+	if r := recover(); r != nil {
+		m.log.Error("group: panic recuperado", "where", where, "panic", r)
+	}
+}
+
 // groupRecvLoop lê o canal do relay: responde binding requests e demultiplexa RTP.
 func (m *GroupCallManager) groupRecvLoop(ch *transport.GroupRelayChannel, stop chan struct{}) {
+	defer m.recoverGroup("groupRecvLoop")
 	buf := make([]byte, 2048)
 	for {
 		select {
@@ -689,6 +703,7 @@ func (m *GroupCallManager) maybeStartMedia() {
 
 // mixLoop puxa chunks mixados (10ms) e os reenquadra em frames de 960 p/ o sink.
 func (m *GroupCallManager) mixLoop(stop chan struct{}) {
+	defer m.recoverGroup("mixLoop")
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -714,6 +729,7 @@ func (m *GroupCallManager) mixLoop(stop chan struct{}) {
 
 // sendLoop codifica o áudio capturado (frames de 960) e envia pelo relay.
 func (m *GroupCallManager) sendLoop(stop chan struct{}) {
+	defer m.recoverGroup("sendLoop")
 	ticker := time.NewTicker(60 * time.Millisecond)
 	defer ticker.Stop()
 	for {

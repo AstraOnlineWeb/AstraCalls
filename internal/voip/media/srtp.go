@@ -194,6 +194,9 @@ func (s *SrtpSession) SetSendAuthKeying(keying core.SrtpKeyingMaterial) error {
 }
 
 func deriveSrtpKey(masterKey, masterSalt []byte, label byte, length int) ([]byte, error) {
+	if len(masterSalt) < 14 {
+		return nil, fmt.Errorf("srtp: master salt curto demais (%d bytes, precisa 14)", len(masterSalt))
+	}
 	iv := make([]byte, 16)
 	copy(iv, masterSalt[:14])
 	iv[7] ^= label

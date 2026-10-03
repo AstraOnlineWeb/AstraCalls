@@ -68,8 +68,17 @@ func (s *Session) routeGroupUnknownCall(ctx context.Context, node *waBinary.Node
 	// Handling ASSÍNCRONO: ConnectGroupRelay (handshake DTLS) e Query de rekey podem
 	// DEMORAR/TRAVAR; rodar no handler síncrono do whatsmeow congela TODO o
 	// processamento de nós da sessão (o <video state> seguinte ficava "Node handling
-	// taking long" por minutos e a call nunca conectava). Rodamos em goroutine própria.
-	go gc.HandleUnknownCall(context.Background(), node)
+	// taking long" por minutos e a call nunca conectava). Rodamos em goroutine própria,
+	// com recover: um panic no código EXPERIMENTAL de grupo NUNCA pode derrubar o
+	// gateway (que atende clientes reais).
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Error("group: panic no handler (recuperado)", "panic", r)
+			}
+		}()
+		gc.HandleUnknownCall(context.Background(), node)
+	}()
 	return cid == gc.CallID()
 }
 
