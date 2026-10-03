@@ -79,25 +79,57 @@ func (s *server) handleStartGroupCall(w http.ResponseWriter, r *http.Request) {
 		GroupJid string   `json:"groupJid"`
 		Video    bool     `json:"video"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Numbers) < 2 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "numbers (>=2) obrigatório"})
-		return
-	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
 	var targets []types.JID
-	for _, n := range body.Numbers {
-		if p := normalizePhone(n); p != "" {
-			targets = append(targets, types.NewJID(p, types.DefaultUserServer))
+	var groupJID types.JID
+
+	if g := strings.TrimSpace(body.GroupJid); g != "" {
+		// Modo "ligar pra um grupo que EXISTE": resolve os membros do grupo (exceto nós).
+		jid, err := types.ParseJID(g)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "groupJid inválido"})
+			return
+		}
+		groupJID = jid
+		info, err := sess.client.GetGroupInfo(r.Context(), jid)
+		if err != nil || info == nil {
+			msg := "grupo não encontrado"
+			if err != nil {
+				msg = err.Error()
+			}
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "não consegui ler o grupo: " + msg})
+			return
+		}
+		ownLID := sess.client.Store.GetLID().ToNonAD()
+		var ownPN types.JID
+		if id := sess.client.Store.ID; id != nil {
+			ownPN = id.ToNonAD()
+		}
+		for _, p := range info.Participants {
+			t := p.JID.ToNonAD()
+			if t.IsEmpty() || t == ownLID || t == ownPN {
+				continue
+			}
+			targets = append(targets, t)
+		}
+	} else {
+		// Modo ad-hoc: lista de números.
+		for _, n := range body.Numbers {
+			if p := normalizePhone(n); p != "" {
+				targets = append(targets, types.NewJID(p, types.DefaultUserServer))
+			}
 		}
 	}
+
 	if len(targets) < 2 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pelo menos 2 números válidos"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "chamada em grupo precisa de 2+ destinos (grupo com você + 2 membros, ou numbers com 2+)",
+		})
 		return
 	}
-	var groupJID types.JID
-	if g := strings.TrimSpace(body.GroupJid); g != "" {
-		if jid, err := types.ParseJID(g); err == nil {
-			groupJID = jid
-		}
+	if len(targets) > 31 {
+		targets = targets[:31] // limite do protocolo
 	}
 
 	gc := sess.ensureGroupCall()
