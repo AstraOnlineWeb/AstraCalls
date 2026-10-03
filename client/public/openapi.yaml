@@ -514,14 +514,13 @@ paths:
                   targets: { type: integer }
                   video: { type: boolean }
         "501": { description: Chamada em grupo desligada (experimental) }
-  /api/sessions/{sid}/calls/group/{id}/end:
+  /api/sessions/{sid}/calls/group/end:
     post:
       tags: [Chamadas]
       summary: "[EXPERIMENTAL] Encerra a chamada em grupo ativa"
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
-        - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         "200": { description: Encerrada }
         "404": { description: Nenhuma chamada em grupo ativa }

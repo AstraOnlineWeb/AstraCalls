@@ -37,7 +37,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls", s.handleStartCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/fake", s.handleFakeCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/group", s.handleStartGroupCall)
-	mux.HandleFunc("POST /api/sessions/{sid}/calls/group/{id}/end", s.handleEndGroupCall)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/group/end", s.handleEndGroupCall)
 
 	// Gateway SIP (modelo Wavoip): status global e credenciais por sessão.
 	mux.HandleFunc("GET /api/sip/status", s.handleSIPStatus)
