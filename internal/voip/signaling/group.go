@@ -147,6 +147,10 @@ type InitialGroupOfferParams struct {
 	GroupJID     types.JID
 	Participants []GroupCallParticipant
 	Video        bool
+	// ExtraNodes são anexados ao <offer> depois do <group_info> — usado para carregar
+	// a distribuição de chave estilo 1:1 (<capability>, <destination> com enc por
+	// device, <encopt keygen="2">, device-identity) que faz os devices TOCAREM.
+	ExtraNodes []waBinary.Node
 }
 
 // BuildActiveGroupPreaccept constrói a resposta eager a um convite de call ativa.
@@ -190,6 +194,7 @@ func BuildInitialGroupOffer(params InitialGroupOfferParams) (waBinary.Node, erro
 		waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 		waBinary.Node{Tag: "group_info", Content: users},
 	)
+	children = append(children, params.ExtraNodes...)
 	offer := gOfferAction("offer", params.CallID, params.CallCreator, children)
 	if !params.GroupJID.IsEmpty() {
 		offer.Attrs["group-jid"] = params.GroupJID

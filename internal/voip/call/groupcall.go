@@ -113,10 +113,14 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 		return "", &CallError{"group call needs at least 2 targets"}
 	}
 
-	// group_info lista só os DESTINOS (remotos). O criador é identificado pelo
-	// call-creator; incluir o nosso próprio device como alvo faz o servidor rejeitar
-	// com error=427 ("não oferecer pra si mesmo") e a chamada não toca.
-	var participants []signaling.GroupCallParticipant
+	// Roster do group_info: self (o servidor espera o criador no roster) + os destinos.
+	participants := []signaling.GroupCallParticipant{{
+		JID: self.ToNonAD(),
+		Devices: []signaling.GroupCallDevice{{
+			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), signaling.CapabilityOffer...),
+		}},
+	}}
+	var allDevices []types.JID
 	for _, t := range targets {
 		devs, err := m.sock.GetUSyncDevices(ctx, []types.JID{t.ToNonAD()})
 		if err != nil {
@@ -128,13 +132,34 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 		p := signaling.GroupCallParticipant{JID: t.ToNonAD()}
 		for _, d := range devs {
 			p.Devices = append(p.Devices, signaling.GroupCallDevice{JID: d})
+			allDevices = append(allDevices, d)
 		}
 		participants = append(participants, p)
 	}
 
+	// Distribuição de chave estilo 1:1 — é o que faz os devices TOCAREM: <destination>
+	// com a call key cifrada por device + <encopt keygen="2"> + <capability>. Sem isso
+	// o servidor aceita os destinos mas nenhum device toca.
+	callKey := media.GenerateCallKey()
+	_ = m.sock.AssertSessions(ctx, allDevices, false)
+	destinations, includeDI, err := m.sock.CreateParticipantNodes(ctx, allDevices, callKey, waBinary.Attrs{"count": "0"})
+	if err != nil {
+		return "", fmt.Errorf("group: participant nodes: %w", err)
+	}
+	extra := []waBinary.Node{
+		{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: append([]byte(nil), signaling.CapabilityOffer...)},
+		{Tag: "destination", Content: destinations},
+		{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
+	}
+	if includeDI {
+		if di, ok := m.sock.AccountDeviceIdentityNode(); ok {
+			extra = append(extra, di)
+		}
+	}
+
 	callID := newGroupCallID()
 	offer, err := signaling.BuildInitialGroupOffer(signaling.InitialGroupOfferParams{
-		CallID: callID, CallCreator: self, GroupJID: groupJID, Participants: participants, Video: video,
+		CallID: callID, CallCreator: self, GroupJID: groupJID, Participants: participants, Video: video, ExtraNodes: extra,
 	})
 	if err != nil {
 		return "", err
