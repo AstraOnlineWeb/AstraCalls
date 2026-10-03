@@ -10,6 +10,7 @@ import (
 	"wacalls/internal/voip/call"
 	"wacalls/internal/wa"
 
+	"github.com/coder/websocket"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -144,7 +145,48 @@ func (s *server) handleStartGroupCall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"callId": callID, "targets": len(targets), "video": body.Video})
 }
 
-// handleEndGroupCall encerra a chamada em grupo ativa (POST /calls/group/{id}/end).
+// handleGroupWSBridge atende GET /api/sessions/{sid}/calls/group/ws — bridge de áudio
+// PCM16 entre o navegador do operador e a chamada em grupo (ouvir o mix + falar).
+func (s *server) handleGroupWSBridge(w http.ResponseWriter, r *http.Request) {
+	if !groupCallsEnabled() {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "grupo desligado"})
+		return
+	}
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	gc := sess.groupCall
+	sess.mu.Unlock()
+	if gc == nil || gc.CallID() == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "nenhuma chamada em grupo ativa"})
+		return
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols:       []string{"pcm16"},
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		s.log.Warn("group ws_bridge: upgrade failed", "err", err)
+		return
+	}
+	events := r.URL.Query().Get("events") == "1" || r.URL.Query().Get("events") == "true"
+	bridge := newWSBridge(conn, s.log, events)
+	bridge.OnBrowserPCM = func(pcm16 []float32) { gc.FeedCapturedPCM(pcm16) }
+	gc.SetAudioSink(func(pcm16 []float32) { _ = bridge.WritePCM(pcm16) })
+	s.log.Info("group ws_bridge: connected", "sid", sess.id, "call", gc.CallID())
+
+	go bridge.keepAlive()
+	bridge.readLoop()
+
+	gc.SetAudioSink(nil)
+	bridge.Close()
+	s.log.Info("group ws_bridge: disconnected", "sid", sess.id)
+}
+
+// handleEndGroupCall encerra a chamada em grupo ativa (POST /calls/group/end).
 func (s *server) handleEndGroupCall(w http.ResponseWriter, r *http.Request) {
 	if !groupCallsEnabled() {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "chamada em grupo desligada"})

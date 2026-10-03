@@ -595,8 +595,13 @@ func (m *GroupCallManager) mixLoop(stop chan struct{}) {
 			if !ok {
 				continue
 			}
-			if frame, full := m.framer.Push(chunk); full && m.OnPeerAudio != nil {
-				m.OnPeerAudio(frame)
+			if frame, full := m.framer.Push(chunk); full {
+				m.mu.Lock()
+				cb := m.OnPeerAudio
+				m.mu.Unlock()
+				if cb != nil {
+					cb(frame)
+				}
 			}
 		}
 	}
@@ -649,6 +654,13 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 			}
 		}
 	}
+}
+
+// SetAudioSink liga/desliga (fn=nil) o destino do áudio mixado (navegador do operador).
+func (m *GroupCallManager) SetAudioSink(fn func([]float32)) {
+	m.mu.Lock()
+	m.OnPeerAudio = fn
+	m.mu.Unlock()
 }
 
 // FeedCapturedPCM recebe o áudio do atendente (navegador) para enviar na call.
