@@ -3,6 +3,7 @@ package transport
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/pion/datachannel"
 	"github.com/pion/dtls/v3"
@@ -146,6 +147,11 @@ func ConnectGroupRelay(ip string, port int) (*GroupRelayChannel, error) {
 	}
 	cleanup = append(cleanup, udp.Close)
 
+	// Deadline cobrindo todo o setup (DTLS + SCTP + datachannel): sem isso, se o relay
+	// não responder o handshake fica preso INDEFINIDAMENTE e vaza a goroutine (o
+	// relayStarted impede novo retry). Limpamos a deadline no sucesso p/ operação normal.
+	_ = udp.SetDeadline(time.Now().Add(12 * time.Second))
+
 	cert, err := selfsign.GenerateSelfSignedWithDNS("wa-voip")
 	if err != nil {
 		return fail(fmt.Errorf("group relay dtls cert: %w", err))
@@ -174,5 +180,7 @@ func ConnectGroupRelay(ip string, port int) (*GroupRelayChannel, error) {
 		return fail(fmt.Errorf("group relay datachannel: %w", err))
 	}
 
+	// Setup concluído: remove a deadline p/ o tráfego de mídia normal (sem limite).
+	_ = udp.SetDeadline(time.Time{})
 	return &GroupRelayChannel{udp: udp, dtlsConn: dtlsConn, assoc: assoc, dc: dc}, nil
 }

@@ -61,11 +61,16 @@ func (s *Session) routeGroupUnknownCall(ctx context.Context, node *waBinary.Node
 	// Deixa o manager parsear o envelope e decidir se é do grupo ativo (o callID de
 	// eventos de controle de grupo nem sempre vem no formato do callIDFromNode).
 	// Só consideramos "tratado" (true) quando casa o callID; senão deixa seguir o 1:1.
-	if cid := callIDFromNode(node); cid != "" && cid != gc.CallID() {
+	cid := callIDFromNode(node)
+	if cid != "" && cid != gc.CallID() {
 		return false
 	}
-	gc.HandleUnknownCall(ctx, node)
-	return callIDFromNode(node) == gc.CallID()
+	// Handling ASSÍNCRONO: ConnectGroupRelay (handshake DTLS) e Query de rekey podem
+	// DEMORAR/TRAVAR; rodar no handler síncrono do whatsmeow congela TODO o
+	// processamento de nós da sessão (o <video state> seguinte ficava "Node handling
+	// taking long" por minutos e a call nunca conectava). Rodamos em goroutine própria.
+	go gc.HandleUnknownCall(context.Background(), node)
+	return cid == gc.CallID()
 }
 
 // handleStartGroupCall inicia uma chamada em grupo ad-hoc (POST /calls/group).
