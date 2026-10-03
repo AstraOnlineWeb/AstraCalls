@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"wacalls/internal/voip/call"
 	"wacalls/internal/wa"
@@ -205,4 +207,74 @@ func (s *server) handleEndGroupCall(w http.ResponseWriter, r *http.Request) {
 	}
 	gc.End()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ended"})
+}
+
+// handleGroupVideoWS é o transporte de VÍDEO (H264) da chamada em grupo entre o
+// navegador e o gateway. Frames binários:
+//   - gateway → navegador: [1 byte len(pid)][pid ascii][access unit H264 Annex-B]
+//     (o navegador decodifica/renderiza por participante).
+//   - navegador → gateway: access unit H264 Annex-B puro (câmera do atendente) →
+//     FeedCapturedVideo.
+//
+// É um WS separado do de áudio (que é PCM16) p/ não misturar os formatos.
+func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
+	if !groupCallsEnabled() {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "grupo desligado"})
+		return
+	}
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	gc := sess.groupCall
+	sess.mu.Unlock()
+	if gc == nil || gc.CallID() == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "nenhuma chamada em grupo ativa"})
+		return
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols:       []string{"h264-group"},
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		s.log.Warn("group video_ws: upgrade failed", "err", err)
+		return
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// gateway → navegador: serializa writes (a lib não aceita writes concorrentes).
+	var wmu sync.Mutex
+	gc.SetVideoSink(func(pid string, au []byte) {
+		if len(au) == 0 || len(pid) > 255 {
+			return
+		}
+		msg := make([]byte, 0, 1+len(pid)+len(au))
+		msg = append(msg, byte(len(pid)))
+		msg = append(msg, pid...)
+		msg = append(msg, au...)
+		wmu.Lock()
+		defer wmu.Unlock()
+		wctx, c := context.WithTimeout(ctx, 2*time.Second)
+		_ = conn.Write(wctx, websocket.MessageBinary, msg)
+		c()
+	})
+	s.log.Info("group video_ws: connected", "sid", sess.id, "call", gc.CallID())
+
+	// navegador → gateway: cada frame binário é um AU H264 da câmera do atendente.
+	for {
+		typ, data, rerr := conn.Read(ctx)
+		if rerr != nil {
+			break
+		}
+		if typ == websocket.MessageBinary && len(data) > 0 {
+			gc.FeedCapturedVideo(data)
+		}
+	}
+
+	gc.SetVideoSink(nil)
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+	s.log.Info("group video_ws: disconnected", "sid", sess.id)
 }

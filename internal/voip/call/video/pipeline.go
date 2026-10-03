@@ -88,6 +88,30 @@ func (p *Pipeline) Setup(callID, ourDeviceJid, peerDeviceJid string, sendKM, rec
 	return nil
 }
 
+// SetupGroup configura o pipeline p/ chamada em GRUPO com SSRCs de vídeo EXPLÍCITOS
+// (derivados no esquema de grupo) e material SRTP já derivado do epoch. Não chama
+// SetStreamSsrcs (o relay de grupo gerencia a assinatura via Allocate). selfVideoSSRC
+// pode ser 0 em pipelines só de recepção; peerVideoSSRC é usado p/ filtrar o stream.
+func (p *Pipeline) SetupGroup(selfVideoSSRC uint32, sendKM, recvKM core.SrtpKeyingMaterial) error {
+	srtp, err := media.NewSrtpSession(sendKM, recvKM, core.SRTPSendAuthTagLen, core.SRTPRecvAuthTagLen)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.srtp = srtp
+	p.selfSsrc = selfVideoSSRC
+	p.rtp = media.NewH264Session(selfVideoSSRC)
+	if p.depack == nil {
+		p.depack = &transport.H264Depacketizer{}
+	}
+	p.frameNumber = 1
+	p.transportSeq = 0
+	p.keyframeRequired = true
+	p.lastAUAt = time.Time{}
+	p.mu.Unlock()
+	return nil
+}
+
 // videoExtProfile é o perfil da RTP header extension do vídeo do WhatsApp (0xDEBE,
 // NÃO 0xBEDE). O conteúdo (one-byte headers) traz MediaFrameInfo, InitialBandwidth,
 // ShortOffset e TransportSequence — não abs-send-time. Formato confirmado contra o

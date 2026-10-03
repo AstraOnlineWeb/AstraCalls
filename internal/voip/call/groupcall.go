@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"wacalls/internal/voip/call/groupmix"
+	callvideo "wacalls/internal/voip/call/video"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 	"wacalls/internal/voip/signaling"
@@ -39,7 +40,23 @@ type groupParticipant struct {
 	audioSSRC     uint32
 	srtp          *media.SrtpContext
 	codec         media.Codec
+
+	videoSSRC uint32              // SSRC de vídeo do participante (slot 2)
+	videoPipe *callvideo.Pipeline // pipeline de recepção de vídeo (H264 → AU)
 }
+
+// groupVideoRelay adapta o canal DTLS de grupo à interface Relay do pipeline de vídeo
+// (só o Broadcast importa; o relay de grupo gerencia a assinatura via Allocate).
+type groupVideoRelay struct{ ch *transport.GroupRelayChannel }
+
+func (r groupVideoRelay) Broadcast(data []byte) {
+	if r.ch != nil {
+		_, _ = r.ch.Send(data)
+	}
+}
+func (r groupVideoRelay) BufferedAmount() uint64       { return 0 }
+func (r groupVideoRelay) HasConnection() bool          { return r.ch != nil }
+func (r groupVideoRelay) SetStreamSsrcs(_, _ []uint32) {}
 
 type GroupCallManager struct {
 	sock core.VoipSocket
@@ -72,8 +89,11 @@ type GroupCallManager struct {
 	sendCodec  media.Codec
 	rtpSession *media.RtpSession
 
-	byDevice map[string]*groupParticipant // participantID -> participante
-	bySSRC   map[uint32]*groupParticipant // audioSSRC -> participante
+	byDevice    map[string]*groupParticipant // participantID -> participante
+	bySSRC      map[uint32]*groupParticipant // audioSSRC -> participante
+	byVideoSSRC map[uint32]*groupParticipant // videoSSRC -> participante
+
+	sendVideoPipe *callvideo.Pipeline // pipeline de ENVIO do nosso vídeo (câmera)
 
 	mixer   *groupmix.Mixer
 	framer  groupmix.Framer
@@ -86,7 +106,8 @@ type GroupCallManager struct {
 	audioN uint64 // diagnóstico: pacotes de áudio decodificados
 	sentN  uint64 // diagnóstico: pacotes RTP enviados
 
-	OnPeerAudio func([]float32) // áudio MIXADO de todos os participantes (frames de 960)
+	OnPeerAudio func([]float32)                       // áudio MIXADO de todos os participantes (frames de 960)
+	OnPeerVideo func(participantID string, au []byte) // vídeo H264 (AU) por participante → navegador
 	OnEnded     func(callID string)
 }
 
@@ -96,11 +117,12 @@ func NewGroupCallManager(sock core.VoipSocket, log *slog.Logger) *GroupCallManag
 		log = slog.Default()
 	}
 	return &GroupCallManager{
-		sock:     sock,
-		log:      log,
-		byDevice: make(map[string]*groupParticipant),
-		bySSRC:   make(map[uint32]*groupParticipant),
-		mixer:    groupmix.NewMixer(),
+		sock:        sock,
+		log:         log,
+		byDevice:    make(map[string]*groupParticipant),
+		bySSRC:      make(map[uint32]*groupParticipant),
+		byVideoSSRC: make(map[uint32]*groupParticipant),
+		mixer:       groupmix.NewMixer(),
 	}
 }
 
@@ -123,11 +145,16 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 		return "", &CallError{"group call needs at least 2 targets"}
 	}
 
+	// Capability do nosso device: áudio ou vídeo de grupo.
+	selfCap := signaling.CapabilityGroupOffer
+	if video {
+		selfCap = signaling.CapabilityGroupVideoOffer
+	}
 	// Descobre devices de cada alvo (um participante por usuário, com seus devices).
 	participants := []signaling.GroupCallParticipant{{
 		JID: self.ToNonAD(),
 		Devices: []signaling.GroupCallDevice{{
-			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), signaling.CapabilityGroupOffer...),
+			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), selfCap...),
 		}},
 	}}
 	for _, t := range targets {
@@ -385,6 +412,34 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 	if gp.audioSSRC != 0 {
 		m.bySSRC[gp.audioSSRC] = gp
 	}
+
+	// Vídeo: deriva o SSRC de vídeo (slot 2) e um pipeline de RECEPÇÃO H264 por
+	// participante (só decodifica; o relay é nil-safe pois nunca chamamos Broadcast).
+	if m.video {
+		if vs, err := media.DeriveParticipantSSRC(m.callID, gp.participantID, media.GroupVideoSlotWord); err == nil {
+			gp.videoSSRC = vs
+		}
+		if gp.videoPipe == nil {
+			if km, err := media.DeriveGroupSrtpKeying(m.epochKey, gp.participantID); err == nil {
+				pipe := callvideo.New(m.log, groupVideoRelay{})
+				if err := pipe.SetupGroup(0, core.SrtpKeyingMaterial{}, km); err == nil {
+					pid := gp.participantID
+					pipe.OnFrame = func(au []byte) {
+						m.mu.Lock()
+						cb := m.OnPeerVideo
+						m.mu.Unlock()
+						if cb != nil {
+							cb(pid, au)
+						}
+					}
+					gp.videoPipe = pipe
+				}
+			}
+		}
+		if gp.videoSSRC != 0 {
+			m.byVideoSSRC[gp.videoSSRC] = gp
+		}
+	}
 }
 
 // tryStartRelay conecta o relay de grupo UMA vez, quando já há epoch (chaves) e o
@@ -436,6 +491,18 @@ func (m *GroupCallManager) tryStartRelay() {
 	m.groupChan = ch
 	m.recvStop = make(chan struct{})
 	stop := m.recvStop
+	// Vídeo: pipeline de ENVIO da câmera (nosso stream de vídeo, slot 2), já com o
+	// canal DTLS aberto p/ o Broadcast.
+	if m.video && m.sendVideoPipe == nil && len(m.epochKey) == 32 {
+		if vs, err := media.DeriveParticipantSSRC(m.callID, m.selfID, media.GroupVideoSlotWord); err == nil {
+			if km, err := media.DeriveGroupSrtpKeying(m.epochKey, m.selfID); err == nil {
+				pipe := callvideo.New(m.log, groupVideoRelay{ch: ch})
+				if err := pipe.SetupGroup(vs, km, core.SrtpKeyingMaterial{}); err == nil {
+					m.sendVideoPipe = pipe
+				}
+			}
+		}
+	}
 	m.mu.Unlock()
 	m.log.Info("group relay: canal DTLS aberto", "relay", relayName)
 
@@ -537,9 +604,24 @@ func (m *GroupCallManager) groupRecvLoop(ch *transport.GroupRelayChannel, stop c
 	}
 }
 
-// onGroupRtp decodifica um pacote RTP de áudio de um participante → mixer.
+// onGroupRtp decodifica um pacote RTP de um participante: áudio (Opus) → mixer,
+// vídeo (H264) → pipeline de vídeo do participante → navegador.
 func (m *GroupCallManager) onGroupRtp(data []byte) {
-	if len(data) < 12 || data[1]&0x7f != core.PayloadTypeWhatsAppOpus {
+	if len(data) < 12 {
+		return
+	}
+	pt := data[1] & 0x7f
+	if pt == core.PayloadTypeWhatsAppH264 {
+		vssrc := media.RTPSsrc(data)
+		m.mu.Lock()
+		gp := m.byVideoSSRC[vssrc]
+		m.mu.Unlock()
+		if gp != nil && gp.videoPipe != nil {
+			gp.videoPipe.HandleRelayData(data)
+		}
+		return
+	}
+	if pt != core.PayloadTypeWhatsAppOpus {
 		return
 	}
 	ssrc := media.RTPSsrc(data)
@@ -663,6 +745,23 @@ func (m *GroupCallManager) SetAudioSink(fn func([]float32)) {
 	m.mu.Unlock()
 }
 
+// SetVideoSink liga/desliga (fn=nil) o destino do vídeo dos participantes (navegador).
+func (m *GroupCallManager) SetVideoSink(fn func(participantID string, au []byte)) {
+	m.mu.Lock()
+	m.OnPeerVideo = fn
+	m.mu.Unlock()
+}
+
+// FeedCapturedVideo recebe um access unit H264 da câmera do navegador p/ enviar na call.
+func (m *GroupCallManager) FeedCapturedVideo(au []byte) {
+	m.mu.Lock()
+	pipe := m.sendVideoPipe
+	m.mu.Unlock()
+	if pipe != nil && len(au) > 0 {
+		pipe.FeedCaptured(au)
+	}
+}
+
 // FeedCapturedPCM recebe o áudio do atendente (navegador) para enviar na call.
 func (m *GroupCallManager) FeedCapturedPCM(data []float32) {
 	m.mu.Lock()
@@ -702,8 +801,18 @@ func (m *GroupCallManager) End() {
 		m.sendCodec.Close()
 		m.sendCodec = nil
 	}
+	if m.sendVideoPipe != nil {
+		m.sendVideoPipe.Reset()
+		m.sendVideoPipe = nil
+	}
+	for _, gp := range m.byDevice {
+		if gp.videoPipe != nil {
+			gp.videoPipe.Reset()
+		}
+	}
 	m.byDevice = make(map[string]*groupParticipant)
 	m.bySSRC = make(map[uint32]*groupParticipant)
+	m.byVideoSSRC = make(map[uint32]*groupParticipant)
 	m.mu.Unlock()
 
 	if ch != nil {

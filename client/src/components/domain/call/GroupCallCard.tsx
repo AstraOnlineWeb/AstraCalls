@@ -1,16 +1,33 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Users, PhoneCall, PhoneOff, Loader2 } from "lucide-react";
+import { Users, PhoneCall, PhoneOff, Loader2, Video } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api";
 import { WSAudioBridge } from "@/lib/ws-audio";
+import { GroupVideoBridge } from "@/lib/call/group-video";
 import { listGroups, startGroupCall, endGroupCall } from "@/services/groupCalls";
 
+// VideoTile liga um MediaStream a um <video> (srcObject não é prop do React).
+const VideoTile = ({ stream, label, muted }: { stream: MediaStream; label: string; muted?: boolean }) => {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
+  return (
+    <div className="relative overflow-hidden rounded-md bg-black">
+      <video ref={ref} autoPlay playsInline muted={muted} className="h-32 w-full object-cover" />
+      <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[0.6rem] text-white">
+        {label}
+      </span>
+    </div>
+  );
+};
+
 // GroupCallCard — chamada em GRUPO (experimental): escolhe um grupo, liga pros
-// membros e conecta o áudio (ouvir o mix + falar) pelo bridge WS. Só aparece quando
-// a instância tem a flag de grupo ligada (/api/config groupCalls).
+// membros e conecta áudio (ouvir/falar) e, opcionalmente, VÍDEO (câmera + vídeo dos
+// participantes). Só aparece quando a instância tem a flag de grupo ligada.
 export const GroupCallCard = ({ sid }: { sid: string }) => {
   const { data: config } = useQuery({
     queryKey: ["config-groupcalls"],
@@ -29,19 +46,26 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
 
   const [jid, setJid] = useState("");
   const [status, setStatus] = useState<"idle" | "calling" | "in-call">("idle");
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [peers, setPeers] = useState<Array<{ pid: string; stream: MediaStream }>>([]);
   const bridgeRef = useRef<WSAudioBridge | null>(null);
+  const videoRef = useRef<GroupVideoBridge | null>(null);
 
   if (!config?.groupCalls) return null;
 
-  const start = async () => {
+  const start = async (withVideo: boolean) => {
     const target = jid || groups?.[0]?.jid;
     if (!target) {
       toast.error("Escolha um grupo");
       return;
     }
+    if (withVideo && !GroupVideoBridge.supported()) {
+      toast.error("Seu navegador não suporta vídeo (WebCodecs)");
+      return;
+    }
     setStatus("calling");
     try {
-      await startGroupCall(sid, target);
+      await startGroupCall(sid, target, withVideo);
       const bridge = new WSAudioBridge(sid, "group", null, {
         onState: (s) => setStatus(s === "connected" ? "in-call" : s === "disconnected" ? "idle" : "calling"),
         onError: (e) => toast.error(e.message),
@@ -49,16 +73,34 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
       bridgeRef.current = bridge;
       await bridge.connect();
       setStatus("in-call");
-      toast.success("Chamada em grupo iniciada");
+      if (withVideo) {
+        const vb = new GroupVideoBridge(sid);
+        vb.onParticipantStream = (pid, stream) =>
+          setPeers((prev) => (prev.some((p) => p.pid === pid) ? prev : [...prev, { pid, stream }]));
+        vb.onParticipantGone = (pid) => setPeers((prev) => prev.filter((p) => p.pid !== pid));
+        videoRef.current = vb;
+        await vb.connect();
+        setLocalStream(vb.localStream);
+      }
+      toast.success(withVideo ? "Chamada de vídeo em grupo iniciada" : "Chamada em grupo iniciada");
     } catch (e) {
+      await cleanup();
       setStatus("idle");
       toast.error((e as Error).message || "Falha ao iniciar a chamada em grupo");
     }
   };
 
-  const end = async () => {
+  const cleanup = async () => {
+    videoRef.current?.close();
+    videoRef.current = null;
     bridgeRef.current?.disconnect();
     bridgeRef.current = null;
+    setLocalStream(null);
+    setPeers([]);
+  };
+
+  const end = async () => {
+    await cleanup();
     try {
       await endGroupCall(sid);
     } catch {
@@ -77,11 +119,11 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
       </div>
 
       {status === "idle" ? (
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-col gap-2">
           <select
             value={jid}
             onChange={(e) => setJid(e.target.value)}
-            className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+            className="rounded-md border bg-background px-3 py-2 text-sm"
           >
             <option value="">Selecione um grupo…</option>
             {(groups ?? []).map((g) => (
@@ -90,26 +132,41 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
               </option>
             ))}
           </select>
-          <Button onClick={start}>
-            <PhoneCall className="h-4 w-4" /> Ligar no grupo
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={() => start(false)} className="flex-1">
+              <PhoneCall className="h-4 w-4" /> Ligar (áudio)
+            </Button>
+            <Button onClick={() => start(true)} variant="secondary" className="flex-1">
+              <Video className="h-4 w-4" /> Ligar com vídeo
+            </Button>
+          </div>
         </div>
       ) : (
-        <div className="flex items-center justify-between">
-          <span className="flex items-center gap-2 text-sm text-muted-foreground">
-            {status === "calling" ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Conectando…
-              </>
-            ) : (
-              <>
-                <span className="h-2.5 w-2.5 rounded-full bg-primary" /> Em chamada de grupo
-              </>
-            )}
-          </span>
-          <Button variant="destructive" onClick={end}>
-            <PhoneOff className="h-4 w-4" /> Encerrar
-          </Button>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
+              {status === "calling" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Conectando…
+                </>
+              ) : (
+                <>
+                  <span className="h-2.5 w-2.5 rounded-full bg-primary" /> Em chamada de grupo
+                </>
+              )}
+            </span>
+            <Button variant="destructive" onClick={end}>
+              <PhoneOff className="h-4 w-4" /> Encerrar
+            </Button>
+          </div>
+          {(localStream || peers.length > 0) && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {localStream && <VideoTile stream={localStream} label="Você" muted />}
+              {peers.map((p) => (
+                <VideoTile key={p.pid} stream={p.stream} label={p.pid.slice(-4)} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Card>

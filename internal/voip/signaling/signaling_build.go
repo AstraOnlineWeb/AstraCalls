@@ -29,6 +29,11 @@ var CapabilityOffer = capabilityOffer
 var capabilityGroupOffer = []byte{0x01, 0x05, 0xf5, 0x09, 0xe0, 0xbb, 0x53}
 var CapabilityGroupOffer = capabilityGroupOffer
 
+// CapabilityGroupVideoOffer é a capability de chamada de grupo com VÍDEO (visto nos
+// group_updates reais: 0105f509e0fa53, difere da de áudio só no byte 5: fa vs bb).
+var capabilityGroupVideoOffer = []byte{0x01, 0x05, 0xf5, 0x09, 0xe0, 0xfa, 0x53}
+var CapabilityGroupVideoOffer = capabilityGroupVideoOffer
+
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, []types.JID, error) {
 	creator := sock.OwnLID()
 	if creator.IsEmpty() {

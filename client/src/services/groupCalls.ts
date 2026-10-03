@@ -13,8 +13,8 @@ export const listGroups = (sid: string) =>
   );
 
 // startGroupCall inicia uma chamada em grupo (toca para os membros do grupo).
-export const startGroupCall = (sid: string, groupJid: string) =>
-  apiPost<{ callId: string; targets: number }>(`/api/sessions/${sid}/calls/group`, { groupJid });
+export const startGroupCall = (sid: string, groupJid: string, video = false) =>
+  apiPost<{ callId: string; targets: number }>(`/api/sessions/${sid}/calls/group`, { groupJid, video });
 
 // endGroupCall encerra a chamada em grupo ativa.
 export const endGroupCall = (sid: string) =>
