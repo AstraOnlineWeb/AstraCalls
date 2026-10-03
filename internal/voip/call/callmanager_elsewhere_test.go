@@ -16,18 +16,19 @@ import (
 // fakeRelay é um RelayTransport de teste sem conexão real.
 type fakeRelay struct{}
 
-func (fakeRelay) SetSsrc(uint32)                          {}
-func (fakeRelay) SetSubscriptionSsrc(uint32)              {}
-func (fakeRelay) SetStreamSsrcs([]uint32, []uint32)       {}
-func (fakeRelay) SetOnConnected(func(string, int))        {}
-func (fakeRelay) SetOnReceive(func([]byte))               {}
-func (fakeRelay) ResendSubscriptions()                    {}
-func (fakeRelay) ConfigureRelays([]transport.RelayConfig) {}
-func (fakeRelay) Broadcast([]byte)                        {}
-func (fakeRelay) BufferedAmount() uint64                  { return 0 }
-func (fakeRelay) HasConnection() bool                     { return false }
-func (fakeRelay) ConnectedCount() int                     { return 0 }
-func (fakeRelay) Cleanup()                                {}
+func (fakeRelay) SetSsrc(uint32)                                            {}
+func (fakeRelay) SetSubscriptionSsrc(uint32)                                {}
+func (fakeRelay) SetStreamSsrcs([]uint32, []uint32)                         {}
+func (fakeRelay) SetGroupAllocate(func(string, int, []byte, []byte) []byte) {}
+func (fakeRelay) SetOnConnected(func(string, int))                          {}
+func (fakeRelay) SetOnReceive(func([]byte))                                 {}
+func (fakeRelay) ResendSubscriptions()                                      {}
+func (fakeRelay) ConfigureRelays([]transport.RelayConfig)                   {}
+func (fakeRelay) Broadcast([]byte)                                          {}
+func (fakeRelay) BufferedAmount() uint64                                    { return 0 }
+func (fakeRelay) HasConnection() bool                                       { return false }
+func (fakeRelay) ConnectedCount() int                                       { return 0 }
+func (fakeRelay) Cleanup()                                                  {}
 
 // deviceSock estende fakeSock devolvendo uma lista fixa de devices do destino.
 type deviceSock struct {

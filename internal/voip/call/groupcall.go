@@ -2,6 +2,7 @@ package call
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -56,6 +57,10 @@ type GroupCallManager struct {
 
 	epochKey  []byte
 	epochTxID uint32
+
+	groupRelay    *signaling.GroupCallRelay // relay do grupo (do group_update)
+	connectedPIDs []uint32                  // PIDs dos participantes remotos conectados
+	relayStarted  bool                      // já configurou o relay de grupo
 
 	selfSsrcs  [9]uint32
 	sendSrtp   *media.SrtpContext
@@ -202,7 +207,9 @@ func (m *GroupCallManager) HandleUnknownCall(ctx context.Context, node *waBinary
 // criador e o servidor pediu rekey, distribui a chave de epoch.
 func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signaling.GroupCallUpdate) {
 	m.mu.Lock()
+	var pids []uint32
 	for _, p := range update.Participants {
+		connected := p.State == "connected"
 		for _, d := range p.Devices {
 			if d.JID.IsEmpty() || d.JID == m.selfLID {
 				continue
@@ -215,21 +222,25 @@ func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signalin
 			}
 			if d.HasPID {
 				gp.pid = int(d.PID)
+				if connected {
+					pids = append(pids, d.PID) // só conectados entram na assinatura do relay
+				}
 			}
 		}
 	}
-	relay := update.Relay
+	m.connectedPIDs = pids
+	if update.Relay != nil {
+		m.groupRelay = update.Relay
+	}
 	rekey := update.RekeyRequested && m.isCreator
 	m.mu.Unlock()
 
-	if relay != nil {
-		m.connectRelay(relay)
-	}
 	if rekey {
 		if err := m.distributeEpoch(ctx, update); err != nil {
 			m.log.Warn("group: epoch fanout failed", "err", err)
 		}
 	}
+	m.tryStartRelay()
 	m.maybeStartMedia()
 }
 
@@ -338,6 +349,9 @@ func (m *GroupCallManager) installEpoch(txid uint32, key []byte) {
 		m.setupReceiverLocked(gp)
 	}
 	m.mu.Unlock()
+
+	m.tryStartRelay()
+	m.maybeStartMedia()
 }
 
 // setupReceiverLocked deriva o SSRC de áudio, o contexto SRTP e o decoder de um
@@ -368,44 +382,64 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 	}
 }
 
-// connectRelay mapeia o relay de grupo para a nossa config e conecta. OBS: a estrutura
-// de tokens/WARP/HBH-FEC do relay de grupo difere do 1:1 — este mapeamento é
-// best-effort e precisa de validação em chamada real.
-func (m *GroupCallManager) connectRelay(relay *signaling.GroupCallRelay) {
-	var endpoints []core.RelayEndpoint
-	for _, ep := range relay.Endpoints {
-		var rawToken []byte
-		if int(ep.TokenID) < len(relay.Tokens) {
-			rawToken = relay.Tokens[ep.TokenID]
-		}
-		var rawAuth []byte
-		if int(ep.AuthTokenID) < len(relay.AuthTokens) {
-			rawAuth = relay.AuthTokens[ep.AuthTokenID]
-		}
-		endpoints = append(endpoints, core.RelayEndpoint{
-			IP: ep.IPv4, Port: int(ep.Port), Key: string(relay.Key),
-			RawToken: rawToken, RawAuthToken: rawAuth,
-			RelayID: int(ep.RelayID), RelayName: ep.RelayName, Protocol: 0,
-		})
-	}
-	relays := buildRelayConfigs(endpoints)
-	if len(relays) == 0 {
-		m.log.Warn("group: no usable relay configs (precisa validar estrutura do relay de grupo)")
+// tryStartRelay conecta o relay de grupo UMA vez, quando já há epoch (chaves) e o
+// relay do group_update. Usa o Allocate de GRUPO (assinaturas de grupo + HBH-FEC),
+// montado numa closure que lê os PIDs conectados correntes a cada (re)envio.
+func (m *GroupCallManager) tryStartRelay() {
+	m.mu.Lock()
+	if m.relayStarted || len(m.epochKey) != 32 || m.groupRelay == nil {
+		m.mu.Unlock()
 		return
 	}
-
-	m.mu.Lock()
-	selfSsrcs := m.selfSsrcs[:]
-	var peerSsrcs []uint32
-	for ssrc := range m.bySSRC {
-		peerSsrcs = append(peerSsrcs, ssrc)
+	relay := m.groupRelay
+	callID := m.callID
+	selfID := m.selfID
+	// escolhe o primeiro endpoint utilizável
+	var ep *signaling.GroupCallRelayEndpoint
+	for i := range relay.Endpoints {
+		if relay.Endpoints[i].IPv4 != "" && relay.Endpoints[i].Port != 0 {
+			ep = &relay.Endpoints[i]
+			break
+		}
 	}
+	if ep == nil {
+		m.mu.Unlock()
+		m.log.Warn("group: relay sem endpoint utilizável")
+		return
+	}
+	var rawToken []byte
+	if int(ep.TokenID) < len(relay.Tokens) {
+		rawToken = relay.Tokens[ep.TokenID]
+	}
+	groupKey := append([]byte(nil), relay.Key...)
+	m.relayStarted = true
 	m.mu.Unlock()
 
-	m.relay.SetSsrc(selfSsrcsFirst(selfSsrcs))
-	m.relay.SetStreamSsrcs(selfSsrcs, peerSsrcs)
-	m.relay.ConfigureRelays(relays)
-	m.log.Info("group relay configured", "connected", m.relay.ConnectedCount(), "peers", len(peerSsrcs))
+	// Allocate de grupo (lê os PIDs conectados correntes a cada envio/keepalive).
+	m.relay.SetGroupAllocate(func(ip string, port int, token, key []byte) []byte {
+		xor, ok := transport.EncodeXorRelayEndpointBytes(ip, uint16(port))
+		if !ok {
+			return nil
+		}
+		var txid [12]byte
+		_, _ = rand.Read(txid[:])
+		m.mu.Lock()
+		pids := append([]uint32(nil), m.connectedPIDs...)
+		m.mu.Unlock()
+		streamSsrcs, _ := media.DeriveRelayStreamSSRCs(callID, selfID)
+		appData, _ := media.DeriveParticipantSSRC(callID, selfID, media.GroupAppDataSlotWord)
+		hbhTx, _ := media.DeriveParticipantSSRC(callID, selfID, media.GroupHBHFECTXSlot)
+		hbhRx, _ := media.DeriveParticipantSSRC(callID, selfID, media.GroupHBHFECRXSlot)
+		return transport.BuildGroupAllocate(txid, token, xor, streamSsrcs, appData, [2]uint32{hbhTx, hbhRx}, pids, key)
+	})
+
+	cfg := []transport.RelayConfig{{
+		IP: ep.IPv4, Port: int(ep.Port), RawToken: rawToken, Key: string(groupKey),
+		RelayID: int(ep.RelayID), Name: ep.RelayName,
+	}}
+	m.relay.SetSsrc(m.selfSsrcs[0])
+	m.relay.ConfigureRelays(cfg)
+	m.log.Info("group relay: conectando", "relay", ep.RelayName, "ip", ep.IPv4, "port", ep.Port)
 }
 
 // maybeStartMedia liga os loops de mídia quando já há epoch e relay conectado.

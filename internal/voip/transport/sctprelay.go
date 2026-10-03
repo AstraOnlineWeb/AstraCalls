@@ -85,6 +85,19 @@ type SctpRelayManager struct {
 	onConnected func(ip string, port int)
 
 	onReceive func(data []byte)
+
+	// groupAllocate, quando setado, substitui o Allocate 1:1 pelo Allocate de GRUPO
+	// (assinaturas de grupo + HBH-FEC). Recebe o endpoint/token/chave do relay e
+	// devolve o pacote STUN pronto. Chamado a cada (re)envio de registro/keepalive.
+	groupAllocate func(ip string, port int, rawToken, key []byte) []byte
+}
+
+// SetGroupAllocate liga o modo de chamada em GRUPO no relay: o Allocate passa a ser
+// montado pela função fornecida (BuildGroupAllocate) em vez do Allocate 1:1.
+func (m *SctpRelayManager) SetGroupAllocate(fn func(ip string, port int, rawToken, key []byte) []byte) {
+	m.mu.Lock()
+	m.groupAllocate = fn
+	m.mu.Unlock()
 }
 
 func NewSctpRelayManager(log *slog.Logger) *SctpRelayManager {
@@ -301,7 +314,7 @@ func (m *SctpRelayManager) sendStunRegistration(conn *relayConnection) {
 	if remoteUfrag == "" {
 		remoteUfrag = info.Token
 	}
-	if remoteUfrag == "" {
+	if remoteUfrag == "" && m.groupAllocate == nil {
 		return
 	}
 	localUfrag := conn.localUfrag
@@ -331,18 +344,25 @@ func (m *SctpRelayManager) sendStunRegistration(conn *relayConnection) {
 		m.sendRaw(conn, BuildBindingRequestWithSubs(nil, nil, subs, false, false))
 
 		if len(info.RawToken) > 0 {
-			var selfSsrcs, peerSsrcs []uint32
-			if len(m.streamSelfSsrcs) > 0 {
-				selfSsrcs = m.streamSelfSsrcs
-				peerSsrcs = m.streamPeerSsrcs
-			} else {
-				selfSsrcs = []uint32{m.audioSsrc}
-				if m.subscriptionSsrc != 0 {
-					peerSsrcs = []uint32{m.subscriptionSsrc}
+			if m.groupAllocate != nil {
+				// Chamada em GRUPO: Allocate com assinaturas de grupo + HBH-FEC.
+				if pkt := m.groupAllocate(info.IP, info.Port, info.RawToken, hmacKey); len(pkt) > 0 {
+					m.sendRaw(conn, pkt)
 				}
+			} else {
+				var selfSsrcs, peerSsrcs []uint32
+				if len(m.streamSelfSsrcs) > 0 {
+					selfSsrcs = m.streamSelfSsrcs
+					peerSsrcs = m.streamPeerSsrcs
+				} else {
+					selfSsrcs = []uint32{m.audioSsrc}
+					if m.subscriptionSsrc != 0 {
+						peerSsrcs = []uint32{m.subscriptionSsrc}
+					}
+				}
+				ssrcList := BuildSSRCSubscriptionList(selfSsrcs, peerSsrcs, 0, 0)
+				m.sendRaw(conn, BuildAllocateForRelay(info.RawToken, ssrcList, hmacKey, info.IP, info.Port))
 			}
-			ssrcList := BuildSSRCSubscriptionList(selfSsrcs, peerSsrcs, 0, 0)
-			m.sendRaw(conn, BuildAllocateForRelay(info.RawToken, ssrcList, hmacKey, info.IP, info.Port))
 		}
 	}
 

@@ -9,6 +9,7 @@ type RelayTransport interface {
 	SetSsrc(ssrc uint32)
 	SetSubscriptionSsrc(ssrc uint32)
 	SetStreamSsrcs(selfSsrcs, peerSsrcs []uint32)
+	SetGroupAllocate(fn func(ip string, port int, rawToken, key []byte) []byte)
 	SetOnConnected(fn func(ip string, port int))
 	SetOnReceive(fn func(data []byte))
 	ResendSubscriptions()
