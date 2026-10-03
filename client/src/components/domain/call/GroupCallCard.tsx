@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Users, PhoneCall, PhoneOff, Loader2, Video } from "lucide-react";
+import { Users, PhoneCall, PhoneOff, Loader2, Video, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,15 +9,34 @@ import { WSAudioBridge } from "@/lib/ws-audio";
 import { GroupVideoBridge } from "@/lib/call/group-video";
 import { listGroups, startGroupCall, endGroupCall, getGroupRoster, type RosterEntry } from "@/services/groupCalls";
 
-// VideoTile liga um MediaStream a um <video> (srcObject não é prop do React).
+// VideoTile liga um MediaStream a um <video> (srcObject não é prop do React) e permite
+// GIRAR a câmera individualmente (90° por clique) — útil quando o vídeo vem deitado.
 const VideoTile = ({ stream, label, muted }: { stream: MediaStream; label: string; muted?: boolean }) => {
   const ref = useRef<HTMLVideoElement>(null);
+  const [rot, setRot] = useState(0);
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
   }, [stream]);
+  // Em 90°/270° a imagem gira dentro do bloco; escala p/ preencher sem cortar demais.
+  const sideways = rot === 90 || rot === 270;
   return (
-    <div className="relative overflow-hidden rounded-md bg-black">
-      <video ref={ref} autoPlay playsInline muted={muted} className="h-32 w-full object-cover" />
+    <div className="relative h-32 overflow-hidden rounded-md bg-black">
+      <video
+        ref={ref}
+        autoPlay
+        playsInline
+        muted={muted}
+        style={{ transform: `rotate(${rot}deg) scale(${sideways ? 1.34 : 1})` }}
+        className="h-full w-full object-cover transition-transform"
+      />
+      <button
+        type="button"
+        onClick={() => setRot((r) => (r + 90) % 360)}
+        title="Girar câmera"
+        className="absolute right-1 top-1 rounded bg-black/60 p-1 text-white hover:bg-black/80"
+      >
+        <RotateCw className="h-3.5 w-3.5" />
+      </button>
       <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[0.6rem] text-white">
         {label}
       </span>
