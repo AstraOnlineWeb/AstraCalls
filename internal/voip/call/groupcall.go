@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wacalls/internal/voip/call/groupmix"
@@ -44,7 +45,11 @@ type GroupCallManager struct {
 	sock core.VoipSocket
 	log  *slog.Logger
 
-	relay RelayTransport
+	// Canal de mídia do relay de GRUPO (DTLS direto). O grupo NÃO usa o
+	// SctpRelayManager (WebRTC/ICE) do 1:1 — conecta direto, igual ao WhatsApp Web.
+	groupChan *transport.GroupRelayChannel
+	groupKey  []byte
+	recvStop  chan struct{}
 
 	mu        sync.Mutex
 	callID    string
@@ -77,6 +82,9 @@ type GroupCallManager struct {
 	captureBuf []float32
 	stop       chan struct{}
 
+	recvN  uint64 // diagnóstico: pacotes recebidos do relay de grupo
+	audioN uint64 // diagnóstico: pacotes de áudio decodificados
+
 	OnPeerAudio func([]float32) // áudio MIXADO de todos os participantes (frames de 960)
 	OnEnded     func(callID string)
 }
@@ -86,17 +94,13 @@ func NewGroupCallManager(sock core.VoipSocket, log *slog.Logger) *GroupCallManag
 	if log == nil {
 		log = slog.Default()
 	}
-	m := &GroupCallManager{
+	return &GroupCallManager{
 		sock:     sock,
 		log:      log,
 		byDevice: make(map[string]*groupParticipant),
 		bySSRC:   make(map[uint32]*groupParticipant),
 		mixer:    groupmix.NewMixer(),
 	}
-	relay := transport.NewSctpRelayManager(log)
-	relay.SetOnReceive(func(data []byte) { m.onRelayData(data) })
-	m.relay = relay
-	return m
 }
 
 // CallID devolve o id da call em andamento (vazio se não houver).
@@ -412,11 +416,30 @@ func (m *GroupCallManager) tryStartRelay() {
 		rawToken = relay.Tokens[ep.TokenID]
 	}
 	groupKey := append([]byte(nil), relay.Key...)
+	ip, port, relayName := ep.IPv4, int(ep.Port), ep.RelayName
 	m.relayStarted = true
+	m.groupKey = groupKey
 	m.mu.Unlock()
 
-	// Allocate de grupo (lê os PIDs conectados correntes a cada envio/keepalive).
-	m.relay.SetGroupAllocate(func(ip string, port int, token, key []byte) []byte {
+	// Conecta o canal de mídia (DTLS direto) ao endpoint do relay de grupo.
+	m.log.Info("group relay: conectando (dtls direto)", "relay", relayName, "ip", ip, "port", port)
+	ch, err := transport.ConnectGroupRelay(ip, port)
+	if err != nil {
+		m.log.Error("group relay: falha ao conectar", "err", err, "ip", ip, "port", port)
+		m.mu.Lock()
+		m.relayStarted = false
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Lock()
+	m.groupChan = ch
+	m.recvStop = make(chan struct{})
+	stop := m.recvStop
+	m.mu.Unlock()
+	m.log.Info("group relay: canal DTLS aberto", "relay", relayName)
+
+	// allocate builder (lê PIDs conectados correntes a cada envio/keepalive).
+	allocate := func() []byte {
 		xor, ok := transport.EncodeXorRelayEndpointBytes(ip, uint16(port))
 		if !ok {
 			return nil
@@ -430,22 +453,103 @@ func (m *GroupCallManager) tryStartRelay() {
 		appData, _ := media.DeriveParticipantSSRC(callID, selfID, media.GroupAppDataSlotWord)
 		hbhTx, _ := media.DeriveParticipantSSRC(callID, selfID, media.GroupHBHFECTXSlot)
 		hbhRx, _ := media.DeriveParticipantSSRC(callID, selfID, media.GroupHBHFECRXSlot)
-		return transport.BuildGroupAllocate(txid, token, xor, streamSsrcs, appData, [2]uint32{hbhTx, hbhRx}, pids, key)
-	})
+		return transport.BuildGroupAllocate(txid, rawToken, xor, streamSsrcs, appData, [2]uint32{hbhTx, hbhRx}, pids, groupKey)
+	}
 
-	cfg := []transport.RelayConfig{{
-		IP: ep.IPv4, Port: int(ep.Port), RawToken: rawToken, Key: string(groupKey),
-		RelayID: int(ep.RelayID), Name: ep.RelayName,
-	}}
-	m.relay.SetSsrc(m.selfSsrcs[0])
-	m.relay.ConfigureRelays(cfg)
-	m.log.Info("group relay: conectando", "relay", ep.RelayName, "ip", ep.IPv4, "port", ep.Port)
+	go m.groupRecvLoop(ch, stop)
+	go m.groupAllocateKeepalive(ch, stop, allocate)
+	m.maybeStartMedia()
+}
+
+// groupAllocateKeepalive envia o Allocate de grupo logo e a cada 1s (mantém a
+// assinatura no relay e atualiza os PIDs conforme os participantes conectam).
+func (m *GroupCallManager) groupAllocateKeepalive(ch *transport.GroupRelayChannel, stop chan struct{}, allocate func() []byte) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	if pkt := allocate(); len(pkt) > 0 {
+		_, _ = ch.Send(pkt)
+	}
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if pkt := allocate(); len(pkt) > 0 {
+				if _, err := ch.Send(pkt); err != nil {
+					return
+				}
+			}
+		}
+	}
+}
+
+// groupRecvLoop lê o canal do relay: responde binding requests e demultiplexa RTP.
+func (m *GroupCallManager) groupRecvLoop(ch *transport.GroupRelayChannel, stop chan struct{}) {
+	buf := make([]byte, 2048)
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		n, err := ch.Recv(buf)
+		if err != nil {
+			return
+		}
+		if n <= 0 {
+			continue
+		}
+		pkt := append([]byte(nil), buf[:n]...)
+		kind := transport.ClassifyGroupRelayPacket(pkt)
+		if mediaDebugEnabled {
+			n := atomic.AddUint64(&m.recvN, 1)
+			if n == 1 || n%200 == 0 {
+				m.log.Info("group relay recv", "pkts", n, "kind", int(kind), "bytes", len(pkt))
+			}
+		}
+		switch kind {
+		case transport.GroupRelayStun:
+			if resp, ok := transport.BuildGroupBindingSuccess(pkt, m.groupKey); ok {
+				_, _ = ch.Send(resp)
+			}
+		case transport.GroupRelayRtp:
+			m.onGroupRtp(pkt)
+		}
+	}
+}
+
+// onGroupRtp decodifica um pacote RTP de áudio de um participante → mixer.
+func (m *GroupCallManager) onGroupRtp(data []byte) {
+	if len(data) < 12 || data[1]&0x7f != core.PayloadTypeWhatsAppOpus {
+		return
+	}
+	ssrc := media.RTPSsrc(data)
+	m.mu.Lock()
+	gp := m.bySSRC[ssrc]
+	m.mu.Unlock()
+	if gp == nil || gp.srtp == nil || gp.codec == nil {
+		return
+	}
+	pkt, err := gp.srtp.Unprotect(data)
+	if err != nil || len(pkt.Payload) == 0 {
+		return
+	}
+	pcm, err := gp.codec.Decode(pkt.Payload)
+	if err != nil || len(pcm) == 0 {
+		return
+	}
+	if mediaDebugEnabled {
+		if d := atomic.AddUint64(&m.audioN, 1); d == 1 || d%200 == 0 {
+			m.log.Info("group áudio decodificado do participante", "pkts", d, "pid", gp.participantID, "samples", len(pcm))
+		}
+	}
+	m.mixer.Add(gp.participantID, pcm)
 }
 
 // maybeStartMedia liga os loops de mídia quando já há epoch e relay conectado.
 func (m *GroupCallManager) maybeStartMedia() {
 	m.mu.Lock()
-	if m.started || len(m.epochKey) != 32 || !m.relay.HasConnection() {
+	if m.started || len(m.epochKey) != 32 || m.groupChan == nil {
 		m.mu.Unlock()
 		return
 	}
@@ -496,8 +600,12 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 			frame := m.captureBuf[:960]
 			m.captureBuf = m.captureBuf[960:]
 			codec, srtp, rtp := m.sendCodec, m.sendSrtp, m.rtpSession
+			ch := m.groupChan
 			m.mu.Unlock()
 
+			if ch == nil {
+				continue
+			}
 			opus, err := codec.Encode(frame)
 			if err != nil || len(opus) == 0 {
 				continue
@@ -507,35 +615,9 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 			if err != nil {
 				continue
 			}
-			m.relay.Broadcast(protected)
+			_, _ = ch.Send(protected)
 		}
 	}
-}
-
-// onRelayData demultiplexa o áudio recebido por SSRC → participante → decode → mixer.
-func (m *GroupCallManager) onRelayData(data []byte) {
-	if !transport.IsRtpPacket(data) || len(data) < 12 {
-		return
-	}
-	if data[1]&0x7f != core.PayloadTypeWhatsAppOpus {
-		return // MVP: só áudio
-	}
-	ssrc := media.RTPSsrc(data)
-	m.mu.Lock()
-	gp := m.bySSRC[ssrc]
-	m.mu.Unlock()
-	if gp == nil || gp.srtp == nil || gp.codec == nil {
-		return
-	}
-	pkt, err := gp.srtp.Unprotect(data)
-	if err != nil || len(pkt.Payload) == 0 {
-		return
-	}
-	pcm, err := gp.codec.Decode(pkt.Payload)
-	if err != nil || len(pcm) == 0 {
-		return
-	}
-	m.mixer.Add(gp.participantID, pcm)
 }
 
 // FeedCapturedPCM recebe o áudio do atendente (navegador) para enviar na call.
@@ -558,9 +640,16 @@ func (m *GroupCallManager) End() {
 		close(m.stop)
 		m.stop = nil
 	}
+	if m.recvStop != nil {
+		close(m.recvStop)
+		m.recvStop = nil
+	}
+	ch := m.groupChan
+	m.groupChan = nil
 	callID := m.callID
 	m.callID = ""
 	m.started = false
+	m.relayStarted = false
 	for _, gp := range m.byDevice {
 		if gp.codec != nil {
 			gp.codec.Close()
@@ -574,7 +663,9 @@ func (m *GroupCallManager) End() {
 	m.bySSRC = make(map[uint32]*groupParticipant)
 	m.mu.Unlock()
 
-	m.relay.Cleanup()
+	if ch != nil {
+		_ = ch.Close()
+	}
 	if m.OnEnded != nil && callID != "" {
 		m.OnEnded(callID)
 	}

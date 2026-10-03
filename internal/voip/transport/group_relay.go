@@ -108,6 +108,22 @@ func (c *GroupRelayChannel) Recv(buf []byte) (int, error) {
 	return c.dc.Read(buf)
 }
 
+// BuildGroupBindingSuccess responde a um STUN Binding Request do relay com um Binding
+// Success assinado com a chave do grupo (integridade). Devolve ok=false se não for um
+// binding request válido.
+func BuildGroupBindingSuccess(request, integrityKey []byte) ([]byte, bool) {
+	if len(request) < 20 {
+		return nil, false
+	}
+	msgType := uint16(request[0])<<8 | uint16(request[1])
+	if msgType != 0x0001 { // STUN Binding Request
+		return nil, false
+	}
+	var txid [12]byte
+	copy(txid[:], request[8:20])
+	return gEncodeStunRequest(0x0101, txid, nil, integrityKey, true), true // 0x0101 = Binding Success
+}
+
 // ConnectGroupRelay conecta a pilha de mídia (UDP→DTLS→SCTP→DataChannel) a UM endpoint
 // de relay de grupo. Cert self-signed; verificação do cert do servidor pulada (auth da
 // mídia é HBH-SRTP). Só valida contra relay ao vivo.
