@@ -113,13 +113,10 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 		return "", &CallError{"group call needs at least 2 targets"}
 	}
 
-	// Descobre devices de cada alvo (um participante por usuário, com seus devices).
-	participants := []signaling.GroupCallParticipant{{
-		JID: self.ToNonAD(),
-		Devices: []signaling.GroupCallDevice{{
-			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), signaling.CapabilityOffer...),
-		}},
-	}}
+	// group_info lista só os DESTINOS (remotos). O criador é identificado pelo
+	// call-creator; incluir o nosso próprio device como alvo faz o servidor rejeitar
+	// com error=427 ("não oferecer pra si mesmo") e a chamada não toca.
+	var participants []signaling.GroupCallParticipant
 	for _, t := range targets {
 		devs, err := m.sock.GetUSyncDevices(ctx, []types.JID{t.ToNonAD()})
 		if err != nil {

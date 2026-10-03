@@ -175,8 +175,8 @@ func BuildInitialGroupOffer(params InitialGroupOfferParams) (waBinary.Node, erro
 	if params.CallCreator.IsEmpty() {
 		return waBinary.Node{}, fmt.Errorf("signaling: build initial group offer: call creator is required")
 	}
-	if len(params.Participants) < 3 {
-		return waBinary.Node{}, fmt.Errorf("signaling: build initial group offer: self and at least two remote participants are required")
+	if len(params.Participants) < 2 {
+		return waBinary.Node{}, fmt.Errorf("signaling: build initial group offer: at least two remote participants are required")
 	}
 	users, err := buildGroupUsers(params.Participants, params.CallCreator, params.Video)
 	if err != nil {
