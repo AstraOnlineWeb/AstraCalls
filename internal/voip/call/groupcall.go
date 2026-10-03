@@ -84,6 +84,7 @@ type GroupCallManager struct {
 
 	recvN  uint64 // diagnóstico: pacotes recebidos do relay de grupo
 	audioN uint64 // diagnóstico: pacotes de áudio decodificados
+	sentN  uint64 // diagnóstico: pacotes RTP enviados
 
 	OnPeerAudio func([]float32) // áudio MIXADO de todos os participantes (frames de 960)
 	OnEnded     func(callID string)
@@ -611,12 +612,19 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 			return
 		case <-ticker.C:
 			m.mu.Lock()
-			if m.sendCodec == nil || m.sendSrtp == nil || m.rtpSession == nil || len(m.captureBuf) < 960 {
+			if m.sendCodec == nil || m.sendSrtp == nil || m.rtpSession == nil || m.groupChan == nil {
 				m.mu.Unlock()
 				continue
 			}
-			frame := m.captureBuf[:960]
-			m.captureBuf = m.captureBuf[960:]
+			var frame []float32
+			if len(m.captureBuf) >= 960 {
+				frame = m.captureBuf[:960]
+				m.captureBuf = m.captureBuf[960:]
+			} else {
+				// Sem áudio de entrada: envia SILÊNCIO. O criador precisa emitir mídia
+				// contínua pro fluxo do grupo engatar (senão o outro lado fica "conectando").
+				frame = make([]float32, 960)
+			}
 			codec, srtp, rtp := m.sendCodec, m.sendSrtp, m.rtpSession
 			ch := m.groupChan
 			m.mu.Unlock()
@@ -634,6 +642,11 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 				continue
 			}
 			_, _ = ch.Send(protected)
+			if mediaDebugEnabled {
+				if s := atomic.AddUint64(&m.sentN, 1); s == 1 || s%200 == 0 {
+					m.log.Info("group RTP enviado", "pkts", s, "bytes", len(protected))
+				}
+			}
 		}
 	}
 }
