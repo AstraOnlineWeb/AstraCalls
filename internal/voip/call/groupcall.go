@@ -466,18 +466,28 @@ func (m *GroupCallManager) tryStartRelay() {
 func (m *GroupCallManager) groupAllocateKeepalive(ch *transport.GroupRelayChannel, stop chan struct{}, allocate func() []byte) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-	if pkt := allocate(); len(pkt) > 0 {
-		_, _ = ch.Send(pkt)
+	sendAlloc := func() bool {
+		pkt := allocate()
+		if len(pkt) == 0 {
+			return true
+		}
+		_, err := ch.Send(pkt)
+		if mediaDebugEnabled {
+			m.mu.Lock()
+			np := len(m.connectedPIDs)
+			m.mu.Unlock()
+			m.log.Info("group allocate enviado", "bytes", len(pkt), "pids", np, "err", err)
+		}
+		return err == nil
 	}
+	sendAlloc()
 	for {
 		select {
 		case <-stop:
 			return
 		case <-ticker.C:
-			if pkt := allocate(); len(pkt) > 0 {
-				if _, err := ch.Send(pkt); err != nil {
-					return
-				}
+			if !sendAlloc() {
+				return
 			}
 		}
 	}
@@ -503,14 +513,22 @@ func (m *GroupCallManager) groupRecvLoop(ch *transport.GroupRelayChannel, stop c
 		kind := transport.ClassifyGroupRelayPacket(pkt)
 		if mediaDebugEnabled {
 			n := atomic.AddUint64(&m.recvN, 1)
-			if n == 1 || n%200 == 0 {
-				m.log.Info("group relay recv", "pkts", n, "kind", int(kind), "bytes", len(pkt))
+			if n <= 8 || n%200 == 0 {
+				var mt uint16
+				if len(pkt) >= 2 {
+					mt = uint16(pkt[0])<<8 | uint16(pkt[1])
+				}
+				m.log.Info("group relay recv", "pkts", n, "kind", int(kind), "bytes", len(pkt), "stun_type", mt)
 			}
 		}
 		switch kind {
 		case transport.GroupRelayStun:
-			if resp, ok := transport.BuildGroupBindingSuccess(pkt, m.groupKey); ok {
+			resp, ok := transport.BuildGroupBindingSuccess(pkt, m.groupKey)
+			if ok {
 				_, _ = ch.Send(resp)
+			}
+			if mediaDebugEnabled {
+				m.log.Info("group relay STUN", "binding_req", ok, "bytes", len(pkt))
 			}
 		case transport.GroupRelayRtp:
 			m.onGroupRtp(pkt)
