@@ -417,6 +417,8 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// logo e `commit` (SHA) no tooltip.
 		"version": version,
 		"commit":  commit,
+		// Chamada em grupo (experimental) habilitada nesta instância.
+		"groupCalls": groupCallsEnabled(),
 	})
 }
 

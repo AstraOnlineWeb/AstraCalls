@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PhoneCall } from "lucide-react";
 import { Dialer } from "@/components/domain/call/Dialer";
+import { GroupCallCard } from "@/components/domain/call/GroupCallCard";
 import { CallCard } from "@/components/domain/call/CallCard";
 import { OtherCallsList } from "@/components/domain/call/OtherCallsList";
 import { HistoryDrawer } from "@/components/domain/history/HistoryDrawer";
@@ -29,6 +30,7 @@ export const CallsPage = ({ sid }: { sid: string }) => {
         <HistoryDrawer sid={sid} />
       </div>
       <Dialer sid={sid} />
+      <GroupCallCard sid={sid} />
       {mine.length > 0 ? (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {mine.map((c) => (
