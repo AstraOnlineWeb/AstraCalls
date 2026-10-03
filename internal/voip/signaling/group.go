@@ -593,10 +593,11 @@ func gDestinationTo(devices []types.JID) waBinary.Node {
 }
 
 func gCallWrap(to types.JID, id *string, action waBinary.Node) waBinary.Node {
-	attrs := waBinary.Attrs{"to": to}
+	stanzaID := GenerateCallStanzaID() // sem id o servidor IGNORA o <call> (não acka)
 	if id != nil {
-		attrs["id"] = *id
+		stanzaID = *id
 	}
+	attrs := waBinary.Attrs{"to": to, "id": stanzaID}
 	return waBinary.Node{Tag: "call", Attrs: attrs, Content: []waBinary.Node{action}}
 }
 
