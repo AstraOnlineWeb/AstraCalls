@@ -19,3 +19,12 @@ export const startGroupCall = (sid: string, groupJid: string, video = false) =>
 // endGroupCall encerra a chamada em grupo ativa.
 export const endGroupCall = (sid: string) =>
   apiPost<unknown>(`/api/sessions/${sid}/calls/group/end`, {});
+
+export type RosterEntry = { phone: string; name: string };
+
+// getGroupRoster devolve o roster (número do LID -> telefone + nome) da chamada ativa,
+// p/ rotular os vídeos com número+nome em vez do @lid.
+export const getGroupRoster = (sid: string) =>
+  apiGet<{ roster: Record<string, RosterEntry> }>(`/api/sessions/${sid}/calls/group/roster`).then(
+    (r) => r.roster ?? {},
+  );

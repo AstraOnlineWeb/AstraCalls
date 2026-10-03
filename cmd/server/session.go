@@ -105,6 +105,9 @@ type Session struct {
 	// Chamada em GRUPO (experimental, atrás da flag WACALLS_GROUP_CALLS). Criado sob
 	// demanda. Protegido por s.mu.
 	groupCall *call.GroupCallManager
+	// Roster da chamada de grupo ativa: número do LID (parte antes do ':') -> telefone
+	// e nome, p/ o painel rotular os vídeos com número+nome em vez do @lid.
+	groupRoster map[string]groupRosterEntry
 }
 
 // Origem de uma mensagem enviada por nós. O agente do Chatwoot nunca é espelhado

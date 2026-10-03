@@ -126,13 +126,25 @@ func (s *server) handleStartGroupCall(w http.ResponseWriter, r *http.Request) {
 		if id := sess.client.Store.ID; id != nil {
 			ownPN = id.ToNonAD()
 		}
+		// Roster p/ o painel rotular os vídeos: número do LID -> telefone + nome.
+		roster := map[string]groupRosterEntry{}
 		for _, p := range info.Participants {
+			phone, name := sess.resolvePeer(p.JID.String())
+			if phone == "" && !p.PhoneNumber.IsEmpty() {
+				phone = p.PhoneNumber.User
+			}
+			if p.JID.User != "" {
+				roster[p.JID.User] = groupRosterEntry{Phone: phone, Name: name}
+			}
 			t := p.JID.ToNonAD()
 			if t.IsEmpty() || t == ownLID || t == ownPN {
 				continue
 			}
 			targets = append(targets, t)
 		}
+		sess.mu.Lock()
+		sess.groupRoster = roster
+		sess.mu.Unlock()
 	} else {
 		// Modo ad-hoc: lista de números.
 		for _, n := range body.Numbers {
@@ -291,4 +303,26 @@ func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
 	gc.SetVideoSink(nil)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 	s.log.Info("group video_ws: disconnected", "sid", sess.id)
+}
+
+// groupRosterEntry é o telefone + nome de um participante do grupo (p/ rótulo no painel).
+type groupRosterEntry struct {
+	Phone string `json:"phone"`
+	Name  string `json:"name"`
+}
+
+// handleGroupRoster devolve o roster da chamada de grupo ativa (número do LID ->
+// telefone + nome), p/ o painel mostrar número+nome embaixo de cada câmera.
+func (s *server) handleGroupRoster(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	roster := sess.groupRoster
+	sess.mu.Unlock()
+	if roster == nil {
+		roster = map[string]groupRosterEntry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"roster": roster})
 }

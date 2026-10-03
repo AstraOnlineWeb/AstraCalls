@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api";
 import { WSAudioBridge } from "@/lib/ws-audio";
 import { GroupVideoBridge } from "@/lib/call/group-video";
-import { listGroups, startGroupCall, endGroupCall } from "@/services/groupCalls";
+import { listGroups, startGroupCall, endGroupCall, getGroupRoster, type RosterEntry } from "@/services/groupCalls";
 
 // VideoTile liga um MediaStream a um <video> (srcObject não é prop do React).
 const VideoTile = ({ stream, label, muted }: { stream: MediaStream; label: string; muted?: boolean }) => {
@@ -48,6 +48,7 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
   const [status, setStatus] = useState<"idle" | "calling" | "in-call">("idle");
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [peers, setPeers] = useState<Array<{ pid: string; stream: MediaStream }>>([]);
+  const [roster, setRoster] = useState<Record<string, RosterEntry>>({});
   const bridgeRef = useRef<WSAudioBridge | null>(null);
   const videoRef = useRef<GroupVideoBridge | null>(null);
 
@@ -66,6 +67,7 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
     setStatus("calling");
     try {
       await startGroupCall(sid, target, withVideo);
+      getGroupRoster(sid).then(setRoster).catch(() => {});
       const bridge = new WSAudioBridge(sid, "group", null, {
         onState: (s) => setStatus(s === "connected" ? "in-call" : s === "disconnected" ? "idle" : "calling"),
         onError: (e) => toast.error(e.message),
@@ -97,6 +99,17 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
     bridgeRef.current = null;
     setLocalStream(null);
     setPeers([]);
+    setRoster({});
+  };
+
+  // labelFor traduz o pid (ex.: "144946606653478:55@lid") em número + nome via roster.
+  const labelFor = (pid: string) => {
+    const lidNum = pid.split(/[:@]/)[0];
+    const e = roster[lidNum];
+    if (!e) return pid.slice(-4);
+    const phone = e.phone ? `+${e.phone}` : "";
+    if (e.name && phone) return `${e.name} · ${phone}`;
+    return e.name || phone || pid.slice(-4);
   };
 
   const end = async () => {
@@ -163,7 +176,7 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {localStream && <VideoTile stream={localStream} label="Você" muted />}
               {peers.map((p) => (
-                <VideoTile key={p.pid} stream={p.stream} label={p.pid.slice(-4)} />
+                <VideoTile key={p.pid} stream={p.stream} label={labelFor(p.pid)} />
               ))}
             </div>
           )}
