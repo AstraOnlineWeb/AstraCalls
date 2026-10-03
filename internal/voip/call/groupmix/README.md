@@ -26,6 +26,29 @@ incompatíveis, puxaria um 2º whatsmeow e exigiria 2 sessões. => **portar**, n
   (501 sem a flag `WACALLS_GROUP_CALLS=1`); roteamento de eventos de grupo no
   handleUnknownCall. Documentado no OpenAPI.
 
+## Teste ao vivo 2026-10-03 (grupo Geral1, 3 membros) — achados
+Disparado via POST /calls/group pro grupo existente. 3 BUGS REAIS corrigidos:
+1. `<call>` sem atributo `id` → servidor IGNORA o offer (sem ack, sem ring). O
+   gCallWrap do grupo não gerava id. FIX: gera GenerateCallStanzaID() (commit 633ef48).
+2. (investigado) self no group_info com o nosso device → ack `error=427` no self.
+3. (investigado) offer completo estilo 1:1 (group_info + `<destination>` + `<encopt>`)
+   → servidor volta a ficar SILENCIOSO (sem ack). Misturar group_info + destination
+   NÃO é o shape certo.
+
+Comportamento observado do servidor (ACK logado em StartGroupCall):
+- group_info-only + self incluído → `<ack class=call error=427 type=offer>` com
+  `<user error=427 jid=SELF>` e os 2 REMOTOS ACEITOS (devices resolvidos, sem erro).
+- group_info-only + self excluído → `error=400` num user fantasma `<callid>@call`
+  (o servidor ESPERA o self no roster), remotos ainda aceitos.
+- group_info + destination/encopt (estilo 1:1) → SEM ack (drop silencioso).
+Em TODOS os casos os 2 destinos são aceitos, mas NENHUM device toca.
+
+CONCLUSÃO: o servidor processa o offer e resolve os membros, mas o handshake exato
+que faz TOCAR não bate. Para fechar é preciso CAPTURAR uma chamada de grupo REAL do
+WhatsApp Web (extensão `meowcaller/diag`) e comparar o offer/ack/sequência
+byte-a-byte — iterar às cegas é caro (servidor alterna erro/drop por formato).
+Estado do código: voltou ao group_info-only (ref. meowcaller) + id + log de ACK.
+
 ## Precisa de CHAMADA REAL pra validar/fechar (não dá pra testar sem número)
 - Aceitação do offer de grupo pelo servidor (formato do group_info/capability).
 - Estrutura do RELAY de grupo (tokens/WARP/HBH-FEC diferem do 1:1): o mapeamento em
