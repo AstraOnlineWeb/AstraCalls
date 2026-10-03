@@ -55,11 +55,14 @@ func (s *Session) routeGroupUnknownCall(ctx context.Context, node *waBinary.Node
 	if gc == nil || gc.CallID() == "" {
 		return false
 	}
-	if callIDFromNode(node) != gc.CallID() {
+	// Deixa o manager parsear o envelope e decidir se é do grupo ativo (o callID de
+	// eventos de controle de grupo nem sempre vem no formato do callIDFromNode).
+	// Só consideramos "tratado" (true) quando casa o callID; senão deixa seguir o 1:1.
+	if cid := callIDFromNode(node); cid != "" && cid != gc.CallID() {
 		return false
 	}
 	gc.HandleUnknownCall(ctx, node)
-	return true
+	return callIDFromNode(node) == gc.CallID()
 }
 
 // handleStartGroupCall inicia uma chamada em grupo ad-hoc (POST /calls/group).

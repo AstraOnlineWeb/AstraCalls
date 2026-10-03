@@ -154,8 +154,15 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 	m.mu.Unlock()
 
 	go func() {
-		if _, err := m.sock.Query(context.Background(), offer); err != nil {
+		ack, err := m.sock.Query(context.Background(), offer)
+		if err != nil {
 			m.log.Error("group offer query error", "err", err, "call_id", callID)
+			return
+		}
+		if ack != nil {
+			// DIAGNÓSTICO: o ack do servidor diz se o offer de grupo foi aceito ou
+			// rejeitado (e por quê). É o que falta pra saber por que não toca.
+			m.log.Info("group offer ACK", "call_id", callID, "xml", ack.String())
 		}
 	}()
 	m.log.Info("group offer sent", "call_id", callID, "targets", len(targets), "video", video)
@@ -169,6 +176,7 @@ func (m *GroupCallManager) HandleUnknownCall(ctx context.Context, node *waBinary
 	if err != nil {
 		return
 	}
+	m.log.Info("group control event", "tag", envelope.Action.Tag, "call_id", envelope.CallID, "from", envelope.From.String())
 	m.mu.Lock()
 	active := m.callID != "" && m.callID == envelope.CallID
 	m.mu.Unlock()

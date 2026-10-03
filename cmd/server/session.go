@@ -786,14 +786,14 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 	if evt.Node == nil {
 		return
 	}
-	callID := callIDFromNode(evt.Node)
-	if callID == "" {
+	// Chamada em GRUPO (experimental): eventos de controle (group_update/enc_rekey)
+	// não entram no registro de chamadas 1:1 e podem não ter callID no formato do
+	// callIDFromNode — por isso roteamos ANTES do early-return. O manager decide.
+	if s.routeGroupUnknownCall(ctx, evt.Node) {
 		return
 	}
-	// Chamada em GRUPO (experimental): eventos de controle (group_update/enc_rekey)
-	// não entram no registro de chamadas 1:1. Se a flag estiver ligada e for um
-	// evento do grupo ativo, trata aqui e encerra.
-	if s.routeGroupUnknownCall(ctx, evt.Node) {
+	callID := callIDFromNode(evt.Node)
+	if callID == "" {
 		return
 	}
 	ac, ok := s.reg.get(callID)
