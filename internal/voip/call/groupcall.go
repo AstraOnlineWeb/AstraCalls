@@ -150,12 +150,35 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 	if video {
 		selfCap = signaling.CapabilityGroupVideoOffer
 	}
+	// NOSSO usuário precisa listar TODOS os nossos devices (celular + vinculados), não
+	// só o device do gateway — senão o servidor recusa nossa própria entrada com
+	// erro 411 (phash/device-list incompatível) e a chamada não engata de verdade. O
+	// celular só precisa estar LISTADO (p/ o hash bater); ele NÃO precisa entrar na call.
+	// A capability de grupo vai só no nosso device (o gateway).
+	var selfDevices []signaling.GroupCallDevice
+	seenSelf := false
+	if devs, err := m.sock.GetUSyncDevices(ctx, []types.JID{self.ToNonAD()}); err == nil {
+		for _, d := range devs {
+			dev := signaling.GroupCallDevice{JID: d}
+			if d == self {
+				dev.CapabilityVersion = 1
+				dev.Capability = append([]byte(nil), selfCap...)
+				seenSelf = true
+			}
+			selfDevices = append(selfDevices, dev)
+		}
+	} else {
+		m.log.Warn("group: não consegui listar nossos devices, uso só o gateway", "err", err)
+	}
+	if !seenSelf {
+		selfDevices = append(selfDevices, signaling.GroupCallDevice{
+			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), selfCap...),
+		})
+	}
 	// Descobre devices de cada alvo (um participante por usuário, com seus devices).
 	participants := []signaling.GroupCallParticipant{{
-		JID: self.ToNonAD(),
-		Devices: []signaling.GroupCallDevice{{
-			JID: self, CapabilityVersion: 1, Capability: append([]byte(nil), selfCap...),
-		}},
+		JID:     self.ToNonAD(),
+		Devices: selfDevices,
 	}}
 	for _, t := range targets {
 		devs, err := m.sock.GetUSyncDevices(ctx, []types.JID{t.ToNonAD()})
