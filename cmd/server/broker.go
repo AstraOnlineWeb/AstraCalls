@@ -55,6 +55,7 @@ type SessionInfo struct {
 	SIPExtUser    string `json:"sip_ext_user"`
 	SIPExtPass    string `json:"sip_ext_pass"`
 	SIPExtDest    string `json:"sip_ext_dest"`
+	SIPExtProxy   string `json:"sip_ext_proxy"`
 	SIPExtStatus  string `json:"sip_ext_status"`
 	SIPExtError   string `json:"sip_ext_error"`
 }

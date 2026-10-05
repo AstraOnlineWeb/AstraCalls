@@ -31,6 +31,7 @@ const emptyExt: SIPExtConfig = {
   user: "",
   pass: "",
   dest: "",
+  proxy: "",
 };
 
 const StatusBadge = ({ status, error }: { status?: string; error?: string }) => {
@@ -98,6 +99,7 @@ export const SIPDialog = ({ session }: { session: SessionInfo }) => {
         user: ext.user.trim(),
         pass: ext.pass,
         dest: ext.dest.trim(),
+        proxy: (ext.proxy ?? "").trim(),
       });
       toast.success(ext.enabled ? "Registro no PBX salvo — conectando…" : "Registro no PBX desativado");
       setOpen(false);
@@ -249,6 +251,20 @@ export const SIPDialog = ({ session }: { session: SessionInfo }) => {
                   disabled={!ext.enabled}
                 />
               </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Proxy (outbound proxy) — opcional</Label>
+              <Input
+                value={ext.proxy ?? ""}
+                onChange={(e) => setE("proxy", e.target.value)}
+                placeholder="ex.: sip.provedor.com:5060 (deixe vazio p/ usar o host)"
+                disabled={!ext.enabled}
+              />
+              <p className="text-[0.7rem] text-muted-foreground">
+                Para onde enviar o registro/chamadas quando o <b>domínio</b> (host acima) for
+                diferente do <b>servidor</b> — comum em FreePBX e troncos hospedados.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

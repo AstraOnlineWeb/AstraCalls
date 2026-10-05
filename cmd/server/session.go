@@ -71,6 +71,7 @@ type Session struct {
 	SIPExtUser    string
 	SIPExtPass    string
 	SIPExtDest    string
+	SIPExtProxy   string // outbound proxy (host[:porta]) — p/ onde mandar REGISTER/INVITE; vazio = usa Host
 	// estado do registro no PBX externo (registering/registered/failed), atualizado
 	// pelo registrador UAC; exibido no painel. Protegido por s.mu.
 	sipExtStatus string
@@ -957,6 +958,7 @@ func (s *Session) info() SessionInfo {
 	extUser := s.SIPExtUser
 	extPass := s.SIPExtPass
 	extDest := s.SIPExtDest
+	extProxy := s.SIPExtProxy
 	extStatus := s.sipExtStatus
 	extErr := s.sipExtError
 	s.mu.Unlock()
@@ -965,7 +967,7 @@ func (s *Session) info() SessionInfo {
 		Paired: a.Paired || jid != "", Recording: rec,
 		SIPUser: s.SIPUser, SIPPass: s.SIPPass, SIPURL: s.SIPURL,
 		SIPExtEnabled: extEnabled, SIPExtHost: extHost, SIPExtPort: extPort,
-		SIPExtUser: extUser, SIPExtPass: extPass, SIPExtDest: extDest,
+		SIPExtUser: extUser, SIPExtPass: extPass, SIPExtDest: extDest, SIPExtProxy: extProxy,
 		SIPExtStatus: extStatus, SIPExtError: extErr,
 	}
 }
@@ -1142,6 +1144,7 @@ type sipExtConfig struct {
 	User    string
 	Pass    string
 	Dest    string
+	Proxy   string // outbound proxy (host[:porta]); vazio = usa Host
 }
 
 func (s *Session) sipExtSnapshot() sipExtConfig {
@@ -1149,7 +1152,7 @@ func (s *Session) sipExtSnapshot() sipExtConfig {
 	defer s.mu.Unlock()
 	return sipExtConfig{
 		Enabled: s.SIPExtEnabled, Host: s.SIPExtHost, Port: s.SIPExtPort,
-		User: s.SIPExtUser, Pass: s.SIPExtPass, Dest: s.SIPExtDest,
+		User: s.SIPExtUser, Pass: s.SIPExtPass, Dest: s.SIPExtDest, Proxy: s.SIPExtProxy,
 	}
 }
 
@@ -1161,6 +1164,7 @@ func (s *Session) setSIPExt(c sipExtConfig) {
 	s.SIPExtUser = c.User
 	s.SIPExtPass = c.Pass
 	s.SIPExtDest = c.Dest
+	s.SIPExtProxy = c.Proxy
 	s.mu.Unlock()
 }
 

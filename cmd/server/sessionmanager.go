@@ -181,7 +181,7 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 		s.SIPPass = row.SIPPass
 		s.setSIPExt(sipExtConfig{
 			Enabled: row.SIPExtEnabled, Host: row.SIPExtHost, Port: row.SIPExtPort,
-			User: row.SIPExtUser, Pass: row.SIPExtPass, Dest: row.SIPExtDest,
+			User: row.SIPExtUser, Pass: row.SIPExtPass, Dest: row.SIPExtDest, Proxy: row.SIPExtProxy,
 		})
 		s.setWebhook(row.Webhook, row.WebhookSecret, splitEvents(row.WebhookEvents))
 		s.setRecording(row.Recording)

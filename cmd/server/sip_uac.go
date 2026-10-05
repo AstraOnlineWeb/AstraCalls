@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +13,34 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
+
+// sipHostPort normaliza "host" ou "host:porta" em "host:porta" (defaultPort quando a
+// porta não vier). Usado p/ o destino do outbound proxy.
+func sipHostPort(addr string, defaultPort int) string {
+	h, p := sipHostPortParts(addr, defaultPort)
+	if h == "" {
+		return ""
+	}
+	return net.JoinHostPort(h, strconv.Itoa(p))
+}
+
+// sipHostPortParts separa "host[:porta]" em (host, porta), com defaultPort de fallback.
+func sipHostPortParts(addr string, defaultPort int) (string, int) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", 0
+	}
+	if defaultPort <= 0 {
+		defaultPort = 5060
+	}
+	if h, p, err := net.SplitHostPort(addr); err == nil {
+		if n, e := strconv.Atoi(p); e == nil && n > 0 {
+			return h, n
+		}
+		return h, defaultPort
+	}
+	return addr, defaultPort
+}
 
 // Modelo 2 (UAC): o AstraCalls se REGISTRA como cliente/ramal num PBX externo do
 // cliente. Assim o PBX passa a "ver" a sessão como um ramal registrado e pode
@@ -139,8 +168,14 @@ func (r *sipUACRegistrar) register(ctx context.Context, expires int) (code int, 
 	if port <= 0 {
 		port = 5060
 	}
+	// Request-URI e AOR usam o DOMÍNIO (cfg.Host). Se houver um outbound proxy,
+	// os pacotes são enviados PRA ELE (next hop) mantendo a identidade no domínio —
+	// é o que FreePBX e troncos hospedados precisam (domínio ≠ servidor).
 	recipient := sip.Uri{Scheme: "sip", Host: cfg.Host, Port: port}
 	req := sip.NewRequest(sip.REGISTER, recipient)
+	if px := strings.TrimSpace(cfg.Proxy); px != "" {
+		req.SetDestination(sipHostPort(px, port))
+	}
 
 	aor := sip.Uri{Scheme: "sip", User: cfg.User, Host: cfg.Host}
 	from := &sip.FromHeader{Address: aor, Params: sip.NewParams()}

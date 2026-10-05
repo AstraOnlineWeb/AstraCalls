@@ -555,6 +555,13 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		}
 		targetURI = sip.Uri{Scheme: "sip", User: cfg.Dest, Host: cfg.Host, Port: port}
 		targetLabel = cfg.Dest + "@" + cfg.Host
+		// Outbound proxy: roteia o INVITE pro proxy (next hop), mantendo o ramal/domínio.
+		if px := strings.TrimSpace(cfg.Proxy); px != "" {
+			ph, pp := sipHostPortParts(px, port)
+			targetURI.Host = ph
+			targetURI.Port = pp
+			targetLabel = cfg.Dest + "@" + cfg.Host + " via " + px
+		}
 	} else {
 		return // nenhum destino SIP: a chamada segue só para o painel web.
 	}

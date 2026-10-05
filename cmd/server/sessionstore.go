@@ -27,6 +27,7 @@ type sessionRow struct {
 	SIPExtUser    string
 	SIPExtPass    string
 	SIPExtDest    string // ramal/número no PBX p/ tocar chamadas recebidas do WhatsApp (opcional)
+	SIPExtProxy   string // outbound proxy (host[:porta]); vazio = usa host
 }
 
 type sessionStore struct{ db *sql.DB }
@@ -66,6 +67,7 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_ext_user TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_ext_pass TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_ext_dest TEXT`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_ext_proxy TEXT`)
 
 	// Histórico de mensagens (para as rotas de chats/messages).
 	// O whatsmeow não persiste histórico; guardamos aqui o que passa pela sessão.
@@ -146,7 +148,7 @@ func newSessionID() string {
 }
 
 func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(last_jid, ''), COALESCE(webhook, ''), COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, ''), COALESCE(sip_user, ''), COALESCE(sip_pass, ''), COALESCE(sip_ext_enabled, false), COALESCE(sip_ext_host, ''), COALESCE(sip_ext_port, 5060), COALESCE(sip_ext_user, ''), COALESCE(sip_ext_pass, ''), COALESCE(sip_ext_dest, '') FROM sessions ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(last_jid, ''), COALESCE(webhook, ''), COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, ''), COALESCE(sip_user, ''), COALESCE(sip_pass, ''), COALESCE(sip_ext_enabled, false), COALESCE(sip_ext_host, ''), COALESCE(sip_ext_port, 5060), COALESCE(sip_ext_user, ''), COALESCE(sip_ext_pass, ''), COALESCE(sip_ext_dest, ''), COALESCE(sip_ext_proxy, '') FROM sessions ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +156,7 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	var out []sessionRow
 	for rows.Next() {
 		var r sessionRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.LastJID, &r.Webhook, &r.WebhookSecret, &r.WebhookEvents, &r.Chatwoot, &r.Recording, &r.Proxy, &r.SIPUser, &r.SIPPass, &r.SIPExtEnabled, &r.SIPExtHost, &r.SIPExtPort, &r.SIPExtUser, &r.SIPExtPass, &r.SIPExtDest); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.LastJID, &r.Webhook, &r.WebhookSecret, &r.WebhookEvents, &r.Chatwoot, &r.Recording, &r.Proxy, &r.SIPUser, &r.SIPPass, &r.SIPExtEnabled, &r.SIPExtHost, &r.SIPExtPort, &r.SIPExtUser, &r.SIPExtPass, &r.SIPExtDest, &r.SIPExtProxy); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -181,10 +183,10 @@ func (s *sessionStore) setSIP(ctx context.Context, id, sipUser, sipPass string) 
 }
 
 // setSIPExt persiste a config do modelo 2 (registro em PBX externo).
-func (s *sessionStore) setSIPExt(ctx context.Context, id string, enabled bool, host string, port int, user, pass, dest string) error {
+func (s *sessionStore) setSIPExt(ctx context.Context, id string, enabled bool, host string, port int, user, pass, dest, proxy string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET sip_ext_enabled = $1, sip_ext_host = $2, sip_ext_port = $3, sip_ext_user = $4, sip_ext_pass = $5, sip_ext_dest = $6 WHERE id = $7`,
-		enabled, host, port, user, pass, dest, id)
+		`UPDATE sessions SET sip_ext_enabled = $1, sip_ext_host = $2, sip_ext_port = $3, sip_ext_user = $4, sip_ext_pass = $5, sip_ext_dest = $6, sip_ext_proxy = $7 WHERE id = $8`,
+		enabled, host, port, user, pass, dest, proxy, id)
 	return err
 }
 

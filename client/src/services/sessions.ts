@@ -53,6 +53,7 @@ export type SIPExtConfig = {
   user: string;
   pass: string;
   dest: string;
+  proxy?: string;
   status?: string;
   error?: string;
   advertise?: string;

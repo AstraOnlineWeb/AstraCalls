@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // Endpoints HTTP para status e configuração SIP por sessão.
@@ -110,6 +111,7 @@ func (s *server) handleSIPExtConfig(w http.ResponseWriter, r *http.Request) {
 			"user":      cfg.User,
 			"pass":      cfg.Pass,
 			"dest":      cfg.Dest,
+			"proxy":     cfg.Proxy,
 			"status":    state,
 			"error":     lastErr,
 			"advertise": sipAdvertiseHost() + ":" + itoa(sipAdvertisePort()),
@@ -125,6 +127,7 @@ func (s *server) handleSIPExtConfig(w http.ResponseWriter, r *http.Request) {
 		User    string `json:"user"`
 		Pass    string `json:"pass"`
 		Dest    string `json:"dest"`
+		Proxy   string `json:"proxy"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -139,10 +142,10 @@ func (s *server) handleSIPExtConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := sipExtConfig{
 		Enabled: body.Enabled, Host: body.Host, Port: body.Port,
-		User: body.User, Pass: body.Pass, Dest: body.Dest,
+		User: body.User, Pass: body.Pass, Dest: body.Dest, Proxy: strings.TrimSpace(body.Proxy),
 	}
 	sess.setSIPExt(cfg)
-	if err := s.sessions.store.setSIPExt(r.Context(), sess.id, cfg.Enabled, cfg.Host, cfg.Port, cfg.User, cfg.Pass, cfg.Dest); err != nil {
+	if err := s.sessions.store.setSIPExt(r.Context(), sess.id, cfg.Enabled, cfg.Host, cfg.Port, cfg.User, cfg.Pass, cfg.Dest, cfg.Proxy); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
