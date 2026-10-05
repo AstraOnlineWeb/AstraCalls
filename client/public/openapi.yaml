@@ -24,6 +24,8 @@ tags:
     description: Contas WhatsApp (cada sessão = um device linkado)
   - name: Chamadas
     description: Iniciar, atender, rejeitar e encerrar chamadas
+  - name: SIP
+    description: Gateway SIP (sipgo nativo, sem Asterisk) — modelo 1 (PBX registra aqui) e modelo 2 (registrar em PBX externo, com outbound proxy)
   - name: Mensagens
     description: Envio e ações de mensagem (texto, mídia, localização, contato, enquete, reação, edição, exclusão, visto, digitando)
   - name: Contatos
@@ -591,6 +593,136 @@ paths:
                       properties:
                         phone: { type: string, example: "556199999999" }
                         name: { type: string, example: "Fulano" }
+  /api/sip/status:
+    get:
+      tags: [SIP]
+      summary: Status do gateway SIP (registros e chamadas ativas)
+      description: >
+        Estado global do gateway SIP (sipgo nativo, sem Asterisk): se está ligado, a
+        porta, os registros (modelo 1 — PBX registrado aqui) e as chamadas SIP ativas.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean, example: true }
+                  port: { type: integer, example: 5060 }
+                  registrations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sip_user: { type: string }
+                        session_id: { type: string }
+                        contact: { type: string }
+                  active_calls:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sip_call_id: { type: string }
+                        session_id: { type: string }
+                        wa_call_id: { type: string }
+                        from: { type: string }
+                        to: { type: string }
+  /api/sessions/{sid}/sip:
+    get:
+      tags: [SIP]
+      summary: "SIP modelo 1 — credenciais p/ um PBX/softphone registrar NESTA sessão"
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sip_user: { type: string }
+                  sip_pass: { type: string }
+                  sip_url: { type: string, description: "URL/host onde o PBX/softphone registra" }
+                  sip_realm: { type: string, example: "astracalls" }
+                  sip_port: { type: integer, example: 5060 }
+                  codecs: { type: array, items: { type: string }, example: ["PCMU/8000"] }
+                  session_id: { type: string }
+    post:
+      tags: [SIP]
+      summary: "SIP modelo 1 — grava as credenciais de registro desta sessão"
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sip_user: { type: string }
+                sip_pass: { type: string }
+                sip_url: { type: string }
+      responses:
+        "200": { description: Atualizado }
+        "400": { description: Body inválido }
+  /api/sessions/{sid}/sip-ext:
+    get:
+      tags: [SIP]
+      summary: "SIP modelo 2 — config de registro desta sessão num PBX EXTERNO"
+      description: >
+        Modelo 2 (UAC): a sessão se registra como ramal/tronco num PBX do cliente
+        (sipgo nativo, SIP puro + RTP, sem Asterisk por baixo). O campo `proxy`
+        (outbound proxy) separa o SERVIDOR do DOMÍNIO — necessário em FreePBX e
+        troncos hospedados (registra como `user@host`, mas manda os pacotes pro proxy).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  host: { type: string, description: "Domínio/host do PBX (vai na URI user@host)" }
+                  port: { type: integer, example: 5060 }
+                  user: { type: string }
+                  pass: { type: string }
+                  dest: { type: string, description: "Ramal/fila que toca quando chega chamada do WhatsApp (opcional)" }
+                  proxy: { type: string, description: "Outbound proxy host[:porta] — p/ onde enviar REGISTER/INVITE; vazio = usa host" }
+                  status: { type: string, example: "registered", description: "registering/registered/failed" }
+                  error: { type: string }
+                  advertise: { type: string, description: "host:porta SIP anunciado no Contact" }
+    post:
+      tags: [SIP]
+      summary: "SIP modelo 2 — grava/aplica o registro no PBX externo"
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, user]
+              properties:
+                enabled: { type: boolean }
+                host: { type: string, example: "pbx.cliente.com" }
+                port: { type: integer, default: 5060 }
+                user: { type: string, example: "1001" }
+                pass: { type: string }
+                dest: { type: string, example: "600" }
+                proxy: { type: string, example: "sip.provedor.com:5060", description: "Outbound proxy (host[:porta]); vazio = usa host" }
+      responses:
+        "200": { description: Atualizado }
+        "400": { description: "host e usuário são obrigatórios / body inválido" }
   /api/sessions/{sid}/restriction-status:
     get:
       tags: [Sessão]
