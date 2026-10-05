@@ -227,6 +227,10 @@ paths:
                 type: object
                 properties:
                   maxCallsPerSession: { type: integer, example: 8, description: "Máx. de chamadas simultâneas por sessão (0 = ilimitado)" }
+                  defaultTransport: { type: string, example: "websocket", description: "Transporte de mídia padrão (ex.: websocket); o widget usa p/ decidir WS vs WebRTC" }
+                  version: { type: string, example: "develop", description: "Build rodando (canal: develop/vX.Y.Z)" }
+                  commit: { type: string, example: "c9ac957", description: "SHA do commit do build" }
+                  groupCalls: { type: boolean, example: false, description: "Chamada em grupo (experimental) habilitada nesta instância (WACALLS_GROUP_CALLS)" }
 
   /api/sessions:
     get:
@@ -477,7 +481,7 @@ paths:
   /api/sessions/{sid}/calls/group:
     post:
       tags: [Chamadas]
-      summary: "[EXPERIMENTAL] Inicia uma chamada em GRUPO (áudio)"
+      summary: "[EXPERIMENTAL] Inicia uma chamada em GRUPO (áudio + vídeo)"
       description: >
         Cria uma chamada em grupo ad-hoc (2+ números). EXPERIMENTAL e desligado por
         padrão — requer a env `WACALLS_GROUP_CALLS=1` no servidor; sem ela retorna 501.
@@ -524,6 +528,69 @@ paths:
       responses:
         "200": { description: Encerrada }
         "404": { description: Nenhuma chamada em grupo ativa }
+  /api/sessions/{sid}/calls/group/ws:
+    get:
+      tags: [Chamadas]
+      summary: "[EXPERIMENTAL] WebSocket de ÁUDIO da chamada em grupo (PCM16)"
+      description: >
+        Upgrade WebSocket (subprotocolo `pcm16`) para o atendente OUVIR o mix de áudio
+        de todos os participantes e FALAR pelo microfone do navegador. Full-duplex com
+        frames binários PCM16 mono. Requer `WACALLS_GROUP_CALLS=1` e uma chamada de
+        grupo ativa. Query opcional `?events=1` habilita eventos de texto no stream.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+        - name: events
+          in: query
+          required: false
+          schema: { type: string, enum: ["1", "true"] }
+          description: Habilita eventos de texto no stream
+      responses:
+        "101": { description: Switching Protocols (WebSocket) }
+        "404": { description: Nenhuma chamada em grupo ativa }
+        "501": { description: Chamada em grupo desligada (experimental) }
+  /api/sessions/{sid}/calls/group/video-ws:
+    get:
+      tags: [Chamadas]
+      summary: "[EXPERIMENTAL] WebSocket de VÍDEO da chamada em grupo (H264)"
+      description: >
+        Upgrade WebSocket (subprotocolo `h264-group`) para transportar vídeo H264
+        (Annex-B) entre o navegador e o gateway. gateway→navegador: frames binários
+        `[1 byte len(pid)][pid ascii][access unit H264]` (um por participante);
+        navegador→gateway: access unit H264 puro (câmera do atendente). Separado do WS
+        de áudio. Requer `WACALLS_GROUP_CALLS=1` e uma chamada de grupo ativa.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "101": { description: Switching Protocols (WebSocket) }
+        "404": { description: Nenhuma chamada em grupo ativa }
+        "501": { description: Chamada em grupo desligada (experimental) }
+  /api/sessions/{sid}/calls/group/roster:
+    get:
+      tags: [Chamadas]
+      summary: "[EXPERIMENTAL] Roster da chamada em grupo (número do LID → telefone + nome)"
+      description: >
+        Devolve o mapa número-do-LID → telefone e nome dos participantes da chamada de
+        grupo ativa, para o painel rotular os vídeos com número+nome em vez do @lid.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roster:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        phone: { type: string, example: "556199999999" }
+                        name: { type: string, example: "Fulano" }
   /api/sessions/{sid}/restriction-status:
     get:
       tags: [Sessão]
