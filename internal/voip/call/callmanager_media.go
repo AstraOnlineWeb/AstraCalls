@@ -63,6 +63,19 @@ func (m *CallManager) sendOpusFrameLocked(opus []byte) {
 	if m.rtpSession == nil || m.srtpSession == nil {
 		return
 	}
+	if !m.firstPacketSent {
+		// Ancora o relógio de mídia no 1º pacote de áudio (início REAL da mídia): o
+		// áudio começa em ts=0 aqui e o vídeo (1º frame) fica ancorado no MESMO instante.
+		// Sem isto, o relógio nascia no offer e o vídeo ficava adiantado do áudio pelo
+		// tempo de toque -> o receptor segurava o vídeo (congelava). Mesmo objeto do
+		// pipeline (SetClock), então o Reset vale pro vídeo também.
+		if m.mediaClock == nil {
+			m.mediaClock = media.NewMediaClock()
+		} else {
+			m.mediaClock.Reset()
+		}
+		m.rtpSession.SetTimestamp(0)
+	}
 	marker := !m.firstPacketSent
 	pkt := m.rtpSession.CreatePacketWithDuration(opus, m.codec.FrameSize(), marker)
 	if m.debeEnabled {

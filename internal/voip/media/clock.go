@@ -22,6 +22,16 @@ func NewMediaClock() *MediaClock {
 	return &MediaClock{origin: time.Now()}
 }
 
+// Reset reancora a origem no instante atual. Chamado no 1º pacote de áudio (início REAL
+// da mídia): o relógio é criado quando a sessão nasce (offer/epoch), mas o áudio só
+// começa a fluir no connect; sem reancorar, o vídeo ficaria adiantado do áudio pelo
+// tempo de toque e o receptor seguraria/congelaria o vídeo.
+func (c *MediaClock) Reset() {
+	if c != nil {
+		c.origin = time.Now()
+	}
+}
+
 // TimestampFor devolve o timestamp RTP para uma taxa de amostragem (ex.: 16000 p/ Opus,
 // 90000 p/ H264) no instante atual — perto de zero logo após a origem, crescendo em
 // tempo real. Serve pra SEMEAR o início de um stream (áudio no começo, vídeo no 1º

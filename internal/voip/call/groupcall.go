@@ -84,11 +84,12 @@ type GroupCallManager struct {
 	connectedPIDs []uint32                  // PIDs dos participantes remotos conectados
 	relayStarted  bool                      // já configurou o relay de grupo
 
-	selfSsrcs  [9]uint32
-	sendSrtp   *media.SrtpContext
-	sendCodec  media.Codec
-	rtpSession *media.RtpSession
-	mediaClock *media.MediaClock // relógio único da call (áudio+vídeo no mesmo eixo)
+	selfSsrcs     [9]uint32
+	sendSrtp      *media.SrtpContext
+	sendCodec     media.Codec
+	rtpSession    *media.RtpSession
+	mediaClock    *media.MediaClock // relógio único da call (áudio+vídeo no mesmo eixo)
+	mediaAnchored bool              // o relógio já foi reancorado no 1º envio de áudio
 
 	byDevice    map[string]*groupParticipant // participantID -> participante
 	bySSRC      map[uint32]*groupParticipant // audioSSRC -> participante
@@ -753,6 +754,17 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 				m.mu.Unlock()
 				continue
 			}
+			if !m.mediaAnchored {
+				// Ancora o relógio no 1º envio de áudio (início REAL da mídia), pra o
+				// vídeo (1º frame) ficar no mesmo eixo de tempo do áudio.
+				m.mediaAnchored = true
+				if m.mediaClock == nil {
+					m.mediaClock = media.NewMediaClock()
+				} else {
+					m.mediaClock.Reset()
+				}
+				m.rtpSession.SetTimestamp(0)
+			}
 			var frame []float32
 			if len(m.captureBuf) >= 960 {
 				frame = m.captureBuf[:960]
@@ -864,6 +876,7 @@ func (m *GroupCallManager) End() {
 	m.bySSRC = make(map[uint32]*groupParticipant)
 	m.byVideoSSRC = make(map[uint32]*groupParticipant)
 	m.mediaClock = nil
+	m.mediaAnchored = false
 	m.mu.Unlock()
 
 	if ch != nil {
