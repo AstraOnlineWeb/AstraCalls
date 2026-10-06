@@ -65,14 +65,14 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 		sj = m.sock.OwnPN().String()
 	}
 	m.selfSsrc = media.GenerateSecureSsrc(callID, sj, 0)
-	m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
+	m.rtpSession = m.newAudioRtpLocked(m.selfSsrc)
 	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, peerJid.String(), 0)}
 	// SSRC/SRTP a partir dos participantes do relay (igual à saída em HandleCallAck)
 	ourBase := wanode.CleanJID(m.ownCredJid())
 	if len(parsed.ParticipantJids) > 0 {
 		ourDeviceJid := ensureDeviceJid(findOurDevice(parsed.ParticipantJids, ourBase, m.ownCredJid()))
 		m.selfSsrc = media.GenerateSecureSsrc(callID, ourDeviceJid, 0)
-		m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
+		m.rtpSession = m.newAudioRtpLocked(m.selfSsrc)
 		if peer := firstPeerDevice(parsed.ParticipantJids, ourBase); peer != "" {
 			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, ensureDeviceJid(peer), 0)}
 		}
@@ -264,7 +264,7 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 		newSelf := media.GenerateSecureSsrc(call.CallID, ourDeviceJid, 0)
 		if newSelf != m.selfSsrc {
 			m.selfSsrc = newSelf
-			m.rtpSession = media.NewWhatsAppOpusSession(newSelf)
+			m.rtpSession = m.newAudioRtpLocked(newSelf)
 		}
 		if peer := firstPeerDevice(parsed.ParticipantJids, ourBase); peer != "" {
 			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, ensureDeviceJid(peer), 0)}

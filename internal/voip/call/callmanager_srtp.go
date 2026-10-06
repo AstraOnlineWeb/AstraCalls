@@ -8,6 +8,18 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+// newAudioRtpLocked cria a sessão RTP de áudio já SEMEADA pelo MediaClock da call
+// (perto de zero na origem), em vez do timestamp aleatório — assim áudio e vídeo ficam
+// no mesmo eixo de tempo e o vídeo não congela por overflow no receptor (ver clock.go).
+func (m *CallManager) newAudioRtpLocked(ssrc uint32) *media.RtpSession {
+	if m.mediaClock == nil {
+		m.mediaClock = media.NewMediaClock()
+	}
+	s := media.NewWhatsAppOpusSession(ssrc)
+	s.SetTimestamp(m.mediaClock.TimestampFor(16000))
+	return s
+}
+
 func (m *CallManager) initSrtpKeysLocked() {
 	call := m.currentCall
 	if call == nil || call.EncryptionKey == nil {
@@ -49,6 +61,12 @@ func (m *CallManager) initSrtpKeysLocked() {
 	if err := m.video.Setup(call.CallID, ourDeviceJid, peerDeviceJid, sendKM, recvKM); err != nil {
 		m.log.Error("video setup failed", "err", err)
 	}
+	// Liga o relógio de mídia ao pipeline de vídeo: o 1º frame é ancorado no mesmo eixo
+	// de tempo do áudio (evita o congelamento por overflow do int32 no receptor).
+	if m.mediaClock == nil {
+		m.mediaClock = media.NewMediaClock()
+	}
+	m.video.SetClock(m.mediaClock)
 }
 
 func (m *CallManager) reinitSrtpLocked(peerKey []byte, peerJid types.JID) {

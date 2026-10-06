@@ -25,6 +25,7 @@ type CallManager struct {
 	srtpSession *media.SrtpSession
 	codec       media.Codec
 	relay       RelayTransport
+	mediaClock  *media.MediaClock // relógio único da call (áudio+vídeo no mesmo eixo)
 
 	selfSsrc      uint32
 	peerSsrcs     []uint32
@@ -166,7 +167,7 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 
 	selfJid := creator.String()
 	m.selfSsrc = media.GenerateSecureSsrc(callID, selfJid, 0)
-	m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
+	m.rtpSession = m.newAudioRtpLocked(m.selfSsrc)
 	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, resolved.String(), 0)}
 	m.initCodec()
 	m.mu.Unlock()

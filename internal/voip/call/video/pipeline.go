@@ -36,6 +36,7 @@ type Pipeline struct {
 	rtp      *media.RtpSession
 	srtp     *media.SrtpSession
 	selfSsrc uint32
+	clock    *media.MediaClock // relógio de mídia da call (semeia o ts do vídeo no 1º frame)
 	depack   *transport.H264Depacketizer
 	frameBuf []byte
 	lastAUAt time.Time
@@ -53,6 +54,15 @@ func New(log *slog.Logger, relay Relay) *Pipeline {
 		log = slog.Default()
 	}
 	return &Pipeline{log: log, relay: relay}
+}
+
+// SetClock liga o relógio de mídia da call ao pipeline: o 1º frame de vídeo é semeado
+// com o timestamp real (elapsed×90000) a partir dele, ancorando o vídeo no mesmo eixo
+// de tempo do áudio (evita o congelamento por overflow do int32 no receptor).
+func (p *Pipeline) SetClock(c *media.MediaClock) {
+	p.mu.Lock()
+	p.clock = c
+	p.mu.Unlock()
 }
 
 func (p *Pipeline) Setup(callID, ourDeviceJid, peerDeviceJid string, sendKM, recvKM core.SrtpKeyingMaterial) error {
@@ -148,6 +158,7 @@ func (p *Pipeline) FeedCaptured(au []byte) {
 	frameNum := p.frameNumber
 	tseq := p.transportSeq
 	first := p.lastAUAt.IsZero()
+	clock := p.clock
 	p.mu.Unlock()
 	if rtp == nil || srtp == nil || !p.relay.HasConnection() || len(au) == 0 {
 		return
@@ -185,7 +196,13 @@ func (p *Pipeline) FeedCaptured(au []byte) {
 	if p.relay.BufferedAmount() > congestionDropBytes {
 		return
 	}
-	if !first {
+	if first {
+		// Ancora o 1º frame de vídeo no relógio de mídia da call (elapsed×90000), pro
+		// vídeo ficar no mesmo eixo de tempo do áudio mesmo num upgrade tardio.
+		if clock != nil {
+			rtp.SetTimestamp(clock.TimestampFor(90000))
+		}
+	} else {
 		rtp.AdvanceTimestamp(rtpStepSamples)
 	}
 	mediaFrameInfo := uint8(videoMediaFrameDelta)
