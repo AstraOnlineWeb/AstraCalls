@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -155,6 +156,27 @@ func unwrapViewOnce(m *waE2E.Message) (*waE2E.Message, bool) {
 	return m, false
 }
 
+// unwrapBotForwarded desembrulha botForwardedMessage (FutureProofMessage), deixando a
+// mensagem INTERNA decidir o tipo — uma imagem encaminhada por bot continua mídia com
+// seu mediatype, e o wrapper nu não vira "media sem mediatype" (portado do zapo-js, MIT).
+func unwrapBotForwarded(m *waE2E.Message) *waE2E.Message {
+	if inner := m.GetBotForwardedMessage().GetMessage(); inner != nil {
+		return inner
+	}
+	return m
+}
+
+// richResponseText junta o texto dos submessages de uma AIRichResponseMessage.
+func richResponseText(m *waE2E.Message) string {
+	var parts []string
+	for _, sub := range m.GetRichResponseMessage().GetSubmessages() {
+		if t := sub.GetMessageText(); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 // unwrapDocCaption desembrulha o documentWithCaptionMessage (wrapper que o
 // WhatsApp usa p/ documento COM legenda), devolvendo o documentMessage interno
 // (que carrega o Caption). O whatsmeow já faz isso nos eventos ao vivo
@@ -198,9 +220,14 @@ func messageText(m *waE2E.Message) string {
 	m, _, _ = unwrapEdit(m)
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
+	m = unwrapBotForwarded(m)
 	switch {
 	case m.GetConversation() != "":
 		return m.GetConversation()
+	case m.GetRichResponseMessage() != nil:
+		// Resposta de IA/bot (AIRichResponseMessage): junta o texto dos submessages,
+		// pra aparecer como mensagem de texto normal no webhook/Chatwoot (portado do zapo).
+		return richResponseText(m)
 	case m.GetExtendedTextMessage() != nil:
 		return m.GetExtendedTextMessage().GetText()
 	case m.GetImageMessage() != nil:

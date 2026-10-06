@@ -1547,6 +1547,7 @@ func ensureFileExt(name, mimeType string) string {
 func downloadableOf(m *waE2E.Message) whatsmeow.DownloadableMessage {
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
+	m = unwrapBotForwarded(m)
 	switch {
 	case m.GetImageMessage() != nil:
 		return m.GetImageMessage()
@@ -1571,6 +1572,7 @@ func downloadableOf(m *waE2E.Message) whatsmeow.DownloadableMessage {
 func mediaMeta(m *waE2E.Message) (string, string) {
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
+	m = unwrapBotForwarded(m)
 	switch {
 	case m.GetImageMessage() != nil:
 		return "image.jpg", firstNonEmpty(m.GetImageMessage().GetMimetype(), "image/jpeg")

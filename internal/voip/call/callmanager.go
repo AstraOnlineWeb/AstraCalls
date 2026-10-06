@@ -65,6 +65,8 @@ type CallManager struct {
 
 	OnVideoUpgradeRequest func(*CallInfo) // o peer pediu um upgrade p/ vídeo
 	OnVideoStateChanged   func(*CallInfo) // qualquer mudança no estado de vídeo
+	OnPeerMute            func(*CallInfo) // o peer mutou/abriu o microfone (<mute_v2>)
+	OnHandRaise           func(*CallInfo) // o peer levantou/baixou a mão (raise_hand)
 }
 
 func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {

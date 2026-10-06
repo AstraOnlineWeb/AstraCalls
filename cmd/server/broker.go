@@ -341,6 +341,14 @@ func (b *Broker) emitVideoState(sessionID, id, kind string, peerVideo, localVide
 	})
 }
 
+// emitCallAction avisa o painel/widget de uma ação mid-call portada do zapo
+// (kind: "peer-mute" | "peer-hand"), com o estado booleano anunciado pelo peer.
+func (b *Broker) emitCallAction(sessionID, id, kind string, state bool) {
+	b.broadcastForSession(sessionID, map[string]any{
+		"type": "call-action", "sessionId": sessionID, "id": id, "kind": kind, "state": state,
+	})
+}
+
 // subscriberScope devolve, para diagnóstico, o account_id resolvido da sessão e a
 // contagem de assinantes: total, quantos receberão eventos escopados por conta
 // (escopo casa) e quantos são widgets de OUTRA conta (que serão filtrados). Serve

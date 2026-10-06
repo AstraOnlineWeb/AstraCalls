@@ -557,6 +557,14 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.mgr.broker.emitVideoState(s.id, c.CallID, "state", c.StateData.PeerVideoOn,
 			!c.StateData.VideoOff, c.StateData.VideoUpgradeIncoming, c.StateData.VideoUpgradeOutgoing)
 	}
+	cm.OnPeerMute = func(c *call.CallInfo) {
+		s.mgr.broker.emitCallAction(s.id, c.CallID, "peer-mute", c.StateData.PeerAudioMuted)
+		s.dispatchWebhook("call_peer_mute", map[string]any{"call_id": c.CallID, "muted": c.StateData.PeerAudioMuted})
+	}
+	cm.OnHandRaise = func(c *call.CallInfo) {
+		s.mgr.broker.emitCallAction(s.id, c.CallID, "peer-hand", c.StateData.PeerHandRaised)
+		s.dispatchWebhook("call_hand_raise", map[string]any{"call_id": c.CallID, "raised": c.StateData.PeerHandRaised})
+	}
 }
 
 func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo, record bool) (string, error) {
@@ -815,7 +823,16 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 		ac.cm.HandleCallTerminate(evt.Node) // → OnEnded → broker.endCall (avisa TODOS) + removeCall
 		return
 	}
-	ac.cm.HandleVideoState(ctx, evt.Node)
+	// Roteia por tipo de nó interno: mute_v2 e raise_hand (portados do zapo) têm
+	// handlers próprios; o resto segue pro tratamento de vídeo.
+	switch info := signaling.ExtractNodeInfo(evt.Node); {
+	case info != nil && info.Tag == "mute_v2":
+		ac.cm.HandleMuteV2(ctx, evt.Node)
+	case info != nil && (info.Tag == "user_action" || info.Tag == "raise_hand"):
+		ac.cm.HandleRaiseHand(ctx, evt.Node)
+	default:
+		ac.cm.HandleVideoState(ctx, evt.Node)
+	}
 }
 
 // nodeHasTerminalCall diz se um <call> traz um <terminate> ou <reject> entre os
