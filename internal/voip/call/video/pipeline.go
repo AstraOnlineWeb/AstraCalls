@@ -41,11 +41,6 @@ type Pipeline struct {
 	frameBuf []byte
 	lastAUAt time.Time
 
-	// Detecção de perda de pacote na RECEPÇÃO: se a sequência pula, descartamos o AU
-	// parcial (e o estado de FU-A) pra não emendar pedaços e entregar frame corrompido.
-	lastRecvSeq uint16
-	haveRecvSeq bool
-
 	// Estado da extensão de vídeo do WhatsApp (perfil 0xDEBE) no envio.
 	frameNumber      uint16 // nº do frame (por access unit), começa em 1
 	transportSeq     uint16 // sequência transport (por pacote)
@@ -261,22 +256,6 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 	if len(pkt.Payload) == 0 {
 		return
 	}
-	// Detecção de perda: se a sequência RTP pulou, descarta o AU parcial e reseta o
-	// estado de FU-A — senão emendamos pedaços e entregamos um frame corrompido (o
-	// decoder rejeita e o vídeo "às vezes não abre").
-	seq := pkt.Header.SequenceNumber
-	p.mu.Lock()
-	gap := p.haveRecvSeq && seq != p.lastRecvSeq+1
-	p.lastRecvSeq = seq
-	p.haveRecvSeq = true
-	if gap {
-		p.frameBuf = nil
-	}
-	p.mu.Unlock()
-	if gap {
-		depack.Reset()
-	}
-
 	nalus := depack.Depacketize(pkt.Payload)
 
 	p.mu.Lock()
@@ -308,7 +287,5 @@ func (p *Pipeline) Reset() {
 	p.frameNumber = 1
 	p.transportSeq = 0
 	p.keyframeRequired = true
-	p.haveRecvSeq = false
-	p.lastRecvSeq = 0
 	p.mu.Unlock()
 }
