@@ -20,17 +20,6 @@ VoIP nativo (áudio + vídeo, 1:1 e em grupo), gateway **SIP/PBX**, suíte compl
 
 ---
 
-> **AstraCalls** é um fork de produção do [**WaCalls**](https://github.com/JotaDev66/WaCalls)
-> (de [@jotadev66](https://github.com/jotadev66)). Mantém o núcleo VoIP nativo em Go e
-> adiciona tudo que falta para operar como serviço: **vídeo** (1:1 e em grupo),
-> **gateway SIP**, **PostgreSQL por sessão**, **API de mensagens completa**, **disparos em
-> massa**, **webhooks assinados com retry/DLQ**, **integração nativa com Chatwoot** (com
-> widget de chamada dentro do Chatwoot), **autenticação por API key**, **observabilidade** e
-> **imagem Docker multi-arquitetura**. Os créditos do projeto original estão preservados em
-> [Licença](#-licença).
-
----
-
 ## 📋 Visão Geral
 
 O AstraCalls pareia uma ou mais contas do WhatsApp (QR code, **código de pareamento** ou
