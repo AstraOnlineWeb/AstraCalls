@@ -92,6 +92,7 @@ type GroupCallManager struct {
 	byDevice    map[string]*groupParticipant // participantID -> participante
 	bySSRC      map[uint32]*groupParticipant // audioSSRC -> participante
 	byVideoSSRC map[uint32]*groupParticipant // videoSSRC -> participante
+	epochSentTo map[string]bool              // device JID -> já mandamos a chave de epoch (p/ joiners tardios)
 
 	sendVideoPipe *callvideo.Pipeline // pipeline de ENVIO do nosso vídeo (câmera)
 
@@ -120,6 +121,7 @@ func NewGroupCallManager(sock core.VoipSocket, log *slog.Logger) *GroupCallManag
 		sock:        sock,
 		log:         log,
 		byDevice:    make(map[string]*groupParticipant),
+		epochSentTo: make(map[string]bool),
 		bySSRC:      make(map[uint32]*groupParticipant),
 		byVideoSSRC: make(map[uint32]*groupParticipant),
 		mixer:       groupmix.NewMixer(),
@@ -281,6 +283,11 @@ func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signalin
 					pids = append(pids, d.PID) // só conectados entram na assinatura do relay
 				}
 			}
+			// Configura o receiver (SSRC/SRTP/codec/videoPipe) de CADA participante —
+			// inclusive os que entram DEPOIS do epoch. Sem isto, um joiner tardio (3º+)
+			// não era decodificado e o host não via/ouvia ele. Idempotente (no-op sem epoch
+			// ou se já montado).
+			m.setupReceiverLocked(gp)
 		}
 	}
 	m.connectedPIDs = pids
@@ -290,8 +297,11 @@ func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signalin
 	rekey := update.RekeyRequested && m.isCreator
 	m.mu.Unlock()
 
-	if rekey {
-		if err := m.distributeEpoch(ctx, update); err != nil {
+	// Como criador, garantimos que TODO device (inclusive joiners tardios) receba a
+	// chave de epoch. allowGenerate=rekey: só geramos uma chave nova quando o servidor
+	// pede rekey; nas demais updates só reenviamos a chave existente aos devices novos.
+	if m.isCreator {
+		if err := m.distributeEpoch(ctx, update, rekey); err != nil {
 			m.log.Warn("group: epoch fanout failed", "err", err)
 		}
 	}
@@ -302,48 +312,65 @@ func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signalin
 // distributeEpoch (somos o criador): gera a chave de epoch e manda cifrada por device
 // a cada participante, via enc_rekey. Reaproveita CreateParticipantNodes (mesmo
 // mecanismo do callKey 1:1).
-func (m *GroupCallManager) distributeEpoch(ctx context.Context, update signaling.GroupCallUpdate) error {
+func (m *GroupCallManager) distributeEpoch(ctx context.Context, update signaling.GroupCallUpdate, allowGenerate bool) error {
 	m.mu.Lock()
-	if len(m.epochKey) == 32 {
-		m.mu.Unlock()
-		return nil // já temos epoch desta geração
-	}
 	callID := m.callID
 	creator := m.creator
 	txid := update.TransactionID
 	if txid == 0 {
 		txid = 1
 	}
-	m.mu.Unlock()
-
-	epoch := media.GenerateCallKey() // 32 bytes
+	epoch := append([]byte(nil), m.epochKey...)
+	newEpoch := false
+	if len(epoch) != 32 {
+		if !allowGenerate {
+			m.mu.Unlock()
+			return nil // ainda sem epoch e o servidor não pediu rekey: espera
+		}
+		epoch = media.GenerateCallKey() // 32 bytes
+		newEpoch = true
+	}
+	// Devices que ainda NÃO receberam o epoch (inclui joiners tardios). Reenviar aos que
+	// já têm só glitcha a mídia deles, então mandamos a cada device UMA vez.
+	var targets []types.JID
 	for _, p := range update.Participants {
 		for _, d := range p.Devices {
-			if d.JID.IsEmpty() || d.JID == m.selfLID {
+			if d.JID.IsEmpty() || d.JID == m.selfLID || m.epochSentTo[d.JID.String()] {
 				continue
 			}
-			nodes, _, err := m.sock.CreateParticipantNodes(ctx, []types.JID{d.JID}, epoch, waBinary.Attrs{})
-			if err != nil || len(nodes) == 0 {
-				m.log.Warn("group: encrypt epoch for device failed", "device", d.JID, "err", err)
-				continue
-			}
-			enc := nodes[0]
-			encType, _ := enc.Attrs["type"].(string)
-			var ct []byte
-			if b, ok := enc.Content.([]byte); ok {
-				ct = b
-			}
-			node, err := signaling.BuildGroupEncRekey(signaling.GroupEncRekeyParams{
-				CallID: callID, To: d.JID, CallCreator: creator, TransactionID: txid,
-				DeviceKey: signaling.OfferDeviceKey{DeviceJid: d.JID, Ciphertext: ct, EncType: encType},
-			})
-			if err != nil {
-				continue
-			}
-			go func() { _, _ = m.sock.Query(context.Background(), node) }()
+			m.epochSentTo[d.JID.String()] = true
+			targets = append(targets, d.JID)
 		}
 	}
-	m.installEpoch(txid, epoch)
+	m.mu.Unlock()
+
+	for _, dj := range targets {
+		nodes, _, err := m.sock.CreateParticipantNodes(ctx, []types.JID{dj}, epoch, waBinary.Attrs{})
+		if err != nil || len(nodes) == 0 {
+			m.log.Warn("group: encrypt epoch for device failed", "device", dj, "err", err)
+			m.mu.Lock()
+			delete(m.epochSentTo, dj.String()) // falhou: permite nova tentativa na próxima update
+			m.mu.Unlock()
+			continue
+		}
+		enc := nodes[0]
+		encType, _ := enc.Attrs["type"].(string)
+		var ct []byte
+		if b, ok := enc.Content.([]byte); ok {
+			ct = b
+		}
+		node, err := signaling.BuildGroupEncRekey(signaling.GroupEncRekeyParams{
+			CallID: callID, To: dj, CallCreator: creator, TransactionID: txid,
+			DeviceKey: signaling.OfferDeviceKey{DeviceJid: dj, Ciphertext: ct, EncType: encType},
+		})
+		if err != nil {
+			continue
+		}
+		go func() { _, _ = m.sock.Query(context.Background(), node) }()
+	}
+	if newEpoch {
+		m.installEpoch(txid, epoch)
+	}
 	return nil
 }
 
@@ -850,6 +877,7 @@ func (m *GroupCallManager) End() {
 		}
 	}
 	m.byDevice = make(map[string]*groupParticipant)
+	m.epochSentTo = make(map[string]bool)
 	m.bySSRC = make(map[uint32]*groupParticipant)
 	m.byVideoSSRC = make(map[uint32]*groupParticipant)
 	m.mu.Unlock()
