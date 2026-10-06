@@ -135,6 +135,14 @@ type H264Depacketizer struct {
 	fuActive bool
 }
 
+// Reset limpa o estado de reassembly de FU-A. Deve ser chamado quando há perda de
+// pacote (gap de sequência), senão um fragmento seguinte é emendado no buffer antigo e
+// gera um NALU corrompido (que o decoder rejeita — causa vídeo "às vezes não abre").
+func (d *H264Depacketizer) Reset() {
+	d.fuActive = false
+	d.fuBuf = d.fuBuf[:0]
+}
+
 func (d *H264Depacketizer) Depacketize(payload []byte) [][]byte {
 	if len(payload) < 1 {
 		return nil
