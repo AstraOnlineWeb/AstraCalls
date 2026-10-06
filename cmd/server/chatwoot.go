@@ -587,9 +587,15 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, alt
 	// quaisquer identificadores alternativos (ex.: o JID @lid do contato), para
 	// reencontrar um contato criado ANTES de resolvermos o número real e fazer o
 	// backfill do telefone nele — em vez de criar um contato duplicado.
-	queries := make([]string, 0, 1+len(altIDs))
+	queries := make([]string, 0, 2+len(altIDs))
 	if phone != "" {
 		queries = append(queries, phone)
+		// 9º dígito BR: o contato pode ter sido criado na OUTRA forma (com/sem o 9).
+		// A busca do Chatwoot é por substring e não casa as duas, então procuramos
+		// também pela variante p/ reencontrar e CANONICALIZAR em vez de duplicar.
+		if v := brNinthDigitVariant(phone); v != "" {
+			queries = append(queries, v)
+		}
 	} else {
 		queries = append(queries, chatID)
 	}
@@ -627,11 +633,16 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, alt
 			}
 			if id := asInt(m["id"]); id != 0 {
 				c.syncAvatar(id, avatarURL)
-				// backfill: contato achado mas sem telefone ou com um número errado
-				// (ex.: criado a partir de um @lid antes de o PN resolver). Agora que
-				// temos o telefone real, corrige o phone_number. Best-effort.
-				if phone != "" && digitsOnly(asStr(m["phone_number"])) != phone {
-					c.backfillPhone(id, phone)
+				// Canonicaliza o contato achado numa forma divergente (ex.: cadastrado
+				// com o 9º dígito, ou via @lid antes de o PN resolver): phone_number,
+				// identifier E wacalls_chat_id → forma canônica, de uma vez. Corrigir só
+				// o telefone deixava o contato "meio migrado" (identifier/attr com o 9),
+				// e reply/dedup de echo/próximo match podiam divergir de novo. Best-effort.
+				needPhone := phone != "" && digitsOnly(asStr(m["phone_number"])) != phone
+				needIdent := phone != "" && ident != "" && ident != chatID
+				needAttr := phone != "" && attr != "" && attr != chatID
+				if needPhone || needIdent || needAttr {
+					c.canonicalizeContact(id, chatID, phone, asMap(m["custom_attributes"]))
 				}
 				if sid := sourceIDForInbox(m, c.InboxID); sid != "" {
 					return id, sid, nil
@@ -682,6 +693,59 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, alt
 // recusar (ex.: número já pertence a outro contato); nesse caso não faz nada.
 func (c ChatwootConfig) backfillPhone(contactID int, phone string) {
 	_, _, _ = c.req(http.MethodPut, fmt.Sprintf("/contacts/%d", contactID), map[string]any{"phone_number": "+" + phone})
+}
+
+// canonicalizeContact põe um contato 100% na forma canônica de uma vez: phone_number,
+// identifier (<canônico>@s.whatsapp.net = chatID) e o atributo wacalls_chat_id. Mescla
+// os custom_attributes existentes (não apaga outros). Best-effort (PUT pode ser recusado).
+func (c ChatwootConfig) canonicalizeContact(contactID int, chatID, phone string, existingAttrs map[string]any) {
+	attrs := map[string]any{}
+	for k, v := range existingAttrs {
+		attrs[k] = v
+	}
+	attrs[cwChatIDAttr] = chatID
+	body := map[string]any{
+		"identifier":        chatID,
+		"custom_attributes": attrs,
+	}
+	if phone != "" {
+		body["phone_number"] = "+" + phone
+	}
+	_, _, _ = c.req(http.MethodPut, fmt.Sprintf("/contacts/%d", contactID), body)
+}
+
+// brNinthDigitVariant devolve a OUTRA forma de um celular BR quanto ao 9º dígito: se
+// vier SEM o 9 (55 + DDD + 8 díg.), devolve COM o 9; se vier COM, devolve sem. Vazio
+// para telefone fixo, não-BR ou formato inesperado (nunca chuta). Respeita o DDD.
+func brNinthDigitVariant(phone string) string {
+	d := digitsOnly(phone)
+	if !strings.HasPrefix(d, "55") {
+		return "" // não-BR
+	}
+	rest := d[2:] // DDD + assinante
+	if len(rest) < 10 || len(rest) > 11 {
+		return "" // precisa ser DDD(2) + 8 ou 9 dígitos
+	}
+	ddd := rest[:2]
+	sub := rest[2:]
+	if ddd[0] < '1' || ddd[0] > '9' { // DDD válido 11..99
+		return ""
+	}
+	switch len(sub) {
+	case 8:
+		// sem o 9: só celular (assinante começa em 6-9); fixo (2-5) não tem variante.
+		if sub[0] < '6' {
+			return ""
+		}
+		return "55" + ddd + "9" + sub
+	case 9:
+		// com o 9 na frente: devolve a forma sem o 9.
+		if sub[0] != '9' {
+			return ""
+		}
+		return "55" + ddd + sub[1:]
+	}
+	return ""
 }
 
 // syncAvatar atualiza a foto do contato existente (uma vez por processo).
