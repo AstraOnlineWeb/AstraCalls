@@ -187,6 +187,9 @@ func (s *RtpSession) AdvanceTimestamp(samples uint32) {
 	s.timestamp += samples
 }
 
+// Timestamp devolve o timestamp RTP atual do stream.
+func (s *RtpSession) Timestamp() uint32 { return s.timestamp }
+
 // SetTimestamp fixa o timestamp RTP atual (usado p/ semear o stream a partir do
 // MediaClock da call, em vez do valor aleatório inicial — ver media/clock.go).
 func (s *RtpSession) SetTimestamp(ts uint32) {

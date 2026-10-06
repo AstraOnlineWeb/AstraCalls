@@ -46,6 +46,8 @@ type Pipeline struct {
 	transportSeq     uint16 // sequência transport (por pacote)
 	keyframeRequired bool   // o primeiro frame enviado precisa ser IDR
 
+	stats media.RtcpSenderStats // contadores de envio (p/ Sender Report SRTCP)
+
 	OnFrame func(au []byte)
 }
 
@@ -234,7 +236,17 @@ func (p *Pipeline) FeedCaptured(au []byte) {
 	if idr {
 		p.keyframeRequired = false
 	}
+	p.stats.PacketsSent += uint32(len(payloads))
+	p.stats.OctetsSent += uint32(len(packed))
+	p.stats.RtpTimestamp = rtp.Timestamp()
 	p.mu.Unlock()
+}
+
+// SenderStats devolve os contadores de envio (pacotes/octetos/último timestamp RTP).
+func (p *Pipeline) SenderStats() media.RtcpSenderStats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stats
 }
 
 func (p *Pipeline) HandleRelayData(data []byte) {
@@ -287,5 +299,6 @@ func (p *Pipeline) Reset() {
 	p.frameNumber = 1
 	p.transportSeq = 0
 	p.keyframeRequired = true
+	p.stats = media.RtcpSenderStats{}
 	p.mu.Unlock()
 }

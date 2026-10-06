@@ -19,6 +19,12 @@ export class VideoSender {
   private reader: ReadableStreamDefaultReader<VideoFrame>;
   private frameCount = 0;
   private closed = false;
+  private forceKey = false;
+
+  /** Força o próximo frame a ser keyframe (um participante pediu PLI/FIR). */
+  forceKeyframe(): void {
+    this.forceKey = true;
+  }
 
   constructor(track: MediaStreamTrack, send: (au: ArrayBuffer) => void) {
     this.encoder = new VideoEncoder({
@@ -48,7 +54,8 @@ export class VideoSender {
       const { value: frame, done } = await this.reader.read();
       if (done || !frame) break;
       if (this.encoder.encodeQueueSize < 2) {
-        const keyFrame = this.frameCount % VIDEO_KEYFRAME_INTERVAL === 0;
+        const keyFrame = this.forceKey || this.frameCount % VIDEO_KEYFRAME_INTERVAL === 0;
+        this.forceKey = false;
         this.encoder.encode(frame, { keyFrame });
         this.frameCount += 1;
       }
@@ -73,13 +80,25 @@ export class VideoReceiver {
   private ts = 0;
   private started = false;
   private writing = false;
+  private closed = false;
   readonly stream: MediaStream;
+
+  /**
+   * Chamado quando o decoder PRECISA de um keyframe pra (re)começar: ainda não
+   * abriu (só chegam deltas) ou deu erro de decodificação (frame corrompido por
+   * perda). Quem recebe pede um PLI ao participante.
+   */
+  onNeedKeyframe: (() => void) | null = null;
 
   constructor() {
     const generator = new MediaStreamTrackGenerator({ kind: "video" });
     this.writer = generator.writable.getWriter();
     this.stream = new MediaStream([generator]);
-    this.decoder = new VideoDecoder({
+    this.decoder = this.newDecoder();
+  }
+
+  private newDecoder(): VideoDecoder {
+    const decoder = new VideoDecoder({
       output: (frame) => {
         if (this.writing) {
           frame.close();
@@ -93,15 +112,34 @@ export class VideoReceiver {
             this.writing = false;
           });
       },
-      error: (e) => console.error("video decoder error", e),
+      error: (e) => {
+        console.error("video decoder error", e);
+        this.recover();
+      },
     });
-    this.decoder.configure({ codec: VIDEO_CODEC, optimizeForLatency: true });
+    decoder.configure({ codec: VIDEO_CODEC, optimizeForLatency: true });
+    return decoder;
+  }
+
+  /** Recria o decoder e volta a esperar keyframe (pede um). */
+  private recover(): void {
+    if (this.closed) return;
+    try {
+      this.decoder.close();
+    } catch {}
+    this.decoder = this.newDecoder();
+    this.started = false;
+    this.onNeedKeyframe?.();
   }
 
   decode(data: ArrayBuffer): void {
+    if (this.closed) return;
     const bytes = new Uint8Array(data);
     const key = isAnnexBKeyframe(bytes);
-    if (!this.started && !key) return;
+    if (!this.started && !key) {
+      this.onNeedKeyframe?.();
+      return;
+    }
     this.started = true;
     const chunk = new EncodedVideoChunk({
       type: key ? "key" : "delta",
@@ -113,10 +151,12 @@ export class VideoReceiver {
       this.decoder.decode(chunk);
     } catch (e) {
       console.error("video decode error", e);
+      this.recover();
     }
   }
 
   close(): void {
+    this.closed = true;
     try {
       this.decoder.close();
     } catch {}

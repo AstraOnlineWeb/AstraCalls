@@ -273,6 +273,25 @@ func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
 
 	// gateway → navegador: serializa writes (a lib não aceita writes concorrentes).
 	var wmu sync.Mutex
+	write := func(typ websocket.MessageType, msg []byte) {
+		wmu.Lock()
+		defer wmu.Unlock()
+		wctx, c := context.WithTimeout(ctx, 2*time.Second)
+		_ = conn.Write(wctx, typ, msg)
+		c()
+	}
+	// Controle (texto JSON) gateway → navegador:
+	//   {"type":"keyframe_request"}            — um participante pediu keyframe da câmera
+	//   {"type":"video_state","pid":..,"state":N} — participante ligou(1)/desligou(0/6) a câmera
+	control := func(v any) {
+		if b, err := json.Marshal(v); err == nil {
+			write(websocket.MessageText, b)
+		}
+	}
+	gc.SetKeyframeRequestSink(func() { control(map[string]any{"type": "keyframe_request"}) })
+	gc.SetPeerVideoStateSink(func(pid string, state int) {
+		control(map[string]any{"type": "video_state", "pid": pid, "state": state})
+	})
 	gc.SetVideoSink(func(pid string, au []byte) {
 		if len(au) == 0 || len(pid) > 255 {
 			return
@@ -281,26 +300,34 @@ func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
 		msg = append(msg, byte(len(pid)))
 		msg = append(msg, pid...)
 		msg = append(msg, au...)
-		wmu.Lock()
-		defer wmu.Unlock()
-		wctx, c := context.WithTimeout(ctx, 2*time.Second)
-		_ = conn.Write(wctx, websocket.MessageBinary, msg)
-		c()
+		write(websocket.MessageBinary, msg)
 	})
 	s.log.Info("group video_ws: connected", "sid", sess.id, "call", gc.CallID())
 
-	// navegador → gateway: cada frame binário é um AU H264 da câmera do atendente.
+	// navegador → gateway: frame binário = AU H264 da câmera do atendente; texto JSON
+	// = controle: {"type":"pli","pid":".."} pede keyframe ao participante ("" = todos).
 	for {
 		typ, data, rerr := conn.Read(ctx)
 		if rerr != nil {
 			break
 		}
-		if typ == websocket.MessageBinary && len(data) > 0 {
+		switch {
+		case typ == websocket.MessageBinary && len(data) > 0:
 			gc.FeedCapturedVideo(data)
+		case typ == websocket.MessageText:
+			var ctl struct {
+				Type string `json:"type"`
+				PID  string `json:"pid"`
+			}
+			if json.Unmarshal(data, &ctl) == nil && ctl.Type == "pli" {
+				gc.RequestParticipantKeyframe(ctl.PID)
+			}
 		}
 	}
 
 	gc.SetVideoSink(nil)
+	gc.SetKeyframeRequestSink(nil)
+	gc.SetPeerVideoStateSink(nil)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 	s.log.Info("group video_ws: disconnected", "sid", sess.id)
 }

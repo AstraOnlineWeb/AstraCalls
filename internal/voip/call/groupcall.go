@@ -15,6 +15,7 @@ import (
 	"wacalls/internal/voip/media"
 	"wacalls/internal/voip/signaling"
 	"wacalls/internal/voip/transport"
+	"wacalls/internal/voip/wanode"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
@@ -43,6 +44,11 @@ type groupParticipant struct {
 
 	videoSSRC uint32              // SSRC de vídeo do participante (slot 2)
 	videoPipe *callvideo.Pipeline // pipeline de recepção de vídeo (H264 → AU)
+
+	srtcpKeys *media.SrtcpKeys // chaves SRTCP do participante (p/ autenticar o RTCP dele)
+	videoPkts uint64           // diagnóstico: pacotes de vídeo recebidos dele
+	gotIDR    bool             // já entregamos um AU com keyframe dele (vídeo decodificável)
+	lastPLI   time.Time        // último PLI que mandamos pra ele (rate limit)
 }
 
 // groupVideoRelay adapta o canal DTLS de grupo à interface Relay do pipeline de vídeo
@@ -92,9 +98,24 @@ type GroupCallManager struct {
 	byDevice    map[string]*groupParticipant // participantID -> participante
 	bySSRC      map[uint32]*groupParticipant // audioSSRC -> participante
 	byVideoSSRC map[uint32]*groupParticipant // videoSSRC -> participante
+	bySrtcpSSRC map[uint32]*groupParticipant // qualquer SSRC de stream do participante -> participante (RTCP)
 	epochSentTo map[string]bool              // device JID -> já mandamos a chave de epoch (p/ joiners tardios)
 
 	sendVideoPipe *callvideo.Pipeline // pipeline de ENVIO do nosso vídeo (câmera)
+	selfVideoSSRC uint32              // SSRC do nosso vídeo (slot 2)
+
+	// SRTCP: os celulares associam os streams RTP a uma sessão SRTCP (SR+SDES
+	// periódicos) e só mandam keyframe de vídeo sob PEDIDO (PLI). Sem isso o vídeo
+	// de grupo não abre de forma confiável nos dois sentidos.
+	srtcpAudio     *media.SrtcpSender
+	srtcpVideo     *media.SrtcpSender
+	audioStats     media.RtcpSenderStats
+	videoAnnounced bool // já mandamos <video state=1> anunciando nossa câmera
+
+	wrappedN      uint64 // diagnóstico: pacotes com cabeçalho de group-forwarding
+	rtcpN         uint64 // diagnóstico: RTCP autenticado recebido
+	pliN          uint64 // diagnóstico: PLIs enviados
+	videoUnknownN uint64 // diagnóstico: vídeo de SSRC desconhecido
 
 	mixer   *groupmix.Mixer
 	framer  groupmix.Framer
@@ -110,6 +131,9 @@ type GroupCallManager struct {
 	OnPeerAudio func([]float32)                       // áudio MIXADO de todos os participantes (frames de 960)
 	OnPeerVideo func(participantID string, au []byte) // vídeo H264 (AU) por participante → navegador
 	OnEnded     func(callID string)
+
+	OnKeyframeRequest func()                                // um participante pediu keyframe (PLI/FIR) do NOSSO vídeo
+	OnPeerVideoState  func(participantID string, state int) // participante ligou/desligou a câmera (<video state=N>)
 }
 
 // NewGroupCallManager cria um gerenciador de chamada em grupo.
@@ -124,6 +148,7 @@ func NewGroupCallManager(sock core.VoipSocket, log *slog.Logger) *GroupCallManag
 		epochSentTo: make(map[string]bool),
 		bySSRC:      make(map[uint32]*groupParticipant),
 		byVideoSSRC: make(map[uint32]*groupParticipant),
+		bySrtcpSSRC: make(map[uint32]*groupParticipant),
 		mixer:       groupmix.NewMixer(),
 	}
 }
@@ -257,7 +282,78 @@ func (m *GroupCallManager) HandleUnknownCall(ctx context.Context, node *waBinary
 		if err := m.ingestEpoch(ctx, envelope); err != nil {
 			m.log.Warn("group: rekey ingest failed", "err", err)
 		}
+	case "video":
+		m.handlePeerVideoState(ctx, node, envelope)
 	}
+}
+
+// handlePeerVideoState trata o <video state=N> de um participante do grupo: manda o
+// ack TIPADO (type="video") que o WhatsApp exige — sem ele o aparelho fica
+// retransmitindo (transaction-id crescente) e trata como não-aceito —, marca que o
+// vídeo dele vai (re)começar (pede keyframe) e avisa o painel.
+func (m *GroupCallManager) handlePeerVideoState(ctx context.Context, node *waBinary.Node, envelope *signaling.CallControlEnvelope) {
+	if ack, ok := signaling.BuildVideoAck(node); ok {
+		if err := m.sock.SendNode(ctx, ack); err != nil {
+			m.log.Warn("group: ack tipado de <video> falhou", "err", err)
+		}
+	}
+	state := wanode.AttrInt(envelope.Action.Attrs, "state", -1)
+	orientation := wanode.AttrInt(envelope.Action.Attrs, "device_orientation", -1)
+	pid := media.FormatParticipantID(envelope.From.String())
+
+	m.mu.Lock()
+	// O from vem SEM o id de device (ex.: 1449…@lid) e o roster é por device
+	// (1449…:55@lid): casa pelo usuário.
+	for id, gp := range m.byDevice {
+		if gp.deviceJID.User == envelope.From.User {
+			pid = id
+			if state == signaling.VideoStateEnabled {
+				// Câmera (re)ligada: o próximo vídeo dele começa num keyframe novo — pede.
+				gp.gotIDR = false
+				gp.lastPLI = time.Time{}
+			}
+		}
+	}
+	cb := m.OnPeerVideoState
+	m.mu.Unlock()
+
+	m.log.Info("group: vídeo do participante", "pid", pid, "state", state, "orientation", orientation)
+	if cb != nil {
+		cb(pid, state)
+	}
+}
+
+// announceVideoState anuncia aos participantes que NOSSA câmera está ligada
+// (<video state=1 dec=H264>), como o WhatsApp Web faz numa chamada de grupo com
+// vídeo. Sem o anúncio os aparelhos ficam com nosso tile em "conectando".
+func (m *GroupCallManager) announceVideoState(ctx context.Context, enabled bool) {
+	m.mu.Lock()
+	callID, creator := m.callID, m.creator
+	if callID == "" {
+		m.mu.Unlock()
+		return
+	}
+	if enabled && m.videoAnnounced {
+		m.mu.Unlock()
+		return
+	}
+	m.videoAnnounced = enabled
+	m.mu.Unlock()
+
+	orientation := 0
+	state, dec := signaling.VideoStateDisabled, ""
+	if enabled {
+		state, dec = signaling.VideoStateEnabled, signaling.VideoDecRequest
+	}
+	node := signaling.BuildVideoStateStanza(signaling.VideoStateParams{
+		CallID: callID, To: types.NewJID(callID, "call"), CallCreator: creator,
+		State: state, Dec: dec, DeviceOrientation: &orientation,
+	})
+	if err := m.sock.SendNode(ctx, node); err != nil {
+		m.log.Warn("group: anúncio <video state> falhou", "err", err, "state", state)
+		return
+	}
+	m.log.Info("group: anunciamos nosso vídeo", "call_id", callID, "state", state)
 }
 
 // applyGroupUpdate guarda o roster/PIDs, conecta o relay quando vier e, se somos o
@@ -420,6 +516,20 @@ func (m *GroupCallManager) installEpoch(txid uint32, key []byte) {
 	if m.rtpSession == nil && m.selfSsrcs[0] != 0 {
 		m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrcs[0])
 	}
+	// Emissores SRTCP (SR+SDES periódicos + PLI) dos nossos streams.
+	if m.srtcpAudio == nil && m.selfSsrcs[0] != 0 {
+		if s, err := media.NewSrtcpSender(key, selfID, m.selfSsrcs[0], false); err == nil {
+			m.srtcpAudio = s
+		}
+	}
+	if m.video && m.srtcpVideo == nil {
+		if vs, err := media.DeriveParticipantSSRC(callID, selfID, media.GroupVideoSlotWord); err == nil && vs != 0 {
+			m.selfVideoSSRC = vs
+			if s, err := media.NewSrtcpSender(key, selfID, vs, true); err == nil {
+				m.srtcpVideo = s
+			}
+		}
+	}
 	if m.sendCodec == nil {
 		if c, err := media.NewMLowCodec(media.DefaultCodecOptions); err == nil {
 			m.sendCodec = c
@@ -462,6 +572,18 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 	if gp.audioSSRC != 0 {
 		m.bySSRC[gp.audioSSRC] = gp
 	}
+	// RTCP do participante vem assinado com as chaves SRTCP dele e com o SSRC de
+	// qualquer um dos streams dele como emissor: mapeia os 9.
+	if gp.srtcpKeys == nil {
+		if k, err := media.DeriveGroupSrtcpKeys(m.epochKey, gp.participantID); err == nil {
+			gp.srtcpKeys = &k
+		}
+	}
+	for _, s := range ssrcs {
+		if s != 0 {
+			m.bySrtcpSSRC[s] = gp
+		}
+	}
 
 	// Vídeo: deriva o SSRC de vídeo (slot 2) e um pipeline de RECEPÇÃO H264 por
 	// participante (só decodifica; o relay é nil-safe pois nunca chamamos Broadcast).
@@ -477,9 +599,17 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 				if err := pipe.SetupGroup(0, km, km); err == nil {
 					pid := gp.participantID
 					pipe.OnFrame = func(au []byte) {
+						idr := annexBHasIDR(au)
 						m.mu.Lock()
 						cb := m.OnPeerVideo
+						first := !gp.gotIDR && idr
+						if idr {
+							gp.gotIDR = true
+						}
 						m.mu.Unlock()
+						if first {
+							m.log.Info("group vídeo: keyframe do participante recebido", "pid", pid, "bytes", len(au))
+						}
 						if cb != nil {
 							cb(pid, au)
 						}
@@ -553,12 +683,18 @@ func (m *GroupCallManager) tryStartRelay() {
 				// chamado). NÃO passar keying vazio — deriveSrtpKey estoura com salt vazio.
 				if err := pipe.SetupGroup(vs, km, km); err == nil {
 					m.sendVideoPipe = pipe
+					m.selfVideoSSRC = vs
 				}
 			}
 		}
 	}
+	video := m.video
 	m.mu.Unlock()
 	m.log.Info("group relay: canal DTLS aberto", "relay", relayName)
+	if video {
+		// Anuncia nossa câmera ligada (como o WhatsApp Web) assim que a mídia pode fluir.
+		go m.announceVideoState(context.Background(), true)
+	}
 
 	// allocate builder (lê PIDs conectados correntes a cada envio/keepalive).
 	allocate := func() []byte {
@@ -642,6 +778,18 @@ func (m *GroupCallManager) groupRecvLoop(ch *transport.GroupRelayChannel, stop c
 			continue
 		}
 		pkt := append([]byte(nil), buf[:n]...)
+		// Em modo SFU (2+ remotos) o relay prefixa um cabeçalho de group-forwarding na
+		// mídia reencaminhada dos outros participantes: desembrulha antes de classificar.
+		inner, wrapped, valid := transport.UnwrapGroupForwardingPacket(pkt)
+		if !valid {
+			continue
+		}
+		if wrapped {
+			pkt = inner
+			if w := atomic.AddUint64(&m.wrappedN, 1); mediaDebugEnabled && (w == 1 || w%500 == 0) {
+				m.log.Info("group relay: pacote group-forwarding desembrulhado", "pkts", w, "bytes", len(pkt))
+			}
+		}
 		kind := transport.ClassifyGroupRelayPacket(pkt)
 		if mediaDebugEnabled {
 			n := atomic.AddUint64(&m.recvN, 1)
@@ -664,8 +812,156 @@ func (m *GroupCallManager) groupRecvLoop(ch *transport.GroupRelayChannel, stop c
 			}
 		case transport.GroupRelayRtp:
 			m.onGroupRtp(pkt)
+		case transport.GroupRelayRtcp:
+			m.onGroupRtcp(pkt)
 		}
 	}
+}
+
+// onGroupRtcp autentica o RTCP de um participante (chaves SRTCP dele) e, se for um
+// PLI/FIR pro NOSSO vídeo, pede um keyframe novo à câmera do navegador.
+func (m *GroupCallManager) onGroupRtcp(pkt []byte) {
+	senderSsrc, ok := media.ParseRtcpSenderSsrc(pkt)
+	if !ok {
+		return
+	}
+	m.mu.Lock()
+	gp := m.bySrtcpSSRC[senderSsrc]
+	var keys *media.SrtcpKeys
+	if gp != nil {
+		keys = gp.srtcpKeys
+	}
+	selfVideo := m.selfVideoSSRC
+	onReq := m.OnKeyframeRequest
+	m.mu.Unlock()
+	if keys == nil {
+		if mediaDebugEnabled {
+			m.log.Info("group RTCP de SSRC desconhecido", "ssrc", senderSsrc, "bytes", len(pkt))
+		}
+		return
+	}
+	plain, _, ok := media.UnprotectSrtcp(keys, senderSsrc, pkt)
+	if !ok {
+		if mediaDebugEnabled {
+			m.log.Info("group RTCP falhou autenticação", "ssrc", senderSsrc, "pid", gp.participantID)
+		}
+		return
+	}
+	if n := atomic.AddUint64(&m.rtcpN, 1); mediaDebugEnabled && (n == 1 || n%100 == 0) {
+		m.log.Info("group RTCP autenticado", "pkts", n, "pid", gp.participantID, "pt", plain[1])
+	}
+	if selfVideo != 0 && media.RtcpRequestsKeyframe(plain, selfVideo) {
+		m.log.Info("group: participante pediu keyframe do nosso vídeo (PLI/FIR)", "pid", gp.participantID)
+		if onReq != nil {
+			onReq()
+		}
+	}
+}
+
+// sendPLI pede um keyframe de vídeo ao participante (PLI assinado com nosso SRTCP de
+// vídeo). Rate-limited por participante (300ms). Idempotente sem vídeo/relay.
+func (m *GroupCallManager) sendPLI(gp *groupParticipant, force bool) {
+	m.mu.Lock()
+	s, ch, vs := m.srtcpVideo, m.groupChan, gp.videoSSRC
+	if s == nil || ch == nil || vs == 0 || (!force && time.Since(gp.lastPLI) < 300*time.Millisecond) {
+		m.mu.Unlock()
+		return
+	}
+	gp.lastPLI = time.Now()
+	m.mu.Unlock()
+	pkt, err := s.PictureLossIndication(vs)
+	if err != nil {
+		return
+	}
+	_, _ = ch.Send(pkt)
+	if n := atomic.AddUint64(&m.pliN, 1); mediaDebugEnabled || n <= 3 {
+		m.log.Info("group: PLI enviado (pedido de keyframe)", "pid", gp.participantID, "video_ssrc", vs, "total", n)
+	}
+}
+
+// RequestParticipantKeyframe pede keyframe ao participante pid ("" = todos). Usado
+// quando o navegador precisa (decoder novo/erro) — quem consome é quem pede.
+func (m *GroupCallManager) RequestParticipantKeyframe(pid string) {
+	m.mu.Lock()
+	var targets []*groupParticipant
+	for id, gp := range m.byDevice {
+		if pid == "" || id == pid || gp.deviceJID.User == pid {
+			targets = append(targets, gp)
+		}
+	}
+	m.mu.Unlock()
+	for _, gp := range targets {
+		m.sendPLI(gp, false)
+	}
+}
+
+// RequestAllKeyframes marca que o vídeo de TODOS precisa recomeçar num keyframe (ex.:
+// o navegador do atendente (re)conectou) e pede PLI a quem já está mandando vídeo.
+func (m *GroupCallManager) RequestAllKeyframes() {
+	m.mu.Lock()
+	var targets []*groupParticipant
+	for _, gp := range m.byDevice {
+		gp.gotIDR = false
+		if gp.videoPkts > 0 {
+			targets = append(targets, gp)
+		}
+	}
+	m.mu.Unlock()
+	for _, gp := range targets {
+		m.sendPLI(gp, true)
+	}
+}
+
+// rtcpLoop manda os SR+SDES periódicos (1,5s) dos nossos streams de áudio e vídeo —
+// o WhatsApp associa os streams RTP a essa sessão SRTCP; sem os reports o vídeo do
+// criador pode nunca "engatar" no receptor.
+func (m *GroupCallManager) rtcpLoop(stop chan struct{}) {
+	defer m.recoverGroup("rtcpLoop")
+	ticker := time.NewTicker(1500 * time.Millisecond)
+	defer ticker.Stop()
+	var sent uint64
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-ticker.C:
+			m.mu.Lock()
+			ch := m.groupChan
+			audio, video := m.srtcpAudio, m.srtcpVideo
+			astats := m.audioStats
+			vpipe := m.sendVideoPipe
+			m.mu.Unlock()
+			if ch == nil {
+				continue
+			}
+			nowMs := uint64(now.UnixMilli())
+			if audio != nil && astats.PacketsSent > 0 {
+				if pkt, err := audio.SenderReport(astats, nowMs); err == nil {
+					_, _ = ch.Send(pkt)
+				}
+			}
+			if video != nil && vpipe != nil {
+				if vstats := vpipe.SenderStats(); vstats.PacketsSent > 0 {
+					if pkt, err := video.SenderReport(vstats, nowMs); err == nil {
+						_, _ = ch.Send(pkt)
+					}
+				}
+			}
+			if sent++; sent == 1 {
+				m.log.Info("group: SRTCP sender reports periódicos iniciados")
+			}
+		}
+	}
+}
+
+// annexBHasIDR diz se um access unit Annex-B contém um NAL IDR (tipo 5).
+func annexBHasIDR(au []byte) bool {
+	for _, n := range transport.SplitAnnexB(au) {
+		if len(n) > 0 && n[0]&0x1f == 5 {
+			return true
+		}
+	}
+	return false
 }
 
 // onGroupRtp decodifica um pacote RTP de um participante: áudio (Opus) → mixer,
@@ -679,8 +975,30 @@ func (m *GroupCallManager) onGroupRtp(data []byte) {
 		vssrc := media.RTPSsrc(data)
 		m.mu.Lock()
 		gp := m.byVideoSSRC[vssrc]
+		var first, needPLI bool
+		if gp != nil {
+			gp.videoPkts++
+			first = gp.videoPkts == 1
+			// Até entregarmos um keyframe dele, pede PLI a cada 1s: os celulares só
+			// mandam IDR sob pedido, e sem IDR o decoder do painel não abre o vídeo.
+			if !gp.gotIDR && time.Since(gp.lastPLI) >= time.Second {
+				needPLI = true
+			}
+		}
 		m.mu.Unlock()
-		if gp != nil && gp.videoPipe != nil {
+		if gp == nil {
+			if u := atomic.AddUint64(&m.videoUnknownN, 1); u == 1 || (mediaDebugEnabled && u%500 == 0) {
+				m.log.Warn("group vídeo de SSRC desconhecido (participante sem receiver?)", "ssrc", vssrc, "pkts", u)
+			}
+			return
+		}
+		if first {
+			m.log.Info("group vídeo: 1º pacote do participante", "pid", gp.participantID, "video_ssrc", vssrc)
+		}
+		if needPLI {
+			m.sendPLI(gp, true)
+		}
+		if gp.videoPipe != nil {
 			gp.videoPipe.HandleRelayData(data)
 		}
 		return
@@ -725,6 +1043,7 @@ func (m *GroupCallManager) maybeStartMedia() {
 
 	go m.mixLoop(stop)
 	go m.sendLoop(stop)
+	go m.rtcpLoop(stop)
 	m.log.Info("group media started", "call_id", m.CallID())
 }
 
@@ -795,6 +1114,11 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 				continue
 			}
 			_, _ = ch.Send(protected)
+			m.mu.Lock()
+			m.audioStats.PacketsSent++
+			m.audioStats.OctetsSent += uint32(len(opus))
+			m.audioStats.RtpTimestamp = pkt.Header.Timestamp
+			m.mu.Unlock()
 			if mediaDebugEnabled {
 				if s := atomic.AddUint64(&m.sentN, 1); s == 1 || s%200 == 0 {
 					m.log.Info("group RTP enviado", "pkts", s, "bytes", len(protected))
@@ -812,9 +1136,28 @@ func (m *GroupCallManager) SetAudioSink(fn func([]float32)) {
 }
 
 // SetVideoSink liga/desliga (fn=nil) o destino do vídeo dos participantes (navegador).
+// Ao ligar, o vídeo de todos precisa recomeçar num keyframe (decoders novos no
+// navegador): pede PLI a quem já manda vídeo.
 func (m *GroupCallManager) SetVideoSink(fn func(participantID string, au []byte)) {
 	m.mu.Lock()
 	m.OnPeerVideo = fn
+	m.mu.Unlock()
+	if fn != nil {
+		m.RequestAllKeyframes()
+	}
+}
+
+// SetKeyframeRequestSink liga/desliga o aviso "pediram keyframe do nosso vídeo".
+func (m *GroupCallManager) SetKeyframeRequestSink(fn func()) {
+	m.mu.Lock()
+	m.OnKeyframeRequest = fn
+	m.mu.Unlock()
+}
+
+// SetPeerVideoStateSink liga/desliga o aviso de câmera ligada/desligada de participante.
+func (m *GroupCallManager) SetPeerVideoStateSink(fn func(participantID string, state int)) {
+	m.mu.Lock()
+	m.OnPeerVideoState = fn
 	m.mu.Unlock()
 }
 
@@ -880,6 +1223,15 @@ func (m *GroupCallManager) End() {
 	m.epochSentTo = make(map[string]bool)
 	m.bySSRC = make(map[uint32]*groupParticipant)
 	m.byVideoSSRC = make(map[uint32]*groupParticipant)
+	m.bySrtcpSSRC = make(map[uint32]*groupParticipant)
+	m.srtcpAudio, m.srtcpVideo = nil, nil
+	m.audioStats = media.RtcpSenderStats{}
+	m.selfVideoSSRC = 0
+	m.videoAnnounced = false
+	m.epochKey = nil
+	m.groupRelay = nil
+	m.connectedPIDs = nil
+	m.sendSrtp, m.rtpSession = nil, nil
 	m.mu.Unlock()
 
 	if ch != nil {

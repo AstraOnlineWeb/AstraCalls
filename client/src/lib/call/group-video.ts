@@ -14,6 +14,7 @@ export class GroupVideoBridge {
   private sender: VideoSender | null = null;
   private receivers = new Map<string, VideoReceiver>();
   private closed = false;
+  private lastPli = new Map<string, number>();
 
   /** Stream local da câmera (preview). Disponível após connect(). */
   localStream: MediaStream | null = null;
@@ -52,7 +53,10 @@ export class GroupVideoBridge {
       ws.onclose = () => {
         if (!this.closed) this.close();
       };
-      ws.onmessage = (ev) => this.onMessage(ev.data as ArrayBuffer);
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === "string") this.onControl(ev.data);
+        else this.onMessage(ev.data as ArrayBuffer);
+      };
     });
 
     // Envia a câmera (encode annexb → WS binário).
@@ -63,6 +67,42 @@ export class GroupVideoBridge {
           this.ws.send(au);
         }
       });
+    }
+  }
+
+  /**
+   * Controle (texto JSON) do gateway:
+   *   keyframe_request — um participante pediu keyframe da nossa câmera → força IDR.
+   *   video_state      — participante ligou(1)/desligou(0/6) a câmera → some o tile.
+   */
+  private onControl(raw: string): void {
+    let msg: { type?: string; pid?: string; state?: number };
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (msg.type === "keyframe_request") {
+      this.sender?.forceKeyframe();
+    } else if (msg.type === "video_state" && msg.pid && (msg.state === 0 || msg.state === 6)) {
+      const rx = this.receivers.get(msg.pid);
+      if (rx) {
+        try {
+          rx.close();
+        } catch {}
+        this.receivers.delete(msg.pid);
+        this.onParticipantGone?.(msg.pid);
+      }
+    }
+  }
+
+  /** Pede ao gateway um keyframe (PLI) do participante — no máximo 1/s por pid. */
+  private requestPli(pid: string): void {
+    const now = Date.now();
+    if (now - (this.lastPli.get(pid) ?? 0) < 1000) return;
+    this.lastPli.set(pid, now);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "pli", pid }));
     }
   }
 
@@ -77,6 +117,7 @@ export class GroupVideoBridge {
     let rx = this.receivers.get(pid);
     if (!rx) {
       rx = new VideoReceiver();
+      rx.onNeedKeyframe = () => this.requestPli(pid);
       this.receivers.set(pid, rx);
       this.onParticipantStream?.(pid, rx.stream);
     }
