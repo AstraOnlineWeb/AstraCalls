@@ -639,8 +639,8 @@ func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string, alt
 				// o telefone deixava o contato "meio migrado" (identifier/attr com o 9),
 				// e reply/dedup de echo/próximo match podiam divergir de novo. Best-effort.
 				needPhone := phone != "" && digitsOnly(asStr(m["phone_number"])) != phone
-				needIdent := phone != "" && ident != chatID
-				needAttr := phone != "" && attr != chatID
+				needIdent := phone != "" && ident != "" && ident != chatID
+				needAttr := phone != "" && attr != "" && attr != chatID
 				if needPhone || needIdent || needAttr {
 					c.canonicalizeContact(id, chatID, phone, asMap(m["custom_attributes"]))
 				}
