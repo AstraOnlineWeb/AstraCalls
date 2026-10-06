@@ -141,6 +141,18 @@ func NewSrtcpSender(epochKey []byte, selfID string, ssrc uint32, profile bool) (
 	return &SrtcpSender{keys: keys, ssrc: ssrc, cname: BuildWhatsappRtcpCname(entropy), profile: profile, index: 1}, nil
 }
 
+// Rekey troca as chaves pro epoch novo mantendo índice e CNAME (rotação de epoch).
+func (s *SrtcpSender) Rekey(epochKey []byte, selfID string) error {
+	keys, err := DeriveGroupSrtcpKeys(epochKey, selfID)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.keys = keys
+	s.mu.Unlock()
+	return nil
+}
+
 // SSRC devolve o SSRC do stream que este emissor representa.
 func (s *SrtcpSender) SSRC() uint32 { return s.ssrc }
 

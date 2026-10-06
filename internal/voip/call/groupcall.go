@@ -1,6 +1,7 @@
 package call
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -46,6 +47,7 @@ type groupParticipant struct {
 	videoPipe *callvideo.Pipeline // pipeline de recepção de vídeo (H264 → AU)
 
 	srtcpKeys *media.SrtcpKeys // chaves SRTCP do participante (p/ autenticar o RTCP dele)
+	keysTxID  uint32           // epoch (transaction-id) do qual as chaves acima foram derivadas
 	videoPkts uint64           // diagnóstico: pacotes de vídeo recebidos dele
 	gotIDR    bool             // já entregamos um AU com keyframe dele (vídeo decodificável)
 	lastPLI   time.Time        // último PLI que mandamos pra ele (rate limit)
@@ -497,8 +499,29 @@ func (m *GroupCallManager) ingestEpoch(ctx context.Context, envelope *signaling.
 
 // installEpoch guarda a chave, deriva nossas chaves/SSRCs de envio e as de recepção
 // de cada participante já conhecido, e tenta iniciar a mídia.
+// installEpoch instala UM epoch compartilhado da call (transaction-id crescente).
+// A chave é ÚNICA para todos e é ROTACIONADA a cada entrada: quem entra distribui
+// um epoch novo via enc_rekey. Ao aceitar um epoch, TODAS as chaves são rederivadas
+// (nosso envio de áudio/vídeo/SRTCP e a recepção de cada participante) preservando
+// ROC/sequência — sem isso, a partir do 3º participante o áudio/vídeo embaralha.
 func (m *GroupCallManager) installEpoch(txid uint32, key []byte) {
 	m.mu.Lock()
+	if len(m.epochKey) == 32 {
+		switch {
+		case txid < m.epochTxID:
+			m.mu.Unlock()
+			m.log.Info("group: epoch antigo ignorado", "tx", txid, "installed_tx", m.epochTxID)
+			return
+		case txid == m.epochTxID && bytes.Equal(m.epochKey, key):
+			m.mu.Unlock()
+			return
+		case txid == m.epochTxID:
+			m.mu.Unlock()
+			m.log.Warn("group: epoch conflitante p/ a mesma transaction ignorado", "tx", txid)
+			return
+		}
+	}
+	rotation := len(m.epochKey) == 32
 	m.epochKey = key
 	m.epochTxID = txid
 	callID := m.callID
@@ -509,23 +532,36 @@ func (m *GroupCallManager) installEpoch(txid uint32, key []byte) {
 		m.selfSsrcs = ssrcs
 	}
 	if km, err := media.DeriveGroupSrtpKeying(key, selfID); err == nil {
-		if ctx, err := media.NewSrtpContext(km, core.SRTPAuthTagLen); err == nil {
+		if m.sendSrtp != nil {
+			if ctx, err := m.sendSrtp.WithKeying(km); err == nil {
+				m.sendSrtp = ctx
+			}
+		} else if ctx, err := media.NewSrtpContext(km, core.SRTPAuthTagLen); err == nil {
 			m.sendSrtp = ctx
+		}
+		if m.sendVideoPipe != nil {
+			if err := m.sendVideoPipe.RekeyGroup(km, km); err != nil {
+				m.log.Warn("group: rekey do pipeline de vídeo de envio falhou", "err", err)
+			}
 		}
 	}
 	if m.rtpSession == nil && m.selfSsrcs[0] != 0 {
 		m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrcs[0])
 	}
 	// Emissores SRTCP (SR+SDES periódicos + PLI) dos nossos streams.
-	if m.srtcpAudio == nil && m.selfSsrcs[0] != 0 {
-		if s, err := media.NewSrtcpSender(key, selfID, m.selfSsrcs[0], false); err == nil {
+	if m.selfSsrcs[0] != 0 {
+		if m.srtcpAudio != nil {
+			_ = m.srtcpAudio.Rekey(key, selfID)
+		} else if s, err := media.NewSrtcpSender(key, selfID, m.selfSsrcs[0], false); err == nil {
 			m.srtcpAudio = s
 		}
 	}
-	if m.video && m.srtcpVideo == nil {
+	if m.video {
 		if vs, err := media.DeriveParticipantSSRC(callID, selfID, media.GroupVideoSlotWord); err == nil && vs != 0 {
 			m.selfVideoSSRC = vs
-			if s, err := media.NewSrtcpSender(key, selfID, vs, true); err == nil {
+			if m.srtcpVideo != nil {
+				_ = m.srtcpVideo.Rekey(key, selfID)
+			} else if s, err := media.NewSrtcpSender(key, selfID, vs, true); err == nil {
 				m.srtcpVideo = s
 			}
 		}
@@ -536,11 +572,13 @@ func (m *GroupCallManager) installEpoch(txid uint32, key []byte) {
 		}
 	}
 
-	// Chaves/SSRCs de RECEPÇÃO por participante.
+	// Chaves/SSRCs de RECEPÇÃO por participante (rederiva as de quem já existe).
 	for _, gp := range m.byDevice {
 		m.setupReceiverLocked(gp)
 	}
+	n := len(m.byDevice)
 	m.mu.Unlock()
+	m.log.Info("group: epoch instalado", "tx", txid, "rotation", rotation, "participants", n)
 
 	m.tryStartRelay()
 	m.maybeStartMedia()
@@ -556,12 +594,21 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 	if err != nil {
 		return
 	}
-	gp.audioSSRC = ssrcs[0] // slot 0 = áudio
-	if gp.srtp == nil {
-		if km, err := media.DeriveGroupSrtpKeying(m.epochKey, gp.participantID); err == nil {
+	gp.audioSSRC = ssrcs[0]             // slot 0 = áudio
+	rekey := gp.keysTxID != m.epochTxID // epoch rotacionou: rederiva as chaves existentes
+	if km, err := media.DeriveGroupSrtpKeying(m.epochKey, gp.participantID); err == nil {
+		switch {
+		case gp.srtp == nil:
 			if ctx, err := media.NewSrtpContext(km, core.SRTPAuthTagLen); err == nil {
 				gp.srtp = ctx
 			}
+		case rekey:
+			if ctx, err := gp.srtp.WithKeying(km); err == nil {
+				gp.srtp = ctx
+			}
+		}
+		if rekey && gp.videoPipe != nil {
+			_ = gp.videoPipe.RekeyGroup(km, km)
 		}
 	}
 	if gp.codec == nil {
@@ -574,7 +621,7 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 	}
 	// RTCP do participante vem assinado com as chaves SRTCP dele e com o SSRC de
 	// qualquer um dos streams dele como emissor: mapeia os 9.
-	if gp.srtcpKeys == nil {
+	if gp.srtcpKeys == nil || rekey {
 		if k, err := media.DeriveGroupSrtcpKeys(m.epochKey, gp.participantID); err == nil {
 			gp.srtcpKeys = &k
 		}
@@ -584,6 +631,7 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 			m.bySrtcpSSRC[s] = gp
 		}
 	}
+	gp.keysTxID = m.epochTxID
 
 	// Vídeo: deriva o SSRC de vídeo (slot 2) e um pipeline de RECEPÇÃO H264 por
 	// participante (só decodifica; o relay é nil-safe pois nunca chamamos Broadcast).

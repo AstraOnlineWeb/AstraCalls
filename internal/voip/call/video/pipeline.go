@@ -124,6 +124,22 @@ func (p *Pipeline) SetupGroup(selfVideoSSRC uint32, sendKM, recvKM core.SrtpKeyi
 	return nil
 }
 
+// RekeyGroup troca as chaves SRTP (envio e recepção) pro epoch novo do grupo,
+// preservando ROC/sequência e o resto do estado do pipeline.
+func (p *Pipeline) RekeyGroup(sendKM, recvKM core.SrtpKeyingMaterial) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.srtp == nil {
+		return nil
+	}
+	n, err := p.srtp.WithKeying(sendKM, recvKM)
+	if err != nil {
+		return err
+	}
+	p.srtp = n
+	return nil
+}
+
 // videoExtProfile é o perfil da RTP header extension do vídeo do WhatsApp (0xDEBE,
 // NÃO 0xBEDE). O conteúdo (one-byte headers) traz MediaFrameInfo, InitialBandwidth,
 // ShortOffset e TransportSequence — não abs-send-time. Formato confirmado contra o
