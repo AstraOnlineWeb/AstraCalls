@@ -46,11 +46,12 @@ type groupParticipant struct {
 	videoSSRC uint32              // SSRC de vídeo do participante (slot 2)
 	videoPipe *callvideo.Pipeline // pipeline de recepção de vídeo (H264 → AU)
 
-	srtcpKeys *media.SrtcpKeys // chaves SRTCP do participante (p/ autenticar o RTCP dele)
-	keysTxID  uint32           // epoch (transaction-id) do qual as chaves acima foram derivadas
-	videoPkts uint64           // diagnóstico: pacotes de vídeo recebidos dele
-	gotIDR    bool             // já entregamos um AU com keyframe dele (vídeo decodificável)
-	lastPLI   time.Time        // último PLI que mandamos pra ele (rate limit)
+	srtcpKeys    *media.SrtcpKeys // chaves SRTCP do participante (p/ autenticar o RTCP dele)
+	keysTxID     uint32           // epoch (transaction-id) do qual as chaves acima foram derivadas
+	wasConnected bool             // já esteve "connected" no roster (p/ detectar saída: volta a invited)
+	videoPkts    uint64           // diagnóstico: pacotes de vídeo recebidos dele
+	gotIDR       bool             // já entregamos um AU com keyframe dele (vídeo decodificável)
+	lastPLI      time.Time        // último PLI que mandamos pra ele (rate limit)
 }
 
 // groupVideoRelay adapta o canal DTLS de grupo à interface Relay do pipeline de vídeo
@@ -326,6 +327,15 @@ func (m *GroupCallManager) handlePeerVideoState(ctx context.Context, node *waBin
 	if cb != nil {
 		cb(pid, state)
 	}
+	// Rotação do aparelho anunciada no stanza (além dos bits CVO do RTP).
+	if orientation >= 0 && orientation <= 3 && state == signaling.VideoStateEnabled {
+		m.mu.Lock()
+		ocb := m.OnPeerVideoOrientation
+		m.mu.Unlock()
+		if ocb != nil {
+			ocb(pid, orientation)
+		}
+	}
 }
 
 // announceVideoState anuncia aos participantes que NOSSA câmera está ligada
@@ -387,12 +397,20 @@ func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signalin
 				continue
 			}
 			pid := media.FormatParticipantID(d.JID.String())
-			present[pid] = true
 			gp := m.byDevice[pid]
 			if gp == nil {
 				gp = &groupParticipant{participantID: pid, deviceJID: d.JID}
 				m.byDevice[pid] = gp
 			}
+			// Quem SAI não some do roster: o WhatsApp mantém o convite e o usuário volta
+			// de "connected" pra "invited". Essa transição é a saída.
+			if gp.wasConnected && !connected {
+				continue // cai na remoção abaixo (não marca presente)
+			}
+			if connected {
+				gp.wasConnected = true
+			}
+			present[pid] = true
 			if d.HasPID {
 				gp.pid = int(d.PID)
 				if connected {

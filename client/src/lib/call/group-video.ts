@@ -16,6 +16,8 @@ export class GroupVideoBridge {
   private closed = false;
   private lastPli = new Map<string, number>();
   private orientations = new Map<string, number>();
+  private lastFrameAt = new Map<string, number>();
+  private staleTimer: ReturnType<typeof setInterval> | null = null;
 
   /** Stream local da câmera (preview). Disponível após connect(). */
   localStream: MediaStream | null = null;
@@ -67,6 +69,15 @@ export class GroupVideoBridge {
       };
     });
 
+    // Rede de segurança: tile que fica 8s sem frame (participante saiu/caiu sem o
+    // gateway avisar) some em vez de ficar congelado no último quadro.
+    this.staleTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [pid, at] of this.lastFrameAt) {
+        if (now - at > 8000) this.dropParticipant(pid);
+      }
+    }, 2000);
+
     // Envia a câmera (encode annexb → WS binário).
     const track = this.localStream.getVideoTracks()[0];
     if (track) {
@@ -115,6 +126,7 @@ export class GroupVideoBridge {
     }
     this.orientations.delete(pid);
     this.lastPli.delete(pid);
+    this.lastFrameAt.delete(pid);
   }
 
   /** Pede ao gateway um keyframe (PLI) do participante — no máximo 1/s por pid. */
@@ -135,6 +147,7 @@ export class GroupVideoBridge {
     const pid = new TextDecoder().decode(bytes.subarray(1, 1 + pidLen));
     const au = bytes.subarray(1 + pidLen);
 
+    this.lastFrameAt.set(pid, Date.now());
     let rx = this.receivers.get(pid);
     if (!rx) {
       rx = new VideoReceiver();
@@ -147,6 +160,10 @@ export class GroupVideoBridge {
 
   close(): void {
     this.closed = true;
+    if (this.staleTimer) {
+      clearInterval(this.staleTimer);
+      this.staleTimer = null;
+    }
     try {
       this.sender?.close();
     } catch {}

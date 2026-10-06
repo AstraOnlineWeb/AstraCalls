@@ -52,7 +52,15 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   // Rotação do vídeo do cliente: automática (orientação do celular, vinda do RTP) +
   // ajuste manual do atendente (botão de girar, 90° por clique) por cima.
   const [manualRot, setManualRot] = useState(0);
-  const remoteRot = (video.state.peerOrientation * 90 + manualRot) % 360;
+  const [remoteLandscape, setRemoteLandscape] = useState(false);
+  // Só gira sozinho quando o quadro chega DEITADO e o celular diz que está em pé
+  // (CVO 1/3): se o aparelho já manda o quadro girado (em pé), não mexe.
+  const onRemoteSize = () => {
+    const el = remoteVideoRef.current;
+    if (el && el.videoWidth && el.videoHeight) setRemoteLandscape(el.videoWidth > el.videoHeight);
+  };
+  const autoRot = video.state.peerOrientation % 2 === 1 && remoteLandscape ? video.state.peerOrientation * 90 : 0;
+  const remoteRot = (autoRot + manualRot) % 360;
   const remoteSideways = remoteRot === 90 || remoteRot === 270;
 
   useEffect(() => {
@@ -209,6 +217,8 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
               ref={remoteVideoRef}
               autoPlay
               playsInline
+              onLoadedMetadata={onRemoteSize}
+              onResize={onRemoteSize}
               style={{ transform: `rotate(${remoteRot}deg) scale(${remoteSideways ? 1.78 : 1})` }}
               className="aspect-video w-full bg-black object-cover transition-transform"
             />

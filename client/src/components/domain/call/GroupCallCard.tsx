@@ -25,10 +25,18 @@ const VideoTile = ({
 }) => {
   const ref = useRef<HTMLVideoElement>(null);
   const [manual, setManual] = useState(0);
+  const [landscape, setLandscape] = useState(false);
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
   }, [stream]);
-  const rot = (orientation * 90 + manual) % 360;
+  // Só gira sozinho quando o quadro chega DEITADO e o celular diz que está em pé
+  // (CVO 1/3): se o aparelho já manda o quadro girado (em pé), não mexe.
+  const onSize = () => {
+    const el = ref.current;
+    if (el && el.videoWidth && el.videoHeight) setLandscape(el.videoWidth > el.videoHeight);
+  };
+  const auto = orientation % 2 === 1 && landscape ? orientation * 90 : 0;
+  const rot = (auto + manual) % 360;
   const setRot = (fn: (r: number) => number) => setManual((m) => fn(m) % 360);
   // Em 90°/270° a imagem gira dentro do bloco; escala p/ preencher sem cortar demais.
   const sideways = rot === 90 || rot === 270;
@@ -39,6 +47,8 @@ const VideoTile = ({
         autoPlay
         playsInline
         muted={muted}
+        onLoadedMetadata={onSize}
+        onResize={onSize}
         style={{ transform: `rotate(${rot}deg) scale(${sideways ? 1.34 : 1})` }}
         className="h-full w-full object-cover transition-transform"
       />

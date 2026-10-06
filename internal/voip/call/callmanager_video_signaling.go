@@ -126,6 +126,11 @@ func (m *CallManager) HandleVideoState(ctx context.Context, node *waBinary.Node)
 	if onChg != nil {
 		onChg(c)
 	}
+	// O WhatsApp avisa a rotação do aparelho no meio da chamada por este stanza
+	// (device_orientation), não só pelos bits CVO do RTP.
+	if o := wanode.AttrInt(info.InnerNode.Attrs, "device_orientation", -1); o >= 0 && o <= 3 {
+		m.notePeerVideoOrientation(o)
+	}
 	m.log.Info("peer video state", "call_id", callID, "state", state)
 }
 
