@@ -84,12 +84,10 @@ type GroupCallManager struct {
 	connectedPIDs []uint32                  // PIDs dos participantes remotos conectados
 	relayStarted  bool                      // já configurou o relay de grupo
 
-	selfSsrcs     [9]uint32
-	sendSrtp      *media.SrtpContext
-	sendCodec     media.Codec
-	rtpSession    *media.RtpSession
-	mediaClock    *media.MediaClock // relógio único da call (áudio+vídeo no mesmo eixo)
-	mediaAnchored bool              // o relógio já foi reancorado no 1º envio de áudio
+	selfSsrcs  [9]uint32
+	sendSrtp   *media.SrtpContext
+	sendCodec  media.Codec
+	rtpSession *media.RtpSession
 
 	byDevice    map[string]*groupParticipant // participantID -> participante
 	bySSRC      map[uint32]*groupParticipant // audioSSRC -> participante
@@ -393,13 +391,7 @@ func (m *GroupCallManager) installEpoch(txid uint32, key []byte) {
 		}
 	}
 	if m.rtpSession == nil && m.selfSsrcs[0] != 0 {
-		// Semeia o áudio pelo MediaClock da call (perto de zero), pra ficar no mesmo
-		// eixo de tempo do vídeo e o vídeo não congelar por overflow no receptor.
-		if m.mediaClock == nil {
-			m.mediaClock = media.NewMediaClock()
-		}
 		m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrcs[0])
-		m.rtpSession.SetTimestamp(m.mediaClock.TimestampFor(16000))
 	}
 	if m.sendCodec == nil {
 		if c, err := media.NewMLowCodec(media.DefaultCodecOptions); err == nil {
@@ -533,10 +525,6 @@ func (m *GroupCallManager) tryStartRelay() {
 				// Pipe só de ENVIO: usa km nos dois lados (o contexto de RECEPÇÃO nunca é
 				// chamado). NÃO passar keying vazio — deriveSrtpKey estoura com salt vazio.
 				if err := pipe.SetupGroup(vs, km, km); err == nil {
-					if m.mediaClock == nil {
-						m.mediaClock = media.NewMediaClock()
-					}
-					pipe.SetClock(m.mediaClock)
 					m.sendVideoPipe = pipe
 				}
 			}
@@ -754,17 +742,6 @@ func (m *GroupCallManager) sendLoop(stop chan struct{}) {
 				m.mu.Unlock()
 				continue
 			}
-			if !m.mediaAnchored {
-				// Ancora o relógio no 1º envio de áudio (início REAL da mídia), pra o
-				// vídeo (1º frame) ficar no mesmo eixo de tempo do áudio.
-				m.mediaAnchored = true
-				if m.mediaClock == nil {
-					m.mediaClock = media.NewMediaClock()
-				} else {
-					m.mediaClock.Reset()
-				}
-				m.rtpSession.SetTimestamp(0)
-			}
 			var frame []float32
 			if len(m.captureBuf) >= 960 {
 				frame = m.captureBuf[:960]
@@ -875,8 +852,6 @@ func (m *GroupCallManager) End() {
 	m.byDevice = make(map[string]*groupParticipant)
 	m.bySSRC = make(map[uint32]*groupParticipant)
 	m.byVideoSSRC = make(map[uint32]*groupParticipant)
-	m.mediaClock = nil
-	m.mediaAnchored = false
 	m.mu.Unlock()
 
 	if ch != nil {
