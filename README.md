@@ -27,7 +27,7 @@ VoIP nativo (áudio + vídeo, 1:1 e em grupo), gateway **SIP/PBX**, suíte compl
 > massa**, **webhooks assinados com retry/DLQ**, **integração nativa com Chatwoot** (com
 > widget de chamada dentro do Chatwoot), **autenticação por API key**, **observabilidade** e
 > **imagem Docker multi-arquitetura**. Os créditos do projeto original estão preservados em
-> [Colaboradores](#-colaboradores).
+> [Licença](#-licença).
 
 ---
 
@@ -370,26 +370,6 @@ cd client && npm run build    # type-check + build de produção do painel
 - O SIP na 5060 recebe varredura da internet o tempo todo: só sessões com credenciais
   válidas registram (Digest MD5); considere restringir a porta por firewall aos IPs dos
   PBXs.
-
----
-
-## 👥 Colaboradores
-
-O AstraCalls é construído sobre o excelente trabalho da equipe do **WaCalls**. Todos os
-créditos do projeto original:
-
-<div align="center">
-
-<a href="https://github.com/jotadev66"><img src="https://github.com/jotadev66.png" width="72" height="72" style="border-radius:50%" alt="jotadev66"/></a>
-<a href="https://github.com/edgardmessias"><img src="https://github.com/edgardmessias.png" width="72" height="72" style="border-radius:50%" alt="edgardmessias"/></a>
-<a href="https://github.com/w3nder"><img src="https://github.com/w3nder.png" width="72" height="72" style="border-radius:50%" alt="w3nder"/></a>
-<a href="https://github.com/purpshell"><img src="https://github.com/purpshell.png" width="72" height="72" style="border-radius:50%" alt="purpshell"/></a>
-
-[**@jotadev66**](https://github.com/jotadev66) · [**@edgardmessias**](https://github.com/edgardmessias) · [**@w3nder**](https://github.com/w3nder) · [**@purpshell**](https://github.com/purpshell)
-
-**Projeto original:** [WaCalls](https://github.com/JotaDev66/WaCalls)
-
-</div>
 
 ---
 
