@@ -333,11 +333,12 @@ func (b *Broker) emitIncoming(sessionID, id, peer, phone, name string, video boo
 
 // emitVideoState avisa a UI sobre negociação de vídeo mid-call (pedido de upgrade,
 // câmera do peer ligada/desligada, etc.). Escopado por conta como as chamadas.
-func (b *Broker) emitVideoState(sessionID, id, kind string, peerVideo, localVideo, upgradeIncoming, upgradeOutgoing bool) {
+func (b *Broker) emitVideoState(sessionID, id, kind string, peerVideo, localVideo, upgradeIncoming, upgradeOutgoing bool, peerOrientation int) {
 	b.broadcastForSession(sessionID, map[string]any{
 		"type": "video-state", "sessionId": sessionID, "id": id, "kind": kind,
 		"peerVideo": peerVideo, "localVideo": localVideo,
 		"upgradeIncoming": upgradeIncoming, "upgradeOutgoing": upgradeOutgoing,
+		"peerOrientation": peerOrientation, // rotação da câmera do peer (0..3, quartos de volta)
 	})
 }
 

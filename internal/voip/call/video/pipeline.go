@@ -48,14 +48,46 @@ type Pipeline struct {
 
 	stats media.RtcpSenderStats // contadores de envio (p/ Sender Report SRTCP)
 
+	lastOrientation int // última orientação (0..3) vista na extensão RTP do peer; -1 = nenhuma
+
 	OnFrame func(au []byte)
+	// OnOrientation é chamado quando a ORIENTAÇÃO da câmera do peer muda (quartos de
+	// volta horários, 0..3), lida da extensão de vídeo do WhatsApp (MediaFrameInfo,
+	// bits baixos = CVO). Permite o painel girar o vídeo sozinho.
+	OnOrientation func(orientation int)
+}
+
+// parseVideoOrientation lê a orientação (CVO, 2 bits baixos do MediaFrameInfo, id 3)
+// da extensão 0xDEBE de um pacote de vídeo recebido.
+func parseVideoOrientation(h *media.RtpHeader) (int, bool) {
+	if h == nil || !h.Extension || h.ExtensionProfile != videoExtProfile {
+		return 0, false
+	}
+	ext := h.ExtensionData
+	for off := 0; off < len(ext); {
+		hdr := ext[off]
+		off++
+		if hdr == 0 {
+			continue // padding
+		}
+		id := hdr >> 4
+		l := int(hdr&0x0f) + 1
+		if id == 15 || off+l > len(ext) {
+			return 0, false
+		}
+		if id == 3 {
+			return int(ext[off] & 0x03), true
+		}
+		off += l
+	}
+	return 0, false
 }
 
 func New(log *slog.Logger, relay Relay) *Pipeline {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Pipeline{log: log, relay: relay}
+	return &Pipeline{log: log, relay: relay, lastOrientation: -1}
 }
 
 // SetClock liga o relógio de mídia da call ao pipeline: o 1º frame de vídeo é semeado
@@ -285,6 +317,7 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 		return
 	}
 	nalus := depack.Depacketize(pkt.Payload)
+	orient, hasOrient := parseVideoOrientation(pkt.Header)
 
 	p.mu.Lock()
 	for _, nalu := range nalus {
@@ -297,8 +330,16 @@ func (p *Pipeline) HandleRelayData(data []byte) {
 		p.frameBuf = nil
 	}
 	cb := p.OnFrame
+	var orientCb func(int)
+	if hasOrient && orient != p.lastOrientation {
+		p.lastOrientation = orient
+		orientCb = p.OnOrientation
+	}
 	p.mu.Unlock()
 
+	if orientCb != nil {
+		orientCb(orient)
+	}
 	if frame != nil && cb != nil {
 		cb(frame)
 	}
@@ -316,5 +357,6 @@ func (p *Pipeline) Reset() {
 	p.transportSeq = 0
 	p.keyframeRequired = true
 	p.stats = media.RtcpSenderStats{}
+	p.lastOrientation = -1
 	p.mu.Unlock()
 }

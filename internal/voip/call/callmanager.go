@@ -90,6 +90,7 @@ func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {
 			m.OnPeerVideo(au)
 		}
 	}
+	m.video.OnOrientation = func(o int) { m.notePeerVideoOrientation(o) }
 	return m
 }
 

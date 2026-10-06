@@ -89,6 +89,7 @@ type GroupCallManager struct {
 	epochTxID uint32
 
 	groupRelay    *signaling.GroupCallRelay // relay do grupo (do group_update)
+	rosterTxID    uint32                    // transaction-id do último group_update aplicado (descarta antigos/fora de ordem)
 	connectedPIDs []uint32                  // PIDs dos participantes remotos conectados
 	relayStarted  bool                      // já configurou o relay de grupo
 
@@ -134,8 +135,10 @@ type GroupCallManager struct {
 	OnPeerVideo func(participantID string, au []byte) // vídeo H264 (AU) por participante → navegador
 	OnEnded     func(callID string)
 
-	OnKeyframeRequest func()                                // um participante pediu keyframe (PLI/FIR) do NOSSO vídeo
-	OnPeerVideoState  func(participantID string, state int) // participante ligou/desligou a câmera (<video state=N>)
+	OnKeyframeRequest      func()                                      // um participante pediu keyframe (PLI/FIR) do NOSSO vídeo
+	OnPeerVideoState       func(participantID string, state int)       // participante ligou/desligou a câmera (<video state=N>)
+	OnPeerVideoOrientation func(participantID string, orientation int) // orientação da câmera do participante mudou (0..3)
+	OnParticipantLeft      func(participantID string)                  // participante saiu da chamada (sumiu do roster)
 }
 
 // NewGroupCallManager cria um gerenciador de chamada em grupo.
@@ -362,14 +365,29 @@ func (m *GroupCallManager) announceVideoState(ctx context.Context, enabled bool)
 // criador e o servidor pediu rekey, distribui a chave de epoch.
 func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signaling.GroupCallUpdate) {
 	m.mu.Lock()
+	// Os nós são tratados em goroutines: um update antigo pode chegar DEPOIS de um
+	// mais novo. O roster é autoritativo por transaction-id — só avança.
+	if update.TransactionID != 0 && update.TransactionID <= m.rosterTxID {
+		m.mu.Unlock()
+		m.log.Info("group: update de roster antigo ignorado", "tx", update.TransactionID, "roster_tx", m.rosterTxID)
+		return
+	}
+	if update.TransactionID != 0 {
+		m.rosterTxID = update.TransactionID
+	}
 	var pids []uint32
+	present := make(map[string]bool, len(m.byDevice))
 	for _, p := range update.Participants {
 		connected := p.State == "connected"
+		if groupStateDeparted(p.State) {
+			continue // saiu/recusou: não (re)cria receiver; cai na remoção abaixo
+		}
 		for _, d := range p.Devices {
 			if d.JID.IsEmpty() || d.JID == m.selfLID {
 				continue
 			}
 			pid := media.FormatParticipantID(d.JID.String())
+			present[pid] = true
 			gp := m.byDevice[pid]
 			if gp == nil {
 				gp = &groupParticipant{participantID: pid, deviceJID: d.JID}
@@ -393,7 +411,45 @@ func (m *GroupCallManager) applyGroupUpdate(ctx context.Context, update signalin
 		m.groupRelay = update.Relay
 	}
 	rekey := update.RekeyRequested && m.isCreator
+	// Quem SAIU (sumiu do roster ou veio com estado terminal): remove o receiver
+	// dele — senão fica um stream morto no mixer/painel até o fim da chamada.
+	var left []*groupParticipant
+	for id, gp := range m.byDevice {
+		if present[id] {
+			continue
+		}
+		left = append(left, gp)
+		delete(m.byDevice, id)
+		delete(m.bySSRC, gp.audioSSRC)
+		delete(m.byVideoSSRC, gp.videoSSRC)
+		for s, g := range m.bySrtcpSSRC {
+			if g == gp {
+				delete(m.bySrtcpSSRC, s)
+			}
+		}
+	}
+	// O mixer só soma quem está no roster atual (quem saiu para de contribuir; quem
+	// entra passa a ser aceito).
+	ids := make([]string, 0, len(m.byDevice))
+	for id := range m.byDevice {
+		ids = append(ids, id)
+	}
+	m.mixer.Retain(ids)
+	cbLeft := m.OnParticipantLeft
 	m.mu.Unlock()
+
+	for _, gp := range left {
+		if gp.codec != nil {
+			gp.codec.Close()
+		}
+		if gp.videoPipe != nil {
+			gp.videoPipe.Reset()
+		}
+		m.log.Info("group: participante saiu da chamada", "pid", gp.participantID, "tx", update.TransactionID)
+		if cbLeft != nil {
+			cbLeft(gp.participantID)
+		}
+	}
 
 	// Como criador, garantimos que TODO device (inclusive joiners tardios) receba a
 	// chave de epoch. allowGenerate=rekey: só geramos uma chave nova quando o servidor
@@ -660,6 +716,14 @@ func (m *GroupCallManager) setupReceiverLocked(gp *groupParticipant) {
 						}
 						if cb != nil {
 							cb(pid, au)
+						}
+					}
+					pipe.OnOrientation = func(o int) {
+						m.mu.Lock()
+						cb := m.OnPeerVideoOrientation
+						m.mu.Unlock()
+						if cb != nil {
+							cb(pid, o)
 						}
 					}
 					gp.videoPipe = pipe
@@ -1202,6 +1266,30 @@ func (m *GroupCallManager) SetKeyframeRequestSink(fn func()) {
 	m.mu.Unlock()
 }
 
+// SetPeerVideoOrientationSink liga/desliga o aviso de orientação da câmera de participante.
+func (m *GroupCallManager) SetPeerVideoOrientationSink(fn func(participantID string, orientation int)) {
+	m.mu.Lock()
+	m.OnPeerVideoOrientation = fn
+	m.mu.Unlock()
+}
+
+// SetParticipantLeftSink liga/desliga o aviso de participante que saiu da chamada.
+func (m *GroupCallManager) SetParticipantLeftSink(fn func(participantID string)) {
+	m.mu.Lock()
+	m.OnParticipantLeft = fn
+	m.mu.Unlock()
+}
+
+// groupStateDeparted diz se o estado de um usuário no group_update é TERMINAL
+// (saiu/recusou/falhou) — estados desconhecidos NÃO contam como saída.
+func groupStateDeparted(state string) bool {
+	switch state {
+	case "left", "rejected", "declined", "failed", "timeout", "busy", "ended", "canceled", "cancelled":
+		return true
+	}
+	return false
+}
+
 // SetPeerVideoStateSink liga/desliga o aviso de câmera ligada/desligada de participante.
 func (m *GroupCallManager) SetPeerVideoStateSink(fn func(participantID string, state int)) {
 	m.mu.Lock()
@@ -1278,6 +1366,7 @@ func (m *GroupCallManager) End() {
 	m.videoAnnounced = false
 	m.epochKey = nil
 	m.groupRelay = nil
+	m.rosterTxID = 0
 	m.connectedPIDs = nil
 	m.sendSrtp, m.rtpSession = nil, nil
 	m.mu.Unlock()

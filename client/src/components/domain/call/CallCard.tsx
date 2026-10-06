@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PhoneOff, PhoneForwarded, Pause, Play, Video, VideoOff } from "lucide-react";
+import { PhoneOff, PhoneForwarded, Pause, Play, Video, VideoOff, RotateCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,11 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const active = call.status === "connected";
   const showVideo = video.state.peerVideo || video.state.localVideo;
+  // Rotação do vídeo do cliente: automática (orientação do celular, vinda do RTP) +
+  // ajuste manual do atendente (botão de girar, 90° por clique) por cima.
+  const [manualRot, setManualRot] = useState(0);
+  const remoteRot = (video.state.peerOrientation * 90 + manualRot) % 360;
+  const remoteSideways = remoteRot === 90 || remoteRot === 270;
 
   useEffect(() => {
     const t = setInterval(() => force((n) => n + 1), 1000);
@@ -204,8 +209,19 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
               ref={remoteVideoRef}
               autoPlay
               playsInline
-              className="aspect-video w-full bg-black object-cover"
+              style={{ transform: `rotate(${remoteRot}deg) scale(${remoteSideways ? 1.78 : 1})` }}
+              className="aspect-video w-full bg-black object-cover transition-transform"
             />
+            {video.state.peerVideo && (
+              <button
+                type="button"
+                onClick={() => setManualRot((r) => (r + 90) % 360)}
+                title="Girar vídeo"
+                className="absolute right-2 top-2 rounded bg-black/60 p-1 text-white hover:bg-black/80"
+              >
+                <RotateCw className="h-4 w-4" />
+              </button>
+            )}
             {video.state.localVideo && (
               <video
                 ref={localVideoRef}

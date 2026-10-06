@@ -19,6 +19,7 @@ type CallStateData struct {
 
 	// Negociação de vídeo mid-call (só relevante com a call ativa).
 	PeerVideoOn          bool // câmera do peer está ligada
+	PeerVideoOrientation int  // rotação da câmera do peer em quartos de volta horários (0..3), lida do RTP
 	VideoUpgradeIncoming bool // o peer pediu upgrade e aguarda nossa decisão
 	VideoUpgradeOutgoing bool // nós pedimos upgrade e aguardamos o peer
 

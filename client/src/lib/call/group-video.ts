@@ -15,14 +15,22 @@ export class GroupVideoBridge {
   private receivers = new Map<string, VideoReceiver>();
   private closed = false;
   private lastPli = new Map<string, number>();
+  private orientations = new Map<string, number>();
 
   /** Stream local da câmera (preview). Disponível após connect(). */
   localStream: MediaStream | null = null;
 
   /** Chamado quando o vídeo de um participante aparece (novo pid). */
   onParticipantStream: ((pid: string, stream: MediaStream) => void) | null = null;
-  /** Chamado quando um participante some (stream encerrado). */
+  /** Chamado quando um participante some (stream encerrado ou saiu da chamada). */
   onParticipantGone: ((pid: string) => void) | null = null;
+  /** Chamado quando a orientação da câmera de um participante muda (0..3 quartos de volta). */
+  onParticipantOrientation: ((pid: string, orientation: number) => void) | null = null;
+
+  /** Última orientação conhecida do participante (0 se nenhuma). */
+  orientationOf(pid: string): number {
+    return this.orientations.get(pid) ?? 0;
+  }
 
   constructor(private sid: string) {}
 
@@ -76,7 +84,7 @@ export class GroupVideoBridge {
    *   video_state      — participante ligou(1)/desligou(0/6) a câmera → some o tile.
    */
   private onControl(raw: string): void {
-    let msg: { type?: string; pid?: string; state?: number };
+    let msg: { type?: string; pid?: string; state?: number; orientation?: number };
     try {
       msg = JSON.parse(raw);
     } catch {
@@ -84,16 +92,29 @@ export class GroupVideoBridge {
     }
     if (msg.type === "keyframe_request") {
       this.sender?.forceKeyframe();
-    } else if (msg.type === "video_state" && msg.pid && (msg.state === 0 || msg.state === 6)) {
-      const rx = this.receivers.get(msg.pid);
-      if (rx) {
-        try {
-          rx.close();
-        } catch {}
-        this.receivers.delete(msg.pid);
-        this.onParticipantGone?.(msg.pid);
-      }
+    } else if (msg.type === "orientation" && msg.pid && typeof msg.orientation === "number") {
+      this.orientations.set(msg.pid, msg.orientation);
+      this.onParticipantOrientation?.(msg.pid, msg.orientation);
+    } else if (
+      (msg.type === "video_state" && msg.pid && (msg.state === 0 || msg.state === 6)) ||
+      (msg.type === "participant_left" && msg.pid)
+    ) {
+      this.dropParticipant(msg.pid!);
     }
+  }
+
+  /** Fecha o decoder do participante e some com o tile (câmera desligada ou saiu). */
+  private dropParticipant(pid: string): void {
+    const rx = this.receivers.get(pid);
+    if (rx) {
+      try {
+        rx.close();
+      } catch {}
+      this.receivers.delete(pid);
+      this.onParticipantGone?.(pid);
+    }
+    this.orientations.delete(pid);
+    this.lastPli.delete(pid);
   }
 
   /** Pede ao gateway um keyframe (PLI) do participante — no máximo 1/s por pid. */

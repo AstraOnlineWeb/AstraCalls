@@ -288,7 +288,13 @@ func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
 			write(websocket.MessageText, b)
 		}
 	}
+	//   {"type":"orientation","pid":..,"orientation":N} — rotação da câmera do participante (0..3)
+	//   {"type":"participant_left","pid":..}         — participante saiu da chamada
 	gc.SetKeyframeRequestSink(func() { control(map[string]any{"type": "keyframe_request"}) })
+	gc.SetPeerVideoOrientationSink(func(pid string, o int) {
+		control(map[string]any{"type": "orientation", "pid": pid, "orientation": o})
+	})
+	gc.SetParticipantLeftSink(func(pid string) { control(map[string]any{"type": "participant_left", "pid": pid}) })
 	gc.SetPeerVideoStateSink(func(pid string, state int) {
 		control(map[string]any{"type": "video_state", "pid": pid, "state": state})
 	})
@@ -328,6 +334,8 @@ func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
 	gc.SetVideoSink(nil)
 	gc.SetKeyframeRequestSink(nil)
 	gc.SetPeerVideoStateSink(nil)
+	gc.SetPeerVideoOrientationSink(nil)
+	gc.SetParticipantLeftSink(nil)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 	s.log.Info("group video_ws: disconnected", "sid", sess.id)
 }

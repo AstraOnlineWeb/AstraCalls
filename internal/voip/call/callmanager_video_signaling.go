@@ -44,6 +44,25 @@ func (m *CallManager) notePeerVideoActive() {
 	}
 }
 
+// notePeerVideoOrientation guarda a orientação da câmera do peer (0..3, vinda da
+// extensão RTP) e avisa a UI (via OnVideoStateChanged) pra girar o vídeo sozinha.
+func (m *CallManager) notePeerVideoOrientation(o int) {
+	m.mu.Lock()
+	call := m.currentCall
+	if call == nil || !call.IsActive() || call.StateData.PeerVideoOrientation == o {
+		m.mu.Unlock()
+		return
+	}
+	call.StateData.PeerVideoOrientation = o
+	cb := m.OnVideoStateChanged
+	c := call
+	m.mu.Unlock()
+	m.log.Info("peer video orientation", "call_id", c.CallID, "orientation", o)
+	if cb != nil {
+		cb(c)
+	}
+}
+
 // HandleVideoState trata uma stanza <call><video state=N/></call> recebida no meio
 // de uma chamada ativa: manda o ack obrigatório, atualiza o estado de vídeo e
 // dispara os callbacks para a UI. Quando o peer aceita um upgrade que pedimos,

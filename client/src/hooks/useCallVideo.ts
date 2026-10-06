@@ -9,6 +9,7 @@ const empty: CallVideoState = {
   localVideo: false,
   upgradeIncoming: false,
   upgradeOutgoing: false,
+  peerOrientation: 0,
 };
 
 // useCallVideo concentra as ações de vídeo mid-call de uma chamada: ligar a

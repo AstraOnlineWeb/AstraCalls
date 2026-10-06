@@ -13,6 +13,8 @@ export type CallVideoState = {
   localVideo: boolean;
   upgradeIncoming: boolean;
   upgradeOutgoing: boolean;
+  /** Rotação da câmera do peer em quartos de volta horários (0..3), lida do RTP. */
+  peerOrientation: number;
 };
 
 const emptyVideo = (): CallVideoState => ({
@@ -20,6 +22,7 @@ const emptyVideo = (): CallVideoState => ({
   localVideo: false,
   upgradeIncoming: false,
   upgradeOutgoing: false,
+  peerOrientation: 0,
 });
 
 type State = {
@@ -97,6 +100,7 @@ export const ensureCallsWired = (): void => {
         peerVideo: ev.peerVideo,
         upgradeIncoming: ev.upgradeIncoming,
         upgradeOutgoing: ev.upgradeOutgoing,
+        peerOrientation: ev.peerOrientation ?? 0,
       });
     }
   });

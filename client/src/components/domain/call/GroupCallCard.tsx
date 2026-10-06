@@ -9,14 +9,27 @@ import { WSAudioBridge } from "@/lib/ws-audio";
 import { GroupVideoBridge } from "@/lib/call/group-video";
 import { listGroups, startGroupCall, endGroupCall, getGroupRoster, type RosterEntry } from "@/services/groupCalls";
 
-// VideoTile liga um MediaStream a um <video> (srcObject não é prop do React) e permite
-// GIRAR a câmera individualmente (90° por clique) — útil quando o vídeo vem deitado.
-const VideoTile = ({ stream, label, muted }: { stream: MediaStream; label: string; muted?: boolean }) => {
+// VideoTile liga um MediaStream a um <video> (srcObject não é prop do React). A rotação
+// é AUTOMÁTICA (orientação do celular do participante, vinda do RTP) com ajuste
+// MANUAL por cima (botão de girar, 90° por clique) caso o usuário queira acertar.
+const VideoTile = ({
+  stream,
+  label,
+  muted,
+  orientation = 0,
+}: {
+  stream: MediaStream;
+  label: string;
+  muted?: boolean;
+  orientation?: number; // quartos de volta horários (0..3)
+}) => {
   const ref = useRef<HTMLVideoElement>(null);
-  const [rot, setRot] = useState(0);
+  const [manual, setManual] = useState(0);
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
   }, [stream]);
+  const rot = (orientation * 90 + manual) % 360;
+  const setRot = (fn: (r: number) => number) => setManual((m) => fn(m) % 360);
   // Em 90°/270° a imagem gira dentro do bloco; escala p/ preencher sem cortar demais.
   const sideways = rot === 90 || rot === 270;
   return (
@@ -66,7 +79,7 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
   const [jid, setJid] = useState("");
   const [status, setStatus] = useState<"idle" | "calling" | "in-call">("idle");
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [peers, setPeers] = useState<Array<{ pid: string; stream: MediaStream }>>([]);
+  const [peers, setPeers] = useState<Array<{ pid: string; stream: MediaStream; orientation: number }>>([]);
   const [roster, setRoster] = useState<Record<string, RosterEntry>>({});
   const bridgeRef = useRef<WSAudioBridge | null>(null);
   const videoRef = useRef<GroupVideoBridge | null>(null);
@@ -97,8 +110,12 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
       if (withVideo) {
         const vb = new GroupVideoBridge(sid);
         vb.onParticipantStream = (pid, stream) =>
-          setPeers((prev) => (prev.some((p) => p.pid === pid) ? prev : [...prev, { pid, stream }]));
+          setPeers((prev) =>
+            prev.some((p) => p.pid === pid) ? prev : [...prev, { pid, stream, orientation: vb.orientationOf(pid) }],
+          );
         vb.onParticipantGone = (pid) => setPeers((prev) => prev.filter((p) => p.pid !== pid));
+        vb.onParticipantOrientation = (pid, orientation) =>
+          setPeers((prev) => prev.map((p) => (p.pid === pid ? { ...p, orientation } : p)));
         videoRef.current = vb;
         await vb.connect();
         setLocalStream(vb.localStream);
@@ -195,7 +212,7 @@ export const GroupCallCard = ({ sid }: { sid: string }) => {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {localStream && <VideoTile stream={localStream} label="Você" muted />}
               {peers.map((p) => (
-                <VideoTile key={p.pid} stream={p.stream} label={labelFor(p.pid)} />
+                <VideoTile key={p.pid} stream={p.stream} label={labelFor(p.pid)} orientation={p.orientation} />
               ))}
             </div>
           )}

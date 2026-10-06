@@ -551,11 +551,13 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnVideoUpgradeRequest = func(c *call.CallInfo) {
 		s.mgr.broker.emitVideoState(s.id, c.CallID, "upgrade-request", c.StateData.PeerVideoOn,
-			!c.StateData.VideoOff, c.StateData.VideoUpgradeIncoming, c.StateData.VideoUpgradeOutgoing)
+			!c.StateData.VideoOff, c.StateData.VideoUpgradeIncoming, c.StateData.VideoUpgradeOutgoing,
+			c.StateData.PeerVideoOrientation)
 	}
 	cm.OnVideoStateChanged = func(c *call.CallInfo) {
 		s.mgr.broker.emitVideoState(s.id, c.CallID, "state", c.StateData.PeerVideoOn,
-			!c.StateData.VideoOff, c.StateData.VideoUpgradeIncoming, c.StateData.VideoUpgradeOutgoing)
+			!c.StateData.VideoOff, c.StateData.VideoUpgradeIncoming, c.StateData.VideoUpgradeOutgoing,
+			c.StateData.PeerVideoOrientation)
 	}
 	cm.OnPeerMute = func(c *call.CallInfo) {
 		s.mgr.broker.emitCallAction(s.id, c.CallID, "peer-mute", c.StateData.PeerAudioMuted)
