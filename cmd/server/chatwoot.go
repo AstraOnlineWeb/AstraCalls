@@ -1353,8 +1353,17 @@ func (s *server) handleChatwootResolve(w http.ResponseWriter, r *http.Request) {
 	phone := ""
 	if ca := asMap(sender["custom_attributes"]); ca != nil {
 		raw := asStr(ca[cwChatIDAttr])
-		// Fix (@diegotiemann, PR #11): grupo não tem telefone p/ o widget de chamada.
-		if raw != "" && !isGroupChatID(raw) {
+		// Conversa de GRUPO: não tem telefone, mas o widget pode ligar PRO GRUPO
+		// (chamada em grupo). Devolve o JID do grupo e se a função está ligada.
+		if raw != "" && isGroupChatID(raw) {
+			s.log.Info("chatwoot resolve ok (grupo)", "session", sess.id, "inbox_id", inboxID, "group", raw, "name", name)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"session_id": sess.id, "inbox_id": inboxID, "phone": "", "name": name,
+				"group": true, "group_jid": raw, "group_calls": groupCallsEnabled(),
+			})
+			return
+		}
+		if raw != "" {
 			if jid, e := types.ParseJID(raw); e == nil {
 				phone = sess.realPhone(jid) // converte LID->PN se necessário
 			} else {

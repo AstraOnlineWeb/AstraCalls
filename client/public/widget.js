@@ -10,6 +10,8 @@
  * funciona (compatível), mas aí a chave exposta tem acesso total — evite.
  * Injeta um ícone de telefone ao lado do botão de excluir ticket; ao clicar,
  * abre um painel flutuante e liga para o contato via WhatsApp (WebRTC).
+ * Numa conversa de GRUPO do WhatsApp, liga PARA O GRUPO (chamada em grupo, áudio
+ * ou vídeo — requer WACALLS_GROUP_CALLS=1 no servidor).
  */
 (function () {
   "use strict";
@@ -34,6 +36,11 @@
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>';
   var ICON_VIDEO_OFF =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+  var ICON_USERS =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+  var ICON_ROTATE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
 
   // Parâmetros do vídeo (espelham client/src/constants/video.ts). O transporte é um
   // datachannel "h264" out-of-order com WebCodecs; o backend já trata isso.
@@ -77,12 +84,17 @@
     for (var i = 0; i < f.length; i++) { var s = Math.max(-1, Math.min(1, f[i])); o[i] = s < 0 ? s * 32768 : s * 32767; }
     return o;
   }
-  async function openWSAudio(session, callId) {
+  function wsUrl(path) {
+    var wsBase = BASE.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://");
+    return wsBase + path + (KEY ? (path.indexOf("?") >= 0 ? "&" : "?") + "apiKey=" + encodeURIComponent(KEY) : "");
+  }
+  // path: "/calls/{id}/ws" (1:1) ou "/calls/group/ws" (grupo). onClose: chamado se o
+  // servidor fechar o WS (chamada encerrada do outro lado).
+  async function openWSAudio(session, path, onClose) {
     var mic = await navigator.mediaDevices.getUserMedia({
       audio: { sampleRate: WS_SR, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
-    var wsBase = BASE.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://");
-    var url = wsBase + "/api/sessions/" + session + "/calls/" + callId + "/ws" + (KEY ? "?apiKey=" + encodeURIComponent(KEY) : "");
+    var url = wsUrl("/api/sessions/" + session + path);
     var ws = new WebSocket(url, ["pcm16"]);
     ws.binaryType = "arraybuffer";
     var capCtx = null, playCtx = null, srcNode = null, proc = null, playCursor = 0, closed = false;
@@ -112,6 +124,7 @@
       ws.onerror = function () { reject(new Error("ws audio failed")); };
       ws.onmessage = function (ev) { if (ev.data instanceof ArrayBuffer) playPCM(ev.data); };
     });
+    ws.onclose = function () { if (!closed && onClose) onClose(); };
     startCapture();
     return {
       mic: mic,
@@ -159,7 +172,17 @@
     "#wacalls-panel .cw-video{position:relative;margin:14px 0 2px;border-radius:10px;overflow:hidden;background:#000;aspect-ratio:4/3}" +
     "#wacalls-panel .cw-video .cw-remote-v{width:100%;height:100%;object-fit:cover;display:block;background:#000}" +
     "#wacalls-panel .cw-video .cw-local-v{position:absolute;right:8px;bottom:8px;width:72px;border-radius:6px;border:1px solid rgba(255,255,255,.25);object-fit:cover;background:#111}" +
-    "#wacalls-panel .cw-cam.on{background:#2781F6;color:#fff}";
+    "#wacalls-panel .cw-cam.on{background:#2781F6;color:#fff}" +
+    "#wacalls-panel .cw-rot{position:absolute;top:6px;right:6px;width:26px;height:26px;border:0;border-radius:6px;background:rgba(0,0,0,.55);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}" +
+    "#wacalls-panel .cw-rot svg{width:14px;height:14px}" +
+    "#wacalls-panel .cw-video video{transition:transform .2s}" +
+    "#wacalls-panel.cw-wide{width:460px}" +
+    "#wacalls-panel .cw-tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin:14px 0 2px}" +
+    "#wacalls-panel .cw-tile{position:relative;border-radius:8px;overflow:hidden;background:#000;aspect-ratio:4/3}" +
+    "#wacalls-panel .cw-tile video{width:100%;height:100%;object-fit:cover;display:block;background:#000;transition:transform .2s}" +
+    "#wacalls-panel .cw-lbl{position:absolute;left:6px;bottom:6px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#fff;background:rgba(0,0,0,.55);border-radius:4px;padding:1px 5px}" +
+    "#wacalls-panel .cw-row2{display:flex;gap:12px;justify-content:center;margin-top:18px}" +
+    "#wacalls-panel .cw-grp{background:#2781F6;box-shadow:0 4px 12px rgba(39,129,246,.3)}";
   document.head.appendChild(style);
 
   // ---------- estado ----------
@@ -235,13 +258,34 @@
         '<div class="cw-sub" style="margin-top:6px;line-height:1.45">' + esc(state.warn) + "</div></div>";
     } else if (state.error) {
       body = '<div class="cw-b"><div class="cw-sub" style="color:#e5484d">' + state.error + "</div></div>";
+    } else if (state.inGroupCall) {
+      head = '<div class="cw-h"><span class="cw-dot"></span><span class="cw-h-t">Chamada em grupo</span><span class="cw-x" id="wacalls-close">&times;</span></div>';
+      body =
+        '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
+        '<div class="cw-sub">Grupo do WhatsApp</div>' +
+        '<div class="cw-tiles" id="wacalls-tiles" style="display:none"></div>' +
+        '<div class="cw-st" id="wacalls-st">' + (state.status || "") + "</div>" +
+        '<div class="cw-row"><button class="cw-act cw-mute" id="wacalls-mute" title="Mudo">' + ICON_MIC + "</button>" +
+        (state.video ? '<button class="cw-act cw-mute cw-cam on" id="wacalls-cam" title="Desligar vídeo">' + ICON_VIDEO + "</button>" : "") +
+        '<button class="cw-act cw-hang" id="wacalls-hang" title="Encerrar">' + ICON_PHONE_OFF + "</button></div></div>";
+    } else if (state.group) {
+      head = '<div class="cw-h"><span class="cw-dot"></span><span class="cw-h-t">Chamada em grupo</span><span class="cw-x" id="wacalls-close">&times;</span></div>';
+      body =
+        '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
+        '<div class="cw-sub">Grupo do WhatsApp · ligar para todos os membros</div>' +
+        (state.groupCalls
+          ? '<div class="cw-row2"><button class="cw-act cw-call" id="wacalls-start-group" title="Ligar para o grupo (áudio)">' + ICON_PHONE + "</button>" +
+            '<button class="cw-act cw-grp" id="wacalls-start-group-video" title="Ligar para o grupo com vídeo">' + ICON_VIDEO + "</button></div>"
+          : '<div class="cw-st">Chamada em grupo desligada nesta instância (WACALLS_GROUP_CALLS).</div>') +
+        "</div>";
     } else if (state.inCall) {
       body =
         '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
         '<div class="cw-video" id="wacalls-video" style="display:none">' +
         '<video class="cw-remote-v" id="wacalls-remote-v" autoplay playsinline></video>' +
-        '<video class="cw-local-v" id="wacalls-local-v" autoplay playsinline muted style="display:none"></video></div>' +
+        '<video class="cw-local-v" id="wacalls-local-v" autoplay playsinline muted style="display:none"></video>' +
+        '<button type="button" class="cw-rot" id="wacalls-rot" title="Girar vídeo">' + ICON_ROTATE + "</button></div>" +
         '<div class="cw-st" id="wacalls-st">' + (state.status || "") + "</div>" +
         '<div class="cw-row"><button class="cw-act cw-mute" id="wacalls-mute" title="Mudo">' + ICON_MIC + "</button>" +
         '<button class="cw-act cw-mute cw-cam" id="wacalls-cam" title="Ativar vídeo">' + ICON_VIDEO_OFF + "</button>" +
@@ -262,7 +306,18 @@
         '<button class="cw-act cw-call" id="wacalls-start" title="Ligar">' + ICON_PHONE + "</button></div>";
     }
     p.innerHTML = head + body;
+    p.classList.toggle("cw-wide", !!(state.inGroupCall && state.video));
     p.querySelector("#wacalls-close").onclick = closePanel;
+    if (p.querySelector("#wacalls-start-group"))
+      p.querySelector("#wacalls-start-group").onclick = function () { startGroupCall(state, false); };
+    if (p.querySelector("#wacalls-start-group-video"))
+      p.querySelector("#wacalls-start-group-video").onclick = function () { startGroupCall(state, true); };
+    if (p.querySelector("#wacalls-rot"))
+      p.querySelector("#wacalls-rot").onclick = function () {
+        if (!call) return;
+        call.manualRot = ((call.manualRot || 0) + 90) % 360;
+        updateVideoUI();
+      };
     if (p.querySelector("#wacalls-start"))
       p.querySelector("#wacalls-start").onclick = function () {
         startCall(state);
@@ -327,7 +382,7 @@
 
   // Encoda a câmera e entrega cada access unit (Annex-B) via send().
   function createVideoSender(track, send) {
-    var frameCount = 0, closed = false;
+    var frameCount = 0, closed = false, forceKey = false;
     var encoder = new VideoEncoder({
       output: function (chunk) {
         var buf = new Uint8Array(chunk.byteLength);
@@ -347,7 +402,8 @@
         var frame = res.value;
         if (res.done || !frame) return;
         if (encoder.encodeQueueSize < 2) {
-          encoder.encode(frame, { keyFrame: frameCount % VIDEO.KF === 0 });
+          encoder.encode(frame, { keyFrame: forceKey || frameCount % VIDEO.KF === 0 });
+          forceKey = false;
           frameCount++;
         }
         frame.close();
@@ -355,36 +411,187 @@
       }).catch(function () {});
     }
     pump();
-    return { close: function () { closed = true; try { reader.cancel(); } catch (e) {} try { encoder.close(); } catch (e) {} } };
+    return {
+      forceKeyframe: function () { forceKey = true; },
+      close: function () { closed = true; try { reader.cancel(); } catch (e) {} try { encoder.close(); } catch (e) {} },
+    };
   }
 
   // Decoda os access units recebidos e expõe um MediaStream para um <video>.
-  function createVideoReceiver() {
+  // onNeedKeyframe (opcional): chamado quando o decoder precisa de um keyframe pra
+  // (re)começar — ainda não abriu, ou deu erro (frame corrompido por perda).
+  function createVideoReceiver(onNeedKeyframe) {
     var generator = new MediaStreamTrackGenerator({ kind: "video" });
     var writer = generator.writable.getWriter();
     var stream = new MediaStream([generator]);
-    var ts = 0, started = false, writing = false;
-    var decoder = new VideoDecoder({
-      output: function (frame) {
-        if (writing) { frame.close(); return; }
-        writing = true;
-        writer.write(frame).catch(function () { frame.close(); }).finally(function () { writing = false; });
-      },
-      error: function (e) { console.error("video decoder error", e); },
-    });
-    decoder.configure({ codec: VIDEO.CODEC, optimizeForLatency: true });
+    var ts = 0, started = false, writing = false, closed = false, decoder = null;
+    function recover() {
+      if (closed) return;
+      try { decoder.close(); } catch (e) {}
+      decoder = newDecoder();
+      started = false;
+      if (onNeedKeyframe) onNeedKeyframe();
+    }
+    function newDecoder() {
+      var d = new VideoDecoder({
+        output: function (frame) {
+          if (writing) { frame.close(); return; }
+          writing = true;
+          writer.write(frame).catch(function () { frame.close(); }).finally(function () { writing = false; });
+        },
+        error: function (e) { console.error("video decoder error", e); recover(); },
+      });
+      d.configure({ codec: VIDEO.CODEC, optimizeForLatency: true });
+      return d;
+    }
+    decoder = newDecoder();
     return {
       stream: stream,
       decode: function (data) {
+        if (closed) return;
         var bytes = new Uint8Array(data);
         var key = isAnnexBKeyframe(bytes);
-        if (!started && !key) return; // espera o primeiro keyframe
+        if (!started && !key) { if (onNeedKeyframe) onNeedKeyframe(); return; } // espera o primeiro keyframe
         started = true;
         var chunk = new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: ts, data: bytes });
         ts += 1000000 / VIDEO.FPS;
-        try { decoder.decode(chunk); } catch (e) { console.error("video decode error", e); }
+        try { decoder.decode(chunk); } catch (e) { console.error("video decode error", e); recover(); }
       },
-      close: function () { try { decoder.close(); } catch (e) {} try { writer.close(); } catch (e) {} },
+      close: function () { closed = true; try { decoder.close(); } catch (e) {} try { writer.close(); } catch (e) {} },
+    };
+  }
+
+  // Rotação de um <video>: automática pela orientação do celular (quartos de volta,
+  // vinda do servidor) + ajuste manual (botão). Só gira sozinho quando o quadro
+  // chega DEITADO e o aparelho diz que está em pé (1/3) — se já vem em pé, não mexe.
+  function applyRotation(video, orientation, manual) {
+    var landscape = video.videoWidth > 0 && video.videoWidth > video.videoHeight;
+    var auto = (orientation % 2 === 1 && landscape) ? orientation * 90 : 0;
+    var rot = (auto + manual) % 360;
+    var sideways = rot === 90 || rot === 270;
+    video.style.transform = "rotate(" + rot + "deg) scale(" + (sideways ? 1.34 : 1) + ")";
+  }
+
+  // ---------- vídeo em GRUPO (WS h264-group) ----------
+  // Espelha client/src/lib/call/group-video.ts: câmera do atendente → WS; vídeo de
+  // cada participante ← WS (um tile por pid); controle em JSON (keyframe_request,
+  // video_state, orientation, participant_left); pedido de keyframe ("pli").
+  async function openGroupVideo(session, labelFor) {
+    var cam = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: VIDEO.W }, height: { ideal: VIDEO.H }, frameRate: { ideal: VIDEO.FPS } },
+      audio: false,
+    });
+    var track = cam.getVideoTracks()[0];
+    var ws = new WebSocket(wsUrl("/api/sessions/" + session + "/calls/group/video-ws"), ["h264-group"]);
+    ws.binaryType = "arraybuffer";
+    var tiles = {}; // pid -> {rx, el, video, orientation, manual, lastAt}
+    var lastPli = {}, sender = null, closed = false, staleTimer = null;
+
+    function tilesEl() { return document.getElementById("wacalls-tiles"); }
+    function requestPli(pid) {
+      var now = Date.now();
+      if (now - (lastPli[pid] || 0) < 1000) return;
+      lastPli[pid] = now;
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "pli", pid: pid }));
+    }
+    function addTile(pid) {
+      var t = { orientation: 0, manual: 0, lastAt: Date.now() };
+      t.rx = createVideoReceiver(function () { requestPli(pid); });
+      var d = el("div", "cw-tile");
+      d.setAttribute("data-pid", pid);
+      var v = document.createElement("video");
+      v.autoplay = true; v.playsInline = true; v.muted = true;
+      v.srcObject = t.rx.stream;
+      v.onloadedmetadata = v.onresize = function () { applyRotation(v, t.orientation, t.manual); };
+      var lbl = el("span", "cw-lbl", esc(labelFor(pid)));
+      var rot = el("button", "cw-rot", ICON_ROTATE);
+      rot.type = "button"; rot.title = "Girar";
+      rot.onclick = function () { t.manual = (t.manual + 90) % 360; applyRotation(v, t.orientation, t.manual); };
+      d.appendChild(v); d.appendChild(lbl); d.appendChild(rot);
+      t.el = d; t.video = v;
+      tiles[pid] = t;
+      var c = tilesEl();
+      if (c) { c.appendChild(d); c.style.display = "grid"; }
+      v.play().catch(function () {});
+      return t;
+    }
+    function removeTile(pid) {
+      var t = tiles[pid];
+      if (!t) return;
+      delete tiles[pid];
+      try { t.rx.close(); } catch (e) {}
+      if (t.el && t.el.parentNode) t.el.parentNode.removeChild(t.el);
+      delete lastPli[pid];
+    }
+    function relabel() {
+      for (var pid in tiles) { var l = tiles[pid].el.querySelector(".cw-lbl"); if (l) l.textContent = labelFor(pid); }
+    }
+    ws.onmessage = function (ev) {
+      if (typeof ev.data === "string") {
+        var msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (msg.type === "keyframe_request") { if (sender) sender.forceKeyframe(); }
+        else if (msg.type === "orientation" && msg.pid) {
+          var t = tiles[msg.pid] || addTile(msg.pid);
+          t.orientation = msg.orientation || 0;
+          applyRotation(t.video, t.orientation, t.manual);
+        } else if ((msg.type === "video_state" && msg.pid && (msg.state === 0 || msg.state === 6)) || (msg.type === "participant_left" && msg.pid)) {
+          removeTile(msg.pid);
+        }
+        return;
+      }
+      var bytes = new Uint8Array(ev.data);
+      if (bytes.length < 2) return;
+      var n = bytes[0];
+      if (bytes.length < 1 + n) return;
+      var pid = new TextDecoder().decode(bytes.subarray(1, 1 + n));
+      var au = bytes.subarray(1 + n);
+      var tile = tiles[pid] || addTile(pid);
+      tile.lastAt = Date.now();
+      tile.rx.decode(au.buffer.slice(au.byteOffset, au.byteOffset + au.byteLength));
+    };
+    await new Promise(function (resolve, reject) {
+      ws.onopen = function () { resolve(); };
+      ws.onerror = function () { reject(new Error("falha ao conectar o vídeo do grupo")); };
+    });
+    ws.onclose = function () { if (!closed && api_onclose) api_onclose(); };
+    var api_onclose = null;
+    // Tile 8s sem frame some (participante caiu sem sinalizar).
+    staleTimer = setInterval(function () {
+      var now = Date.now();
+      for (var pid in tiles) if (now - tiles[pid].lastAt > 8000) removeTile(pid);
+    }, 2000);
+    function startSender() {
+      if (sender || !track) return;
+      sender = createVideoSender(track, function (au) { if (ws.readyState === WebSocket.OPEN) ws.send(au); });
+    }
+    startSender();
+    // Preview da própria câmera ("Você") como primeiro tile.
+    (function () {
+      var d = el("div", "cw-tile");
+      var v = document.createElement("video");
+      v.autoplay = true; v.playsInline = true; v.muted = true;
+      v.srcObject = cam;
+      d.appendChild(v); d.appendChild(el("span", "cw-lbl", "Você"));
+      var c = tilesEl();
+      if (c) { c.appendChild(d); c.style.display = "grid"; }
+      v.play().catch(function () {});
+    })();
+    return {
+      localStream: cam,
+      relabel: relabel,
+      setCam: function (on) {
+        if (on) { track.enabled = true; startSender(); }
+        else { track.enabled = false; if (sender) { try { sender.close(); } catch (e) {} sender = null; } }
+      },
+      onClose: function (fn) { api_onclose = fn; },
+      close: function () {
+        if (closed) return; closed = true;
+        if (staleTimer) clearInterval(staleTimer);
+        try { if (sender) sender.close(); } catch (e) {}
+        for (var pid in tiles) removeTile(pid);
+        try { cam.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        try { ws.close(1000, "call ended"); } catch (e) {}
+      },
     };
   }
 
@@ -419,6 +626,15 @@
 
   // Liga a câmera do widget e pede upgrade para o peer; ou desliga (downgrade).
   async function toggleCam(btn) {
+    if (call && call.group) {
+      if (!call.gv) return;
+      call.localVideo = !call.localVideo;
+      call.gv.setCam(call.localVideo);
+      btn.innerHTML = call.localVideo ? ICON_VIDEO : ICON_VIDEO_OFF;
+      btn.classList.toggle("on", call.localVideo);
+      btn.title = call.localVideo ? "Desligar vídeo" : "Ligar vídeo";
+      return;
+    }
     if (!call || !call.video) return;
     if (call.ws) { setStatus("Vídeo indisponível (áudio via WebSocket)"); return; } // WS é áudio-only
     if (call.localVideo) {
@@ -456,8 +672,12 @@
     var rv = document.getElementById("wacalls-remote-v");
     if (rv && call.video && call.video.remoteVideoStream && rv.srcObject !== call.video.remoteVideoStream) {
       rv.srcObject = call.video.remoteVideoStream;
+      rv.onloadedmetadata = rv.onresize = function () { if (call) applyRotation(rv, call.peerOrientation || 0, call.manualRot || 0); };
       rv.play().catch(function () {});
     }
+    if (rv) applyRotation(rv, call.peerOrientation || 0, call.manualRot || 0);
+    var rb = document.getElementById("wacalls-rot");
+    if (rb) rb.style.display = call.peerVideo ? "inline-flex" : "none";
     var lv = document.getElementById("wacalls-local-v");
     if (lv) {
       lv.style.display = call.localVideo ? "block" : "none";
@@ -486,7 +706,7 @@
       var callId = r.call.callId;
       if (pickTransport() === "websocket") {
         // WS: áudio-only, passa em proxy/sem UDP. Sem PC/offer/webrtc nem vídeo.
-        var wsa = await openWSAudio(state.session, callId);
+        var wsa = await openWSAudio(state.session, "/calls/" + callId + "/ws");
         call = { pc: null, ws: wsa, mic: wsa.mic, callId: callId, session: state.session, t0: null, timer: null, es: null, answered: false, video: NO_VIDEO, localVideo: false, peerVideo: false, camTrack: null };
       } else {
         var mic = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -519,6 +739,50 @@
       // backend via SSE global (call-status "connected" = atendeu).
       connectEvents();
     } catch (e) {
+      setStatus("Erro: " + (e.message || e));
+    }
+  }
+
+  // Chamada em GRUPO: liga pro grupo da conversa (áudio, e vídeo opcional). O áudio
+  // vai pelo WS de grupo (mix de todos ⇄ mic); o vídeo pelo WS h264-group (um tile
+  // por participante). Encerramento remoto chega como fechamento do WS.
+  async function startGroupCall(state, withVideo) {
+    if (call) return;
+    if (withVideo && !videoSupported()) { render({ error: "Vídeo não suportado neste navegador" }); return; }
+    render({ inGroupCall: true, name: state.name, video: withVideo, status: "Conectando…" });
+    try {
+      var r = await api("/api/sessions/" + state.session + "/calls/group", {
+        method: "POST", body: { groupJid: state.groupJid, video: !!withVideo },
+      });
+      var roster = {};
+      function labelFor(pid) {
+        var num = pid.split(/[:@]/)[0];
+        var e = roster[num];
+        if (!e) return pid.slice(-4);
+        var phone = e.phone ? "+" + e.phone : "";
+        return e.name && phone ? e.name + " · " + phone : e.name || phone || pid.slice(-4);
+      }
+      var wsa = await openWSAudio(state.session, "/calls/group/ws", function () { if (call && call.group) hangup(); });
+      call = { group: true, pc: null, ws: wsa, mic: wsa.mic, callId: r.callId, session: state.session, t0: null, timer: null, es: null, answered: false, video: NO_VIDEO, localVideo: !!withVideo, peerVideo: false, camTrack: null, gv: null };
+      api("/api/sessions/" + state.session + "/calls/group/roster").then(function (x) {
+        roster = (x && x.roster) || {};
+        if (call && call.gv) call.gv.relabel();
+      }).catch(function () {});
+      if (withVideo) {
+        try {
+          call.gv = await openGroupVideo(state.session, labelFor);
+          call.gv.onClose(function () { if (call && call.group) hangup(); });
+        } catch (e) {
+          setStatus("Vídeo indisponível: " + (e.message || e));
+        }
+      }
+      call.answered = true;
+      call.t0 = Date.now();
+      setStatus("Em chamada de grupo");
+      call.timer = setInterval(tick, 1000);
+    } catch (e) {
+      if (call && call.group) { var c = call; call = null; try { c.ws && c.ws.close(); } catch (_) {} try { c.gv && c.gv.close(); } catch (_) {} }
+      api("/api/sessions/" + state.session + "/calls/group/end", { method: "POST", body: {} }).catch(function () {});
       setStatus("Erro: " + (e.message || e));
     }
   }
@@ -563,6 +827,7 @@
       if (msg.type === "call-ended" || msg.status === "ended") hangup();
       else if (msg.type === "video-state") {
         call.peerVideo = !!msg.peerVideo;
+        call.peerOrientation = msg.peerOrientation || 0;
         // o peer pediu vídeo: aceita para receber (câmera nossa só se o usuário ligar)
         if (msg.upgradeIncoming) {
           api("/api/sessions/" + call.session + "/calls/" + call.callId + "/video/accept", { method: "POST", body: {} }).catch(function () {});
@@ -604,7 +869,7 @@
       await ensureConfig();
       await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", { method: "POST", body: {} });
       if (pickTransport() === "websocket") {
-        var wsa = await openWSAudio(inc.sessionId, inc.callId);
+        var wsa = await openWSAudio(inc.sessionId, "/calls/" + inc.callId + "/ws");
         call = { pc: null, ws: wsa, mic: wsa.mic, callId: inc.callId, session: inc.sessionId, t0: null, timer: null, es: null, answered: false, video: NO_VIDEO, localVideo: false, peerVideo: false, camTrack: null };
         markAnswered();
         updateVideoUI();
@@ -681,7 +946,12 @@
     call = null;
     if (c.timer) clearInterval(c.timer);
     if (c.es) try { c.es.close(); } catch (e) {}
-    api("/api/sessions/" + c.session + "/calls/" + c.callId, { method: "DELETE" }).catch(function () {});
+    if (c.group) {
+      api("/api/sessions/" + c.session + "/calls/group/end", { method: "POST", body: {} }).catch(function () {});
+      try { if (c.gv) c.gv.close(); } catch (e) {}
+    } else {
+      api("/api/sessions/" + c.session + "/calls/" + c.callId, { method: "DELETE" }).catch(function () {});
+    }
     try {
       c.mic.getTracks().forEach(function (t) {
         t.stop();
@@ -704,6 +974,15 @@
   var callable = false; // a conversa atual é de uma caixa conectada?
   var resolved = null; // cache {session, phone, name}
 
+  // Monta o estado do painel a partir do /chatwoot/resolve: contato 1:1 (phone) ou
+  // GRUPO (group_jid → botões de chamada em grupo).
+  function resolvedFrom(info) {
+    if (info.group) {
+      return { session: info.session_id, group: true, groupJid: info.group_jid, groupCalls: !!info.group_calls, name: info.name || "Grupo", phone: "" };
+    }
+    return { session: info.session_id, phone: info.phone, name: info.name || info.phone };
+  }
+
   function convKey() {
     var acc = location.pathname.match(/accounts\/(\d+)/);
     var conv = location.pathname.match(/conversations\/(\d+)/);
@@ -723,7 +1002,7 @@
     api("/api/chatwoot/resolve?account_id=" + parts[0] + "&conversation_id=" + parts[1])
       .then(function (info) {
         if (convKey() !== key) return; // o agente já trocou de conversa
-        resolved = { session: info.session_id, phone: info.phone, name: info.name || info.phone };
+        resolved = resolvedFrom(info);
         callable = true;
         ensureButton();
       })
@@ -743,7 +1022,7 @@
   function onCall() {
     console.log("[wacalls-widget] clique no botão de ligar");
     if (resolved) {
-      render({ session: resolved.session, phone: resolved.phone, name: resolved.name });
+      render(resolved);
       return;
     }
     // Sem vínculo em cache: confirma ao vivo (o ícone pode ter sobrado por cache do Chatwoot).
@@ -756,9 +1035,9 @@
     var parts = key.split("/");
     api("/api/chatwoot/resolve?account_id=" + parts[0] + "&conversation_id=" + parts[1])
       .then(function (info) {
-        resolved = { session: info.session_id, phone: info.phone, name: info.name || info.phone };
+        resolved = resolvedFrom(info);
         callable = true;
-        render({ session: resolved.session, phone: resolved.phone, name: resolved.name });
+        render(resolved);
       })
       .catch(function () {
         callable = false;
@@ -816,7 +1095,7 @@
     var btn = document.createElement("button");
     btn.id = "wacalls-btn";
     btn.type = "button";
-    btn.title = "Ligar pelo WhatsApp";
+    btn.title = resolved && resolved.group ? "Ligar para o grupo pelo WhatsApp" : "Ligar pelo WhatsApp";
     btn.className = found.sibling && found.sibling.className
       ? found.sibling.className // herda o estilo nativo do Chatwoot
       : "inline-flex items-center justify-center h-8 w-8 p-0 rounded-lg";

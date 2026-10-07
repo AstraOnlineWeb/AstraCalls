@@ -290,6 +290,12 @@ func (m *GroupCallManager) HandleUnknownCall(ctx context.Context, node *waBinary
 		}
 	case "video":
 		m.handlePeerVideoState(ctx, node, envelope)
+	case "terminate":
+		// O servidor encerrou a chamada de grupo (group_call_ended, todos saíram…):
+		// derruba a nossa ponta também, senão o painel/widget fica "em chamada".
+		reason, _ := envelope.Action.Attrs["reason"].(string)
+		m.log.Info("group: terminate recebido", "call_id", envelope.CallID, "reason", reason)
+		m.End()
 	}
 }
 

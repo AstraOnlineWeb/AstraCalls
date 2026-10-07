@@ -206,6 +206,9 @@ func (s *server) handleGroupWSBridge(w http.ResponseWriter, r *http.Request) {
 	gc.SetAudioSink(func(pcm16 []float32) { _ = bridge.WritePCM(pcm16) })
 	s.log.Info("group ws_bridge: connected", "sid", sess.id, "call", gc.CallID())
 
+	wctx, wcancel := context.WithCancel(r.Context())
+	defer wcancel()
+	go closeWSWhenGroupCallEnds(wctx, gc, conn)
 	go bridge.keepAlive()
 	bridge.readLoop()
 
@@ -270,6 +273,7 @@ func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	go closeWSWhenGroupCallEnds(ctx, gc, conn)
 
 	// gateway → navegador: serializa writes (a lib não aceita writes concorrentes).
 	var wmu sync.Mutex
@@ -338,6 +342,26 @@ func (s *server) handleGroupVideoWS(w http.ResponseWriter, r *http.Request) {
 	gc.SetParticipantLeftSink(nil)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 	s.log.Info("group video_ws: disconnected", "sid", sess.id)
+}
+
+// closeWSWhenGroupCallEnds fecha o WebSocket (áudio ou vídeo) quando a chamada de
+// grupo acaba por outro caminho (terminate do servidor, /calls/group/end de outro
+// cliente) — o navegador/widget vê o close e encerra a UI.
+func closeWSWhenGroupCallEnds(ctx context.Context, gc *call.GroupCallManager, conn *websocket.Conn) {
+	callID := gc.CallID()
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if gc.CallID() != callID {
+				_ = conn.Close(websocket.StatusNormalClosure, "group call ended")
+				return
+			}
+		}
+	}
 }
 
 // groupRosterEntry é o telefone + nome de um participante do grupo (p/ rótulo no painel).
