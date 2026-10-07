@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -31,20 +32,90 @@ func resolveParticipants(list []string) ([]types.JID, error) {
 	return out, nil
 }
 
+// participantJSON serializa um participante com identidade completa: JID de
+// envio, telefone real (PN), LID e nome do contato. Pedido do AstraChat (lista
+// lateral + menção): só o JID @lid virava "+608386..." na tela.
+func (s *Session) participantJSON(p types.GroupParticipant) map[string]any {
+	phone := p.PhoneNumber.User
+	if phone == "" {
+		phone, _ = s.resolvedPhone(p.JID) // "" quando o LID não resolve
+	}
+	lid := p.LID
+	if lid.IsEmpty() && p.JID.Server == types.HiddenUserServer {
+		lid = p.JID
+	}
+	name, push := s.contactNames(p.JID, p.PhoneNumber, p.LID)
+	if name == "" && p.DisplayName != "" {
+		name = p.DisplayName
+	}
+	number := p.JID.User
+	if phone != "" {
+		number = phone
+	}
+	out := map[string]any{
+		"jid":          p.JID.String(),
+		"number":       number, // telefone quando conhecido; senão o user do JID (compat)
+		"phone":        phone,  // SÓ telefone real; "" se o LID não resolver
+		"lid":          "",
+		"name":         name,
+		"pushName":     push,
+		"isAdmin":      p.IsAdmin,
+		"isSuperAdmin": p.IsSuperAdmin,
+		"admin":        p.IsAdmin || p.IsSuperAdmin,
+		// aliases WAHA
+		"id":   waChatID(p.JID),
+		"pn":   number,
+		"role": waRole(p.IsAdmin, p.IsSuperAdmin),
+	}
+	if !lid.IsEmpty() {
+		out["lid"] = lid.String()
+	}
+	return out
+}
+
+// contactNames procura o nome do contato por qualquer um dos JIDs (os contatos
+// costumam estar indexados pelo PN, mas em grupos LID só temos o @lid). Devolve
+// (melhor nome, pushName).
+func (s *Session) contactNames(jids ...types.JID) (name, push string) {
+	for _, j := range jids {
+		if j.IsEmpty() {
+			continue
+		}
+		ci, err := s.client.Store.Contacts.GetContact(context.Background(), j)
+		if err != nil || !ci.Found {
+			continue
+		}
+		if push == "" {
+			push = ci.PushName
+		}
+		if n := firstNonEmptyOf(ci.FullName, ci.PushName, ci.FirstName, ci.BusinessName); n != "" && name == "" {
+			name = n
+		}
+	}
+	// fallback: pelo PN derivado do LID
+	if name == "" {
+		for _, j := range jids {
+			if j.Server != types.HiddenUserServer {
+				continue
+			}
+			if pn, err := s.client.Store.LIDs.GetPNForLID(context.Background(), j); err == nil && pn.User != "" {
+				if ci, err := s.client.Store.Contacts.GetContact(context.Background(), pn); err == nil && ci.Found {
+					name = firstNonEmptyOf(ci.FullName, ci.PushName, ci.FirstName, ci.BusinessName)
+					if push == "" {
+						push = ci.PushName
+					}
+				}
+			}
+		}
+	}
+	return name, push
+}
+
 // groupJSON serializa um GroupInfo para a resposta da API.
-func groupJSON(g *types.GroupInfo) map[string]any {
+func (s *Session) groupJSON(g *types.GroupInfo) map[string]any {
 	parts := make([]map[string]any, 0, len(g.Participants))
 	for _, p := range g.Participants {
-		parts = append(parts, map[string]any{
-			"jid":          p.JID.String(),
-			"number":       p.JID.User,
-			"isAdmin":      p.IsAdmin,
-			"isSuperAdmin": p.IsSuperAdmin,
-			// aliases WAHA
-			"id":   waChatID(p.JID),
-			"pn":   p.JID.User,
-			"role": waRole(p.IsAdmin, p.IsSuperAdmin),
-		})
+		parts = append(parts, s.participantJSON(p))
 	}
 	return map[string]any{
 		"jid":          g.JID.String(),
@@ -100,7 +171,7 @@ func (s *server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, groupJSON(g))
+	writeJSON(w, http.StatusOK, sess.groupJSON(g))
 }
 
 // GET /api/sessions/{sid}/groups  → grupos em que a conta está
@@ -116,7 +187,7 @@ func (s *server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(groups))
 	for _, g := range groups {
-		out = append(out, groupJSON(g))
+		out = append(out, sess.groupJSON(g))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -132,7 +203,7 @@ func (s *server) handleGroupInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, groupJSON(g))
+	writeJSON(w, http.StatusOK, sess.groupJSON(g))
 }
 
 // GET /api/sessions/{sid}/groups/{gid}/participants
@@ -146,7 +217,7 @@ func (s *server) handleGroupParticipants(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, groupJSON(g)["participants"])
+	writeJSON(w, http.StatusOK, sess.groupJSON(g)["participants"])
 }
 
 // POST /api/sessions/{sid}/groups/{gid}/participants/{action}
@@ -323,7 +394,7 @@ func (s *server) handleGroupJoinInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, groupJSON(g))
+	writeJSON(w, http.StatusOK, sess.groupJSON(g))
 }
 
 // PUT /api/sessions/{sid}/groups/{gid}/settings/announce  {enabled}

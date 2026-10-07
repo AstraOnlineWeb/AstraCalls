@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -93,6 +94,88 @@ func mentionJID(v string) string {
 	return types.NewJID(normalizePhone(v), types.DefaultUserServer).String()
 }
 
+// mentionRe acha "@<8..15 dígitos>" no texto — a forma como o atendente marca
+// alguém no Chatwoot/AstraChat (ele não tem como preencher contextInfo).
+var mentionRe = regexp.MustCompile(`@\+?(\d{8,15})\b`)
+
+// detectMentions extrai os números mencionados (@5561...) do texto, sem repetir.
+func detectMentions(text string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range mentionRe.FindAllStringSubmatch(text, -1) {
+		d := m[1]
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// mentionTargets converte números/JIDs mencionados nos JIDs que vão em
+// contextInfo.mentionedJid. Em grupos endereçados por LID o aparelho só marca se o
+// LID estiver na lista, e em grupos por PN só o PN; como não sabemos de antemão,
+// mandamos os DOIS quando o store conhece o par PN↔LID (entradas sobrando são
+// ignoradas pelo WhatsApp). Dígitos que são um LID conhecido viram <lid>@lid.
+func (s *Session) mentionTargets(ctx context.Context, mentions []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(j types.JID) {
+		if j.IsEmpty() {
+			return
+		}
+		k := j.ToNonAD().String()
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	for _, m := range mentions {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		if strings.Contains(m, "@") {
+			if j, err := types.ParseJID(m); err == nil {
+				add(j)
+			}
+			continue
+		}
+		digits := normalizePhone(m)
+		if digits == "" {
+			continue
+		}
+		// os dígitos são um LID conhecido? (lista do AstraChat mostra o LID quando
+		// não há telefone; o atendente marca "@<lid>")
+		asLID := types.NewJID(digits, types.HiddenUserServer)
+		if pn, err := s.client.Store.LIDs.GetPNForLID(ctx, asLID); err == nil && pn.User != "" {
+			add(asLID)
+			add(pn)
+			continue
+		}
+		pn := types.NewJID(digits, types.DefaultUserServer)
+		add(pn)
+		if lid, err := s.client.Store.LIDs.GetLIDForPN(ctx, pn); err == nil && lid.User != "" {
+			add(lid)
+		}
+	}
+	return out
+}
+
+// autoMentions decide as menções de um envio: as explícitas do body ou, quando
+// o destino é um GRUPO e nada foi informado, as detectadas no texto ("@5561...").
+// Fora de grupo não há menção.
+func (s *Session) autoMentions(ctx context.Context, to string, text string, explicit []string) []string {
+	if len(explicit) > 0 {
+		return explicit
+	}
+	jid, err := resolveRecipient(to)
+	if err != nil || jid.Server != types.GroupServer {
+		return nil
+	}
+	return detectMentions(text)
+}
+
 // buildSendContext monta o ContextInfo de uma mensagem de SAÍDA para citação
 // (quotedMessageId) e/ou menções (@). Para a citação, resolve o remetente e o
 // conteúdo da mensagem original pelo store (como o quoteContext do Chatwoot).
@@ -124,12 +207,7 @@ func (s *Session) buildSendContext(ctx context.Context, quotedID, participant st
 		}
 	}
 	if len(mentions) > 0 {
-		jids := make([]string, 0, len(mentions))
-		for _, m := range mentions {
-			if j := mentionJID(m); j != "" {
-				jids = append(jids, j)
-			}
-		}
+		jids := s.mentionTargets(ctx, mentions)
 		if len(jids) > 0 {
 			if ci == nil {
 				ci = &waE2E.ContextInfo{}

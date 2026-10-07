@@ -187,7 +187,7 @@ func (s *server) handleSendText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg := &waE2E.Message{Conversation: proto.String(b.Text)}
-	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Text, b.Mentions)))
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -216,7 +216,7 @@ func (s *server) handleSendImage(w http.ResponseWriter, r *http.Request) {
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 	}}
-	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, b.Mentions)))
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -303,7 +303,7 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 	}}
-	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, b.Mentions)))
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -386,7 +386,7 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// citação/menção vão no ContextInfo do documento interno (o wrapper de legenda
 	// só embrulha essa mesma mensagem).
-	doc.ContextInfo = sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions)
+	doc.ContextInfo = sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, b.Mentions))
 	s.send(sess, w, r, b.To, documentWithCaption(doc, b.Caption))
 }
 

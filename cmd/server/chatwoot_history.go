@@ -260,7 +260,7 @@ func (s *Session) importMessage(cfg ChatwootConfig, convID int, msg *waE2E.Messa
 		data, derr := s.client.Download(context.Background(), dl)
 		if derr == nil && len(data) > 0 {
 			fname, mime := mediaMeta(msg)
-			if err := cfg.postAttachment(convID, prefix+text, fname, mime, data, dir, msgID, "", int64(ts)); err != nil {
+			if err := cfg.postAttachment(convID, prefix+text, fname, mime, data, dir, msgID, "", int64(ts), nil); err != nil {
 				s.log.Error("chatwoot: histórico — anexo falhou", "err", err)
 				return false
 			}
@@ -270,7 +270,7 @@ func (s *Session) importMessage(cfg ChatwootConfig, convID int, msg *waE2E.Messa
 	if text == "" {
 		return false
 	}
-	if err := cfg.postText(convID, prefix+text, dir, msgID, "", int64(ts)); err != nil {
+	if err := cfg.postText(convID, prefix+text, dir, msgID, "", int64(ts), nil); err != nil {
 		s.log.Error("chatwoot: histórico — texto falhou", "err", err)
 		return false
 	}

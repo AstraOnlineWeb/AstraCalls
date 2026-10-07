@@ -152,10 +152,15 @@ components:
           items:
             type: object
             properties:
-              jid: { type: string }
-              number: { type: string }
+              jid: { type: string, description: "JID de envio (pode ser @lid)", example: "60838698344603@lid" }
+              phone: { type: string, description: "telefone real; vazio se o LID não resolver (nunca os dígitos do LID)", example: "556196878959" }
+              lid: { type: string, description: "LID quando conhecido", example: "60838698344603@lid" }
+              number: { type: string, description: "telefone quando conhecido; senão o user do JID (compat)" }
+              name: { type: string, description: "nome do contato (agenda, pushName ou nome comercial)", example: "Raphael" }
+              pushName: { type: string, description: "nome de perfil do WhatsApp" }
               isAdmin: { type: boolean }
               isSuperAdmin: { type: boolean }
+              admin: { type: boolean, description: "isAdmin || isSuperAdmin" }
               id: { type: string, description: "alias (número@c.us)" }
               pn: { type: string, description: "alias do número" }
               role: { type: string, enum: [participant, admin, superadmin] }
@@ -887,7 +892,7 @@ paths:
                 quotedMessageId: { type: string, description: "Cita (responde) a mensagem com esse id. O remetente/conteúdo da citada é resolvido automaticamente." }
                 participant: { type: string, description: "Opcional. Em grupo, o JID de quem enviou a mensagem citada (só se a resolução automática não achar)." }
                 fromMe: { type: boolean, description: "Opcional. true se a mensagem citada foi enviada por você." }
-                mentions: { type: array, items: { type: string }, description: "Números ou JIDs a mencionar (@). O texto deve conter os @ correspondentes.", example: ["5561999999999"] }
+                mentions: { type: array, items: { type: string }, description: "Números ou JIDs a mencionar (@). O texto deve conter os @ correspondentes. Em GRUPO, se omitido, o gateway detecta sozinho os `@<8..15 dígitos>` do texto.", example: ["5561999999999"] }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
         "503": { description: Conta não pareada }
@@ -1098,7 +1103,7 @@ paths:
                 account_token: { type: string, example: "xxxxxxxxxxxxxxxx" }
                 inbox_id: { type: integer, example: 5 }
                 inbox_identifier: { type: string, example: "abcd1234" }
-                groups: { type: boolean, default: false, description: "Abrir conversas de GRUPOS no Chatwoot (mensagens prefixadas com o autor)" }
+                groups: { type: boolean, default: false, description: "Abrir conversas de GRUPOS no Chatwoot. Cada mensagem é prefixada com o autor (*Nome*:) e leva em content_attributes: wa_participant (JID de envio), wa_participant_phone (telefone real ou vazio), wa_participant_lid, wa_participant_name. No envio pelo webhook, @<número> no texto vira menção." }
                 channels: { type: boolean, default: false, description: "Abrir conversas de CANAIS (newsletters) no Chatwoot" }
                 groups_skip_incoming: { type: boolean, default: false, description: "Com groups=true, NÃO reflete as mensagens dos outros membros do grupo — só posta as msgs do próprio aparelho (nota privada) e os avisos de entrada/saída/admin. Evita duplicação quando outra fonte já traz as mensagens do grupo pro mesmo inbox" }
                 sign_msg: { type: boolean, default: false, description: "Assinatura do atendente: prefixa *Nome*\\n no texto e na legenda de mídia das mensagens de SAÍDA (o nome vem do sender do webhook; não fica salvo na conversa do Chatwoot)" }
@@ -1731,11 +1736,21 @@ paths:
     get:
       tags: [Grupos]
       summary: Lista os participantes
+      description: |
+        Cada item traz `jid` (de envio, pode ser `@lid`), `phone` (telefone real ou vazio),
+        `lid`, `name`/`pushName` e `admin`. Para mencionar alguém no envio, use `phone`
+        (ou os dígitos do `lid` quando não há telefone) como `@<dígitos>` no texto.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Gid" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Group/properties/participants/items" }
 
   /api/sessions/{sid}/groups/{gid}/participants/add:
     post:

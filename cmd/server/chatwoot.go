@@ -248,7 +248,7 @@ func (s *Session) chatwootAlert(text string) {
 		s.log.Error("chatwoot: alerta — ensure conversation falhou", "err", err)
 		return
 	}
-	if err := cfg.postText(convID, text, cwIncoming, sourceID, "", 0); err != nil {
+	if err := cfg.postText(convID, text, cwIncoming, sourceID, "", 0, nil); err != nil {
 		s.log.Error("chatwoot: alerta — post falhou", "err", err)
 	}
 }
@@ -369,7 +369,43 @@ func (s *Session) chatwootPushGroup(cfg ChatwootConfig, evt *events.Message) {
 	j.ChatID = chatID
 	j.Name = name
 	j.Avatar = avatar
+	j.Attrs = s.groupAuthorAttrs(evt.Info.Sender, evt.Info.SenderAlt, evt.Info.PushName)
 	s.chatwootSend(cfg, j)
+}
+
+// groupAuthorAttrs monta os content_attributes que identificam QUEM falou numa
+// mensagem de grupo (pedido do AstraChat: preencher a lista de participantes em
+// tempo real e permitir menção de volta). wa_participant = JID de envio (pode ser
+// @lid), wa_participant_phone = telefone real ou "" (nunca os dígitos do LID),
+// wa_participant_lid = LID quando conhecido, wa_participant_name = pushName.
+func (s *Session) groupAuthorAttrs(sender, alt types.JID, pushName string) map[string]any {
+	if sender.IsEmpty() {
+		return nil
+	}
+	phone := ""
+	lid := ""
+	for _, j := range []types.JID{sender, alt} {
+		if j.IsEmpty() {
+			continue
+		}
+		if p, ok := s.resolvedPhone(j); ok && phone == "" {
+			phone = p
+		}
+		if j.Server == types.HiddenUserServer && lid == "" {
+			lid = j.ToNonAD().String()
+		}
+	}
+	if lid == "" && sender.Server == types.DefaultUserServer {
+		if l, err := s.client.Store.LIDs.GetLIDForPN(context.Background(), sender); err == nil && l.User != "" {
+			lid = l.ToNonAD().String()
+		}
+	}
+	return map[string]any{
+		"wa_participant":       sender.ToNonAD().String(),
+		"wa_participant_phone": phone,
+		"wa_participant_lid":   lid,
+		"wa_participant_name":  pushName,
+	}
 }
 
 // chatwootMirrorOwnGroup espelha, como NOTA PRIVADA na conversa do grupo, uma
@@ -385,6 +421,9 @@ func (s *Session) chatwootMirrorOwnGroup(cfg ChatwootConfig, evt *events.Message
 	j.ChatID = chatID
 	j.Name = name
 	j.Avatar = avatar
+	if s.client.Store.ID != nil {
+		j.Attrs = s.groupAuthorAttrs(s.client.Store.ID.ToNonAD(), s.client.Store.LID.ToNonAD(), author)
+	}
 	s.chatwootSend(cfg, j)
 }
 
@@ -447,6 +486,7 @@ type cwJob struct {
 	InReplyTo string          `json:"inReplyTo"`          // ID da msg citada (resposta)
 	MsgRaw    json.RawMessage `json:"msg,omitempty"`      // protojson da mensagem; presente só quando há mídia p/ re-baixar
 	Referral  map[string]any  `json:"referral,omitempty"` // origem de anúncio (CTWA); vira nota privada p/ o atendente
+	Attrs     map[string]any  `json:"attrs,omitempty"`    // content_attributes extras (ex.: wa_participant em grupo)
 }
 
 func (j cwJob) hasMedia() bool { return len(j.MsgRaw) > 0 }
@@ -547,7 +587,7 @@ func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
 	// veio. Best-effort e dedup por source_id derivado (não repete na reentrega);
 	// nunca aborta a entrega da mensagem em si.
 	if note := formatReferralNote(j.Referral); note != "" {
-		if perr := cfg.postText(convID, note, cwPrivate, j.SourceID+":ref", "", 0); perr != nil {
+		if perr := cfg.postText(convID, note, cwPrivate, j.SourceID+":ref", "", 0, nil); perr != nil {
 			s.log.Debug("chatwoot: nota de referral falhou", "err", perr, "source", j.SourceID)
 		}
 	}
@@ -560,7 +600,7 @@ func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
 				data, derr := s.client.Download(context.Background(), dl)
 				if derr == nil && len(data) > 0 {
 					fname, mime := mediaMeta(&msg)
-					if perr := cfg.postAttachment(convID, j.Prefix+j.Text, fname, mime, data, dirFromPrivate(j.Private), j.SourceID, j.InReplyTo, 0); perr != nil {
+					if perr := cfg.postAttachment(convID, j.Prefix+j.Text, fname, mime, data, dirFromPrivate(j.Private), j.SourceID, j.InReplyTo, 0, j.Attrs); perr != nil {
 						return fmt.Errorf("post attachment: %w", perr)
 					}
 					return nil
@@ -571,7 +611,7 @@ func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
 	if strings.TrimSpace(j.Text) == "" {
 		return nil
 	}
-	if err := cfg.postText(convID, j.Prefix+j.Text, dirFromPrivate(j.Private), j.SourceID, j.InReplyTo, 0); err != nil {
+	if err := cfg.postText(convID, j.Prefix+j.Text, dirFromPrivate(j.Private), j.SourceID, j.InReplyTo, 0, j.Attrs); err != nil {
 		return fmt.Errorf("post message: %w", err)
 	}
 	return nil
@@ -799,8 +839,11 @@ func (c ChatwootConfig) ensureConversation(contactID int, sourceID string) (int,
 // opcionais. external_created_at guarda a data original da mensagem (importação);
 // o Chatwoot não a usa para exibir/ordenar — a timeline vem da ORDEM de inserção —
 // mas fica como metadado. Devolve nil quando não há nada a anexar.
-func contentAttrs(inReplyTo string, createdAt int64) map[string]any {
+func contentAttrs(inReplyTo string, createdAt int64, extra map[string]any) map[string]any {
 	ca := map[string]any{}
+	for k, v := range extra {
+		ca[k] = v
+	}
 	if inReplyTo != "" {
 		ca["in_reply_to_external_id"] = inReplyTo
 	}
@@ -843,13 +886,13 @@ func (d cwDir) applyDir(body map[string]any) {
 	}
 }
 
-func (c ChatwootConfig) postText(convID int, content string, dir cwDir, sourceID, inReplyTo string, createdAt int64) error {
+func (c ChatwootConfig) postText(convID int, content string, dir cwDir, sourceID, inReplyTo string, createdAt int64, extra map[string]any) error {
 	body := map[string]any{"content": content, "content_type": "text"}
 	dir.applyDir(body)
 	if sourceID != "" {
 		body["source_id"] = sourceID // = ID da msg do WhatsApp (elo p/ resposta)
 	}
-	if ca := contentAttrs(inReplyTo, createdAt); ca != nil {
+	if ca := contentAttrs(inReplyTo, createdAt, extra); ca != nil {
 		body["content_attributes"] = ca
 	}
 	_, code, e := c.req(http.MethodPost, fmt.Sprintf("/conversations/%d/messages", convID), body)
@@ -863,7 +906,7 @@ func (c ChatwootConfig) postText(convID int, content string, dir cwDir, sourceID
 }
 
 // postAttachment sobe a mídia como anexo (multipart) numa mensagem incoming.
-func (c ChatwootConfig) postAttachment(convID int, content, filename, mime string, data []byte, dir cwDir, sourceID, inReplyTo string, createdAt int64) error {
+func (c ChatwootConfig) postAttachment(convID int, content, filename, mime string, data []byte, dir cwDir, sourceID, inReplyTo string, createdAt int64, extra map[string]any) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	switch dir {
@@ -881,7 +924,7 @@ func (c ChatwootConfig) postAttachment(convID int, content, filename, mime strin
 	if sourceID != "" {
 		_ = mw.WriteField("source_id", sourceID)
 	}
-	if ca := contentAttrs(inReplyTo, createdAt); ca != nil {
+	if ca := contentAttrs(inReplyTo, createdAt, extra); ca != nil {
 		j, _ := json.Marshal(ca)
 		_ = mw.WriteField("content_attributes", string(j))
 	}
@@ -987,6 +1030,16 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// se o agente respondeu uma mensagem, monta o contexto de citação
 	quote := sess.quoteContext(ctx, body)
+	// GRUPO: "@5561..." no texto vira menção de verdade (contextInfo.mentionedJid);
+	// o corpo do webhook do Chatwoot não tem como informar isso.
+	if jid.Server == types.GroupServer {
+		if m := sess.mentionTargets(ctx, detectMentions(content)); len(m) > 0 {
+			if quote == nil {
+				quote = &waE2E.ContextInfo{}
+			}
+			quote.MentionedJID = m
+		}
+	}
 
 	var waMsgID string // ID da 1ª msg do WhatsApp enviada (vira source_id no Chatwoot)
 	var sendErr error  // última falha de envio ao WhatsApp (p/ sinalizar ao Chatwoot)

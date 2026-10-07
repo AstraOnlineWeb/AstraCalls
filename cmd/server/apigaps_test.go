@@ -84,3 +84,19 @@ func TestIsRevokeMessage(t *testing.T) {
 		t.Error("edição não deve ser tratada como revoke")
 	}
 }
+
+func TestDetectMentions(t *testing.T) {
+	got := detectMentions("fala @556196878959, bora? e @+5561999990001 também; @556196878959 de novo; email a@b.com; @123")
+	want := []string{"556196878959", "5561999990001"}
+	if len(got) != len(want) {
+		t.Fatalf("detectMentions = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("detectMentions[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if got := detectMentions("sem mencao nenhuma"); len(got) != 0 {
+		t.Errorf("detectMentions(sem) = %v", got)
+	}
+}

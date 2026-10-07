@@ -86,17 +86,17 @@ func TestShouldRelayWebhook(t *testing.T) {
 }
 
 func TestContentAttrs(t *testing.T) {
-	if contentAttrs("", 0) != nil {
+	if contentAttrs("", 0, nil) != nil {
 		t.Fatal("sem campos deve devolver nil")
 	}
-	ca := contentAttrs("ABC123", 1700000000)
+	ca := contentAttrs("ABC123", 1700000000, nil)
 	if ca["in_reply_to_external_id"] != "ABC123" {
 		t.Fatalf("in_reply_to ausente: %+v", ca)
 	}
 	if ca["external_created_at"] != int64(1700000000) {
 		t.Fatalf("external_created_at ausente: %+v", ca)
 	}
-	only := contentAttrs("", 1700000000)
+	only := contentAttrs("", 1700000000, nil)
 	if _, ok := only["in_reply_to_external_id"]; ok {
 		t.Fatal("não deveria ter in_reply_to quando vazio")
 	}
