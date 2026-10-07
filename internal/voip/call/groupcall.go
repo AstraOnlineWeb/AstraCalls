@@ -236,6 +236,17 @@ func (m *GroupCallManager) StartGroupCall(ctx context.Context, targets []types.J
 		return "", err
 	}
 
+	// Zera TODO o estado da chamada anterior antes de instalar a nova. Sem isso,
+	// uma chamada que não foi encerrada por End() (ex.: todos saíram, o atendente
+	// não desligou e já ligou de novo) deixava rosterTxID/epochTxID da chamada
+	// velha; os group_update/enc_rekey da nova eram descartados como "antigos"
+	// ou "conflitantes", o epoch nunca instalava, o relay nunca conectava e os
+	// participantes ficavam presos em "conectando" (bug reportado 07/10).
+	if prev := m.CallID(); prev != "" {
+		m.log.Info("group: chamada anterior ainda ativa; encerrando antes de iniciar outra", "prev_call_id", prev)
+	}
+	m.End()
+
 	m.mu.Lock()
 	m.callID = callID
 	m.creator = self
@@ -1389,9 +1400,13 @@ func (m *GroupCallManager) End() {
 	m.selfVideoSSRC = 0
 	m.videoAnnounced = false
 	m.epochKey = nil
+	m.epochTxID = 0 // senão o enc_rekey da PRÓXIMA chamada com o mesmo tx é "conflitante"
+	m.groupKey = nil
 	m.groupRelay = nil
 	m.rosterTxID = 0
 	m.connectedPIDs = nil
+	m.selfSsrcs = [9]uint32{}
+	m.captureBuf = nil
 	m.sendSrtp, m.rtpSession = nil, nil
 	m.mu.Unlock()
 
