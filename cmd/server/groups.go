@@ -45,6 +45,12 @@ func (s *Session) participantJSON(p types.GroupParticipant) map[string]any {
 		lid = p.JID
 	}
 	name, push := s.contactNames(p.JID, p.PhoneNumber, p.LID)
+	// a própria conta não está na agenda: usa o nome de perfil do aparelho
+	if own := s.client.Store; own != nil && own.ID != nil && own.PushName != "" {
+		if (phone != "" && phone == own.ID.User) || (!lid.IsEmpty() && lid.User == own.LID.User) {
+			name, push = own.PushName, own.PushName
+		}
+	}
 	if name == "" && p.DisplayName != "" {
 		name = p.DisplayName
 	}
