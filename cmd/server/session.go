@@ -609,6 +609,14 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	if callID == "" {
 		return
 	}
+	// Convite de chamada em GRUPO (somos membro do grupo que outro número ligou):
+	// não é chamada 1:1 — não cria call, não responde preaccept, não emite
+	// "incoming" nem arma reject por timeout. Ver isGroupCallOffer.
+	if g := groupJIDFromOffer(node); g != "" {
+		s.log.Info("convite de chamada em grupo recebido; ignorado no fluxo 1:1",
+			"call_id", callID, "from", evt.From.String(), "group_jid", g)
+		return
+	}
 	if max := s.mgr.maxCalls; max > 0 && s.reg.count() >= max {
 		s.rejectOffer(ctx, node, evt.From)
 		return
