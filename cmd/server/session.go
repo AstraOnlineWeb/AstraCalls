@@ -921,7 +921,10 @@ func (s *Session) startPhonePairing(ctx context.Context, phone string) (string, 
 	if err := s.client.Connect(); err != nil {
 		return "", err
 	}
-	code, err := s.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "AstraCalls")
+	// O nome de exibição PRECISA ser "Navegador (SO)" com navegador/SO comuns: o
+	// servidor valida e devolve <error code="400" text="bad-request"/> pra
+	// qualquer outra coisa (era "AstraCalls" e o código nunca era gerado).
+	code, err := s.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		return "", err
 	}
