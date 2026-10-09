@@ -2,7 +2,7 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
-## v1.2.0 — 2026-10-09
+## v1.1.1 — 2026-10-09
 
 A versão da **chamada em GRUPO**: ligar para um grupo do WhatsApp (áudio e vídeo) pelo
 painel, pelo widget do Chatwoot ou direto pela API, com o atendente ouvindo o mix de
