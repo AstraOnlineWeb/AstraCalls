@@ -15,7 +15,7 @@ name: Docker (multi-arch)
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop]
     tags: ["v*"]
   workflow_dispatch:
 
