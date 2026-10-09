@@ -2,6 +2,97 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.2.0 — 2026-10-09
+
+A versão da **chamada em GRUPO**: ligar para um grupo do WhatsApp (áudio e vídeo) pelo
+painel, pelo widget do Chatwoot ou direto pela API, com o atendente ouvindo o mix de
+todos e falando pelo navegador. Também entram **mute e mão levantada** na chamada 1:1,
+**detecção de shadow-ban (463)**, **proxy no registro SIP**, melhorias nos **grupos**
+pedidas pelo AstraChat e uma rodada de correções em ligações e no Chatwoot.
+
+### 📞 Chamada em GRUPO (áudio + vídeo) — experimental, atrás de flag
+
+Liga-se a flag com `WACALLS_GROUP_CALLS=1` (uma chamada de grupo por conta por vez;
+limite de participantes é o do WhatsApp, 32).
+
+- **Ligar para um grupo existente:** `POST /calls/group` com `{ "groupJid", "video" }`
+  resolve os membros e o celular mostra "chamada do grupo X". Também aceita lista
+  ad-hoc `{ "numbers": [...] }`. `POST /calls/group/end` encerra.
+- **Áudio pelo navegador:** `GET /calls/group/ws` (subprotocolo `pcm16`, mesmo contrato
+  do WS 1:1): downlink é o **mix de todos**, uplink é o microfone do atendente.
+- **Vídeo em grupo:** `GET /calls/group/video-ws` (subprotocolo `h264-group`): um tile
+  por participante, câmera do atendente para todos, pedido de keyframe, estado da
+  câmera, **orientação automática** (rotação informada pelo aparelho) e aviso de quem
+  saiu. `GET /calls/group/roster` rotula os tiles com número + nome em vez do `@lid`.
+- **Painel:** card de chamada em grupo (ouvir/falar, câmera, tiles de vídeo com botão
+  de girar). **Widget do Chatwoot:** botões "ligar para o grupo" (áudio e vídeo) na
+  conversa de grupo; `GET /api/chatwoot/resolve` devolve `group`, `group_jid` e
+  `group_calls`. `GET /api/config` expõe `groupCalls`.
+- Por baixo: control plane do WhatsApp (offer `group_info`, roster por `group_update`,
+  chave de epoch rotacionada a cada entrada via `enc_rekey`), relay de grupo por DTLS
+  direto, mixer de áudio, SRTCP (SR/SDES/PLI) e demux de vídeo por participante.
+
+### 🎙️ Chamada 1:1 — mute e mão levantada
+
+- `POST /calls/{id}/mute` `{ "muted": true|false }`: o "microfone desligado" aparece no
+  outro lado; o mute do interlocutor chega como evento SSE `call-action` e webhook
+  `call_peer_mute`.
+- `POST /calls/{id}/hand` `{ "raised": true|false }`: mão levantada (evento
+  `call_hand_raise`).
+- **Orientação automática da câmera** também no 1:1: o evento `video-state` traz
+  `peerOrientation` (0..3) e o painel/widget giram o vídeo do cliente sozinhos.
+
+### 🛡️ Shadow-ban / restrição de alcance (463)
+
+- O gateway passa a tratar o aviso de **time-lock** do WhatsApp: guarda o estado,
+  dispara webhook `restriction` e alerta uma vez no Chatwoot, com o prazo quando houver.
+- `GET /sessions/{sid}/restriction-status[?peer=<telefone>]`: último estado conhecido e,
+  com `peer`, se temos LID + token de privacidade daquele contato (diagnóstico do 463).
+- O par PN↔LID passa a ser gravado ao resolver pelo `IsOnWhatsApp`, o que faz o token
+  de privacidade funcionar e evita o 463 no envio.
+
+### 👥 Grupos (pedidos do AstraChat)
+
+- `GET /groups/{gid}/participants` devolve **nome** (`name`/`pushName`), `phone`, `lid` e
+  `admin` de cada participante; o nome da própria conta vem do perfil.
+- **Menção automática no envio para grupo:** `@<número>` no texto/legenda vira menção
+  real (`mentionedJid` com PN e LID) sem precisar mandar `mentions`. Vale para texto,
+  imagem, vídeo e documento, e também para o que sai do Chatwoot.
+- **Autor em grupos no Chatwoot:** mensagens de grupo chegam com `content_attributes`
+  `wa_participant`, `wa_participant_phone`, `wa_participant_lid` e `wa_participant_name`.
+
+### ☎️ SIP
+
+- **Proxy (outbound proxy)** no registro em PBX externo (modelo 2): separa o servidor do
+  domínio, necessário para FreePBX e troncos hospedados. Campo no painel e em `/sip-ext`.
+- OpenAPI documenta a parte SIP (status, modelo 1 e modelo 2 com proxy).
+
+### 💬 Mensagens
+
+- `botForwardedMessage` é desembrulhado e `AIRichResponseMessage` vira texto normal no
+  webhook e no Chatwoot (antes sumiam como "mídia sem tipo").
+
+### 🐞 Correções
+
+- **Chatwoot — contato/conversa duplicados pelo 9º dígito BR:** o contato é reencontrado
+  também na outra forma do celular e canonicalizado por inteiro (telefone, identifier e
+  `wacalls_chat_id`), só quando há divergência real.
+- **Áudio virando ruído em videochamada:** o MLow embrulhado em container multi-frame
+  (DTX) agora é desembrulhado antes de decodificar.
+- **Áudio e vídeo no mesmo relógio por chamada** (MediaClock ancorado no 1º pacote de
+  áudio) — menos dessincronia na videochamada 1:1.
+- **Pareamento por código** falhava com `400 bad-request`: o nome do dispositivo precisa
+  ter o formato "Navegador (SO)".
+- **Chamada em grupo:** a 2ª chamada seguida deixava o participante preso em
+  "conectando" (estado da anterior não era zerado); o 3º participante entrava com
+  áudio/vídeo embaralhado (rotação do epoch); joiner tardio não era decodificado; erro
+  411 quando nossos outros devices não iam no offer; crash do gateway no vídeo (keying
+  SRTP vazio, agora com recover).
+- **Convite de chamada em grupo recebido por um número que também é sessão do gateway**
+  era tratado como ligação 1:1 (preaccept, evento `incoming` e reject por timeout em nome
+  do participante), derrubando a entrada dele pelo celular. Agora é ignorado no 1:1.
+- README reescrito com tudo que existe hoje.
+
 ## v1.1.0 — 2026-10-02
 
 Rodada grande de funcionalidades: **carrossel**, **formulário (webview)**, **mensagem
