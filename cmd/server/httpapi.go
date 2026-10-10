@@ -60,6 +60,14 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/resume", s.handleResume)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/mute", s.handleCallMute)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/hand", s.handleCallHand)
+	// espiar (escuta em tempo real), volume e silenciar o toque — ver spy.go
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/spy", s.handleSpyWebRTC)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/spy", s.handleSpyList)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/spy/ws", s.handleSpyWS)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}/spy/{spyId}", s.handleSpyDelete)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/volume", s.handleCallVolume)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/volume", s.handleCallVolume)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/silence", s.handleCallSilence)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/transfer", s.handleTransfer)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/pickup", s.handlePickup)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
@@ -832,6 +840,7 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		}
 		down := media.Downsample48to16(pcm48)
 		ac.recorder.writeBrowser(down)
+		ac.spies.feed(spySideAgent, down)
 		ac.cm.FeedCapturedPCM(down)
 	}
 	bridge.OnBrowserVideo = func(au []byte) {

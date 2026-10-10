@@ -418,7 +418,8 @@ func (s *Session) runPresenceKeepalive() {
 func (s *Session) createCall(callID string, record bool) *call.CallManager {
 	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
 	s.wireCall(cm, callID)
-	ac := &activeCall{cm: cm}
+	ac := &activeCall{cm: cm, spies: newSpyHub()}
+	ac.spies.OnChange = func(n int) { s.mgr.broker.emitCallSpy(s.id, callID, n) }
 	if record {
 		ac.recorder = newCallRecorder(callID, s.log, time.Now())
 	}
@@ -523,6 +524,10 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		}
 		// grava o lado do peer (WhatsApp) mesmo se o consumidor ainda não estiver pronto
 		ac.recorder.writePeer(pcm16)
+		// espiões ouvem o áudio original (sem o ganho de volume do atendente)
+		ac.spies.feed(spySidePeer, pcm16)
+		// volume da chamada: ganho aplicado só no que vai para o consumidor
+		pcm16 = applyGain(pcm16, ac.volumeLevel())
 		// ponte SIP (G.711 u-law): recebe o PCM 16kHz direto (chamada SIP não usa WS/WebRTC).
 		if ac.rtpBridge != nil {
 			_ = ac.rtpBridge.WritePCM(pcm16)
@@ -1028,6 +1033,7 @@ func (s *Session) removeCall(callID string) {
 		return
 	}
 	s.finalizeRecording(ac)
+	ac.spies.closeAll()
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
@@ -1077,6 +1083,7 @@ func (s *Session) teardownAllCalls() {
 	for _, ac := range s.reg.drain() {
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
 		s.finalizeRecording(ac)
+		ac.spies.closeAll()
 		if ac.bridge != nil {
 			ac.bridge.Close()
 		}

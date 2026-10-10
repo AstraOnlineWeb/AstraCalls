@@ -388,6 +388,7 @@ func (s *Session) pumpAudio(callID string, pcm []float32, hangupAfterMs int) int
 			break
 		}
 		end := min(i+bcFrameSamples, len(pcm))
+		ac.spies.feed(spySideAgent, pcm[i:end])
 		ac.cm.FeedCapturedPCM(pcm[i:end])
 	}
 	return int(time.Since(start).Milliseconds())

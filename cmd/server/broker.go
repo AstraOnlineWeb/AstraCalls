@@ -371,6 +371,22 @@ func (b *Broker) subscriberScope(sessionID string) (acct, total, matched, widget
 	return
 }
 
+// emitCallVolume avisa as UIs que o ganho do áudio da chamada mudou (POST /volume),
+// para o controle de volume ficar sincronizado entre painel/widgets.
+func (b *Broker) emitCallVolume(sessionID, id string, level float64) {
+	b.broadcastForSession(sessionID, map[string]any{
+		"type": "call-volume", "sessionId": sessionID, "id": id, "level": level,
+	})
+}
+
+// emitCallSpy avisa que alguém começou/parou de espiar a chamada (count = nº de
+// ouvintes). Mesmo formato do call-action (kind=spy, state = tem alguém ouvindo).
+func (b *Broker) emitCallSpy(sessionID, id string, count int) {
+	b.broadcastForSession(sessionID, map[string]any{
+		"type": "call-action", "sessionId": sessionID, "id": id, "kind": "spy", "state": count > 0, "count": count,
+	})
+}
+
 func (b *Broker) emitIncomingClaimed(sessionID, id, owner string) {
 	b.broadcastForSession(sessionID, map[string]any{"type": "incoming-claimed", "sessionId": sessionID, "id": id, "owner": owner})
 }

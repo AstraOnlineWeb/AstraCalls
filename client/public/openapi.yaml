@@ -2282,6 +2282,178 @@ paths:
         "101": { description: Conexão WebSocket estabelecida }
         "404": { description: Chamada inexistente }
 
+  /api/sessions/{sid}/calls/{id}/spy:
+    post:
+      tags: [Chamadas]
+      summary: Espiar a chamada por WebRTC (escuta em tempo real, só ouvir)
+      description: >
+        Abre uma conexão WebRTC à chamada como se fosse a ligação, mas **somente para
+        ouvir**: o cliente recebe o mix dos dois lados (interlocutor do WhatsApp +
+        atendente), em Opus. Nada do que o espião envia entra na chamada e a presença
+        dele não altera a sinalização com o WhatsApp — a ligação segue normal para as
+        duas pontas. Vários espiões por chamada são permitidos; a chamada NÃO é
+        reivindicada (owner) nem a ponte do atendente é fechada. Só áudio.
+
+
+        O cliente monta um `RTCPeerConnection` com um transceiver de áudio
+        `recvonly`, manda o offer aqui e aplica o answer. Quando alguém começa/para de
+        espiar, o SSE recebe `{"type":"call-action","kind":"spy","state":true|false,"count":N}`
+        (a UI do atendente pode mostrar "supervisor ouvindo").
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sdp_offer]
+              properties:
+                sdp_offer: { type: string, description: "SDP offer do RTCPeerConnection (áudio recvonly)" }
+      responses:
+        "200":
+          description: SDP answer + id do espião
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  spy_id: { type: string, description: "Use em DELETE .../spy/{spyId} para parar de ouvir" }
+                  sdp_answer: { type: string }
+        "404": { description: Chamada inexistente }
+    get:
+      tags: [Chamadas]
+      summary: Lista quem está espiando a chamada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200":
+          description: Espiões ativos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  spies: { type: array, items: { type: string } }
+        "404": { description: Chamada inexistente }
+
+  /api/sessions/{sid}/calls/{id}/spy/ws:
+    get:
+      tags: [Chamadas]
+      summary: Espiar a chamada por WebSocket (PCM16, só downlink)
+      description: >
+        Mesma escuta do `POST .../spy`, mas por WebSocket (subprotocolo `pcm16`): frames
+        **binários** PCM Int16 LE, mono, 16 kHz com o mix dos dois lados. Frames enviados
+        pelo cliente são ignorados. Útil atrás de proxy sem UDP e para serviços externos
+        (gravação/IA) ouvirem a chamada em tempo real. Autentique com `?apiKey=`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "101": { description: Conexão WebSocket estabelecida }
+        "404": { description: Chamada inexistente }
+
+  /api/sessions/{sid}/calls/{id}/spy/{spyId}:
+    delete:
+      tags: [Chamadas]
+      summary: Para de espiar (fecha a conexão do espião)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { name: spyId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Espião removido }
+        "404": { description: Chamada ou espião inexistente }
+
+  /api/sessions/{sid}/calls/{id}/volume:
+    post:
+      tags: [Chamadas]
+      summary: Ajusta o volume da chamada (ganho do interlocutor → atendente)
+      description: >
+        Aplica um ganho **no servidor** ao áudio que vem do WhatsApp antes de sair para o
+        consumidor (WebRTC, WebSocket ou SIP). `level` 1 = normal, 0 = mudo (a chamada
+        continua), até 3 = triplo (com clamp, para interlocutor baixo). Vale para qualquer
+        cliente da chamada sem código no front; a gravação e os espiões recebem o áudio
+        original. O valor aplicado é replicado por SSE:
+        `{"type":"call-volume","id":"<callId>","level":1.5}`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                level: { type: number, minimum: 0, maximum: 3, example: 1.5, description: "Ganho (1 = normal). Alternativa: percent" }
+                percent: { type: number, minimum: 0, maximum: 300, example: 150, description: "Mesmo que level×100" }
+      responses:
+        "200":
+          description: Volume aplicado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  level: { type: number, example: 1.5 }
+        "400": { description: level/percent ausente }
+        "404": { description: Chamada inexistente }
+    get:
+      tags: [Chamadas]
+      summary: Volume atual da chamada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200":
+          description: Ganho atual
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  level: { type: number, example: 1 }
+        "404": { description: Chamada inexistente }
+
+  /api/sessions/{sid}/calls/{id}/silence:
+    post:
+      tags: [Chamadas]
+      summary: Silencia o toque da chamada recebida só na tela (o celular continua tocando)
+      description: >
+        Marca a chamada que está tocando como **silenciada na tela**. NÃO fala com o
+        WhatsApp: a chamada continua tocando no celular e nos outros devices, e o pop-up
+        continua aberto para atender ou recusar. O servidor replica por SSE
+        `{"type":"call-action","kind":"silence","state":true|false}` para todos os
+        widgets/painéis da conta pararem (ou voltarem) o toque. Sem body = silenciar.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                silenced: { type: boolean, default: true }
+      responses:
+        "200":
+          description: Estado aplicado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  silenced: { type: boolean }
+        "404": { description: Chamada inexistente }
+
   /api/sessions/{sid}/calls/{id}/hold:
     post:
       tags: [Chamadas]

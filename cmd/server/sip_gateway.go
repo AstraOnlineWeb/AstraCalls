@@ -337,6 +337,7 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 
 	rtpBridge.OnCapturedPCM = func(pcm []float32) {
+		ac.spies.feed(spySideAgent, pcm)
 		ac.cm.FeedCapturedPCM(pcm)
 	}
 	sess.setRTPBridge(callID, rtpBridge)

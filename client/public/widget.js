@@ -37,6 +37,14 @@
   var ICON_VIDEO_OFF =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
+  var ICON_BELL_OFF =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+  var ICON_BELL =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
+  var ICON_VOLUME =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
+  var ICON_EAR =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>';
   var ICON_USERS =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
   var ICON_ROTATE =
@@ -182,7 +190,15 @@
     "#wacalls-panel .cw-tile video{width:100%;height:100%;object-fit:cover;display:block;background:#000;transition:transform .2s}" +
     "#wacalls-panel .cw-lbl{position:absolute;left:6px;bottom:6px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#fff;background:rgba(0,0,0,.55);border-radius:4px;padding:1px 5px}" +
     "#wacalls-panel .cw-row2{display:flex;gap:12px;justify-content:center;margin-top:18px}" +
-    "#wacalls-panel .cw-grp{background:#2781F6;box-shadow:0 4px 12px rgba(39,129,246,.3)}";
+    "#wacalls-panel .cw-grp{background:#2781F6;box-shadow:0 4px 12px rgba(39,129,246,.3)}" +
+    "#wacalls-panel .cw-vol{display:flex;align-items:center;gap:8px;margin:16px 4px 0;color:#687076;font-size:11px;font-variant-numeric:tabular-nums}" +
+    "#wacalls-panel .cw-vol svg{width:16px;height:16px;flex:none}" +
+    "#wacalls-panel .cw-vol input{flex:1;margin:0;accent-color:#2781F6;cursor:pointer;min-width:0}" +
+    "#wacalls-panel .cw-vol span{min-width:34px;text-align:right}" +
+    "#wacalls-panel .cw-badge{display:none;align-items:center;justify-content:center;gap:6px;margin-top:10px;font-size:11px;color:#9e6c00;background:#fff7c2;border-radius:6px;padding:4px 8px}" +
+    "#wacalls-panel .cw-badge.on{display:inline-flex}" +
+    "#wacalls-panel .cw-badge svg{width:13px;height:13px}" +
+    "#wacalls-panel .cw-sil.on{background:#9e6c00;color:#fff}";
   document.head.appendChild(style);
 
   // ---------- estado ----------
@@ -290,6 +306,10 @@
         '<div class="cw-row"><button class="cw-act cw-mute" id="wacalls-mute" title="Mudo">' + ICON_MIC + "</button>" +
         '<button class="cw-act cw-mute cw-cam" id="wacalls-cam" title="Ativar vídeo">' + ICON_VIDEO_OFF + "</button>" +
         '<button class="cw-act cw-hang" id="wacalls-hang" title="Encerrar">' + ICON_PHONE_OFF + "</button></div>" +
+        '<div class="cw-vol" title="Volume do interlocutor">' + ICON_VOLUME +
+        '<input type="range" id="wacalls-vol" min="0" max="200" step="5" value="' + volumePct + '">' +
+        '<span id="wacalls-vol-pct">' + volumePct + "%</span></div>" +
+        '<div class="cw-badge" id="wacalls-spy">' + ICON_EAR + " Supervisor ouvindo a chamada</div>" +
         '<audio id="wacalls-audio" autoplay></audio></div>';
     } else if (state.incoming) {
       body =
@@ -297,6 +317,7 @@
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
         '<div class="cw-st" id="wacalls-st">Tocando…</div>' +
         '<div class="cw-row"><button class="cw-act cw-call" id="wacalls-answer" title="Atender">' + ICON_PHONE + "</button>" +
+        '<button class="cw-act cw-mute cw-sil' + (state.silenced ? " on" : "") + '" id="wacalls-silence" title="' + (state.silenced ? "Voltar a tocar" : "Silenciar toque (o celular continua tocando)") + '">' + (state.silenced ? ICON_BELL : ICON_BELL_OFF) + "</button>" +
         '<button class="cw-act cw-hang" id="wacalls-reject" title="Recusar">' + ICON_PHONE_OFF + "</button></div>" +
         '<audio id="wacalls-audio" autoplay></audio></div>';
     } else {
@@ -333,6 +354,61 @@
       p.querySelector("#wacalls-cam").onclick = function () {
         toggleCam(this);
       };
+    if (p.querySelector("#wacalls-silence")) p.querySelector("#wacalls-silence").onclick = toggleSilence;
+    if (p.querySelector("#wacalls-vol"))
+      p.querySelector("#wacalls-vol").oninput = function () { setVolumePct(parseInt(this.value, 10)); };
+    if (call && call.spied) updateSpyBadge();
+  }
+
+  // ---------- volume da chamada ----------
+  // O ganho é aplicado NO SERVIDOR (POST /calls/{id}/volume) ao áudio do
+  // interlocutor, por isso vale também para o transporte WebSocket e para
+  // outros clientes da mesma chamada. O SSE "call-volume" devolve o valor
+  // aplicado e sincroniza o controle.
+  var volumePct = 100, volTimer = null;
+  function setVolumePct(pct, fromServer) {
+    pct = Math.max(0, Math.min(300, isNaN(pct) ? 100 : pct));
+    volumePct = pct;
+    var r = document.getElementById("wacalls-vol"), l = document.getElementById("wacalls-vol-pct");
+    if (r && parseInt(r.value, 10) !== pct) r.value = pct;
+    if (l) l.textContent = pct + "%";
+    if (fromServer || !call || call.group) return;
+    if (volTimer) clearTimeout(volTimer);
+    var c = call;
+    volTimer = setTimeout(function () {
+      volTimer = null;
+      api("/api/sessions/" + c.session + "/calls/" + c.callId + "/volume", { method: "POST", body: { level: pct / 100 } }).catch(function () {});
+    }, 120);
+  }
+
+  // ---------- silenciar o toque ----------
+  // Só na tela: POST /calls/{id}/silence não fala com o WhatsApp — o celular
+  // continua tocando e o pop-up fica aberto pra atender/recusar. O servidor
+  // replica por SSE (call-action kind=silence) pros outros widgets da conta.
+  function toggleSilence() {
+    var inc = incoming;
+    if (!inc) return;
+    var want = !inc.silenced;
+    applySilence(want);
+    api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/silence", { method: "POST", body: { silenced: want } }).catch(function () {});
+  }
+  function applySilence(on) {
+    if (!incoming) return;
+    incoming.silenced = on;
+    if (on) stopRing(); else playRing();
+    var b = document.getElementById("wacalls-silence");
+    if (b) {
+      b.classList.toggle("on", on);
+      b.innerHTML = on ? ICON_BELL : ICON_BELL_OFF;
+      b.title = on ? "Voltar a tocar" : "Silenciar toque (o celular continua tocando)";
+    }
+    var st = document.getElementById("wacalls-st");
+    if (st) st.textContent = on ? "Tocando (silenciado aqui)…" : "Tocando…";
+  }
+
+  function updateSpyBadge() {
+    var b = document.getElementById("wacalls-spy");
+    if (b) b.classList.toggle("on", !!(call && call.spied));
   }
 
   function esc(s) {
@@ -696,6 +772,7 @@
   }
 
   async function startCall(state) {
+    volumePct = 100;
     render({ inCall: true, name: state.name, phone: state.phone, status: "Conectando…" });
     try {
       await ensureConfig();
@@ -836,7 +913,17 @@
       } else if (msg.type === "call-status") {
         if (msg.status === "connected") markAnswered();
         else if (!call.answered) setStatus("Chamando…");
+      } else if (msg.type === "call-volume") {
+        setVolumePct(Math.round((typeof msg.level === "number" ? msg.level : 1) * 100), true);
+      } else if (msg.type === "call-action" && msg.kind === "spy") {
+        call.spied = !!msg.state;
+        updateSpyBadge();
       }
+      return;
+    }
+    // chamada recebida pendente: outro atendente silenciou/voltou o toque
+    if (incoming && msg.id === incoming.callId && msg.type === "call-action" && msg.kind === "silence") {
+      if (!!msg.state !== !!incoming.silenced) applySilence(!!msg.state);
       return;
     }
     // chamada RECEBIDA chegando → abre o widget e toca
@@ -864,6 +951,7 @@
     if (!inc) return;
     incoming = null;
     stopRing();
+    volumePct = 100;
     render({ inCall: true, name: "Chamada recebida", phone: inc.peer, status: "Conectando…" });
     try {
       await ensureConfig();

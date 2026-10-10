@@ -324,7 +324,7 @@ Todas as rotas são escopadas por sessão (`/api/sessions/{sid}/…`). Os evento
 | Área | Rotas (resumo) |
 |---|---|
 | **Sessões** | `GET/POST /api/sessions`, `DELETE /{sid}`, `/logout`, `/pair`, `/pair-code`, `/pair-passkey`, `/proxy`, `/recording`, `/restriction-status` |
-| **Chamadas** | `POST /calls` (`{phone, video?, record?}`), `/calls/{id}/webrtc` (SDP), `GET /calls/{id}/ws` (PCM16), `/accept`, `/reject`, `DELETE /calls/{id}`, `/hold`, `/resume`, `/pickup`, `/transfer`, `/mute`, `/hand`, `/video/{request\|accept\|reject\|stop}`, `POST /calls/fake`, `GET /calls`, `GET /history` |
+| **Chamadas** | `POST /calls` (`{phone, video?, record?}`), `/calls/{id}/webrtc` (SDP), `GET /calls/{id}/ws` (PCM16), `/accept`, `/reject`, `DELETE /calls/{id}`, `/hold`, `/resume`, `/pickup`, `/transfer`, `/mute`, `/hand`, `/video/{request\|accept\|reject\|stop}`, `/spy` (espiar: WebRTC recvonly / `GET /spy/ws` PCM16), `/volume` (ganho 0..3), `/silence` (silenciar o toque só na tela), `POST /calls/fake`, `GET /calls`, `GET /history` |
 | **Grupo** | `POST /calls/group`, `POST /calls/group/end`, `GET /calls/group/ws`, `GET /calls/group/video-ws`, `GET /calls/group/roster` |
 | **Disparos** | `POST /broadcast` (ligações, áudio/vídeo), `POST /blast` + `GET /blasts`, `/blasts/{id}`, `/blasts/{id}/cancel` |
 | **Mensagens** | `POST /messages/{text\|image\|audio\|video\|ptv\|document\|sticker\|contact\|location\|link-preview\|poll\|poll-vote\|event\|event-response\|pix\|product\|product-native\|interactive\|buttons\|list\|carousel\|form\|disappearing\|seen\|typing\|forward}`, `PUT /messages/{edit\|react}`, `GET /messages`, `/messages/search`, `/messages/{id}/media`, `/messages/new-message-id`, `DELETE /messages`, `/schedule` |

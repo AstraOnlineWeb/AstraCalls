@@ -201,6 +201,7 @@ func (s *server) handleWSBridge(w http.ResponseWriter, r *http.Request) {
 	// do WhatsApp). Sem Opus intermediário.
 	bridge.OnBrowserPCM = func(pcm16 []float32) {
 		ac.recorder.writeBrowser(pcm16)
+		ac.spies.feed(spySideAgent, pcm16)
 		ac.cm.FeedCapturedPCM(pcm16)
 	}
 	bridge.OnTerminalWS = func() {

@@ -19,6 +19,9 @@ type activeCall struct {
 	peerAudioN  uint64        // diagnóstico: nº de frames de áudio do peer (WhatsApp) recebidos
 	ringTimer   *time.Timer   // timeout de toque: expira a chamada que nunca recebe encerramento
 	answered    atomic.Bool   // marca que a chamada ficou ativa (atendida) — não expirar
+	spies       *spyHub       // espiões (escuta em tempo real do mix dos dois lados); ver spy.go
+	volumeMilli atomic.Int32  // ganho do áudio interlocutor→atendente, em milésimos +1 (0 = não ajustado = 1.0)
+	silenced    atomic.Bool   // toque silenciado na tela (o celular continua tocando)
 }
 
 type callRegistry struct {
