@@ -440,10 +440,116 @@ func (s *Session) sendGroupDirect(ctx context.Context, gid types.JID, mode types
 		},
 		Content: content,
 	}
-	if err := in.SendNode(ctx, node); err != nil {
+	ack, err := s.sendNodeAwait(ctx, node, id, 20*time.Second)
+	if err != nil {
 		return "", 0, err
 	}
+	if code, ok := ack.Attrs["error"]; ok {
+		return "", 0, errGroupHistoryNack{code: fmt.Sprint(code)}
+	}
 	return id, len(parts), nil
+}
+
+// errGroupHistoryNack: o servidor recusou o pacote (ack com error=...).
+type errGroupHistoryNack struct{ code string }
+
+func (e errGroupHistoryNack) Error() string {
+	if e.code == "479" {
+		return "WhatsApp recusou o pacote (ack error=479): esta conta não está liberada pelo WhatsApp para enviar histórico de grupo (flag group_history_send desligado). Liberação é gradual e feita pelo WhatsApp, por conta"
+	}
+	return "WhatsApp recusou o pacote (ack error=" + e.code + ")"
+}
+
+// sendNodeAwait envia um nó cru e espera a resposta (iq result/error ou ack de
+// mensagem) com o mesmo id, usando os waiters internos do whatsmeow.
+func (s *Session) sendNodeAwait(ctx context.Context, node waBinary.Node, id string, timeout time.Duration) (*waBinary.Node, error) {
+	in := s.client.DangerousInternals()
+	ch := in.WaitResponse(id)
+	if err := in.SendNode(ctx, node); err != nil {
+		in.CancelResponse(id, ch)
+		return nil, err
+	}
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case resp := <-ch:
+		return resp, nil
+	case <-t.C:
+		in.CancelResponse(id, ch)
+		return nil, errors.New("sem resposta do WhatsApp (timeout)")
+	case <-ctx.Done():
+		in.CancelResponse(id, ch)
+		return nil, ctx.Err()
+	}
+}
+
+// abPropGroupHistorySend é o config_code do flag "group_history_send" (WA Web
+// WAWebABPropsConfigs: [15313, "bool", false]). Sem ele o servidor recusa o
+// pacote de histórico com 479.
+const abPropGroupHistorySend = "15313"
+
+// fetchABProps consulta os flags de experimento (AB props) da conta:
+// <iq xmlns="abt" type="get"><props protocol="1"/></iq> → map[config_code]valor.
+func (s *Session) fetchABProps(ctx context.Context) (map[string]string, error) {
+	id := string(s.client.GenerateMessageID())
+	resp, err := s.sendNodeAwait(ctx, waBinary.Node{
+		Tag:     "iq",
+		Attrs:   waBinary.Attrs{"id": id, "xmlns": "abt", "type": "get", "to": types.ServerJID},
+		Content: []waBinary.Node{{Tag: "props", Attrs: waBinary.Attrs{"protocol": "1"}}},
+	}, id, 20*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if t, _ := resp.Attrs["type"].(string); t == "error" {
+		return nil, fmt.Errorf("abprops: %v", resp.Content)
+	}
+	out := map[string]string{}
+	props, ok := resp.GetOptionalChildByTag("props")
+	if !ok {
+		return out, nil
+	}
+	for _, p := range props.GetChildrenByTag("prop") {
+		code := fmt.Sprint(p.Attrs["config_code"])
+		if code == "" || code == "<nil>" {
+			continue
+		}
+		out[code] = fmt.Sprint(p.Attrs["config_value"])
+	}
+	return out, nil
+}
+
+// abPropTrue interpreta o valor de um flag booleano.
+func abPropTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true":
+		return true
+	}
+	return false
+}
+
+// handleABProps atende GET /api/sessions/{sid}/abprops[?code=15313] — diagnóstico
+// dos flags que o WhatsApp liberou para a conta.
+func (s *server) handleABProps(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	props, err := sess.fetchABProps(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	resp := map[string]any{
+		"count":            len(props),
+		"groupHistorySend": abPropTrue(props[abPropGroupHistorySend]),
+	}
+	if code := r.URL.Query().Get("code"); code != "" {
+		v, ok := props[code]
+		resp["code"], resp["value"], resp["present"] = code, v, ok
+	} else {
+		resp["props"] = props
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGroupHistoryShare atende POST /api/sessions/{sid}/groups/{gid}/history/share
@@ -468,6 +574,11 @@ func (s *server) handleGroupHistoryShare(w http.ResponseWriter, r *http.Request)
 	res, err := sess.shareGroupHistory(r.Context(), gid, b.Participants, count)
 	if err != nil {
 		var ie errGroupHistoryInput
+		var ne errGroupHistoryNack
+		if errors.As(err, &ne) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "ack_error": ne.code})
+			return
+		}
 		if errors.As(err, &ie) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

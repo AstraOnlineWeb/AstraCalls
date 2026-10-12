@@ -250,6 +250,18 @@ func (s *server) handleGroupParticipantChange(action whatsmeow.ParticipantChange
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		if action == whatsmeow.ParticipantChangeAdd {
+			// 9º dígito BR: o add com a forma errada volta error=451. Troca pelo PN
+			// canônico que o WhatsApp registrou (mesma resolução do envio).
+			for i, p := range parts {
+				if p.Server != types.DefaultUserServer {
+					continue
+				}
+				if _, pn, ok := sess.resolveCanonical(r.Context(), p); ok && pn.User != "" && pn.User != p.User {
+					parts[i] = pn
+				}
+			}
+		}
 		res, err := sess.client.UpdateGroupParticipants(r.Context(), gid, parts, action)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
