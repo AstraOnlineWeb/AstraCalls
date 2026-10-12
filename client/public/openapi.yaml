@@ -1756,12 +1756,73 @@ paths:
     post:
       tags: [Grupos]
       summary: Adiciona participantes
+      description: >
+        Opcional `shareHistory`: compartilha as últimas mensagens do grupo com quem foi
+        adicionado (recurso "histórico do grupo" do WhatsApp). `true` = 50 mensagens, ou
+        um número (até 100). O resultado vem em `history` (ou o erro em `historyError`,
+        sem desfazer a adição). Ver `POST .../history/share`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Gid" }
-      requestBody: { $ref: "#/components/requestBodies/Participants" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participants]
+              properties:
+                participants: { type: array, items: { type: string }, example: ["5511999999999"] }
+                shareHistory: { oneOf: [{ type: boolean }, { type: integer, minimum: 1, maximum: 100 }], example: 50 }
       responses:
         "200": { description: OK }
+
+  /api/sessions/{sid}/groups/{gid}/history/share:
+    post:
+      tags: [Grupos]
+      summary: Compartilha o histórico recente do grupo com membros (Group Message History)
+      description: >
+        Envia as últimas `count` mensagens do grupo (padrão 50, máximo 100) para os
+        membros informados, como o "compartilhar histórico" do WhatsApp ao adicionar
+        alguém. Os destinatários precisam JÁ ser membros. O pacote vai criptografado só
+        para eles, e o grupo todo recebe o aviso de que o histórico foi compartilhado.
+
+
+        As mensagens saem do banco do AstraCalls: só entra o que esta sessão recebeu ou
+        enviou no grupo. Grupo sem mensagens salvas → 400.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participants]
+              properties:
+                participants: { type: array, items: { type: string }, example: ["5511999999999"], description: "Telefone, JID ou LID de quem recebe" }
+                count: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Histórico enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  result:
+                    type: object
+                    properties:
+                      bundleMessageId: { type: string }
+                      noticeMessageId: { type: string }
+                      messagesCount: { type: integer }
+                      historyReceivers: { type: array, items: { type: string } }
+                      nonHistoryReceivers: { type: array, items: { type: string } }
+                      devices: { type: integer, description: "Aparelhos que receberam o pacote" }
+        "400": { description: "Destinatário fora do grupo, própria conta ou sem mensagens salvas" }
+        "502": { description: Falha no upload ou envio ao WhatsApp }
 
   /api/sessions/{sid}/groups/{gid}/participants/remove:
     post:

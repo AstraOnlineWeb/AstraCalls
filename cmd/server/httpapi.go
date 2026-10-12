@@ -124,6 +124,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{sid}/groups/{gid}", s.handleGroupInfo)
 	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/leave", s.handleLeaveGroup)
 	mux.HandleFunc("GET /api/sessions/{sid}/groups/{gid}/participants", s.handleGroupParticipants)
+	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/history/share", s.handleGroupHistoryShare)
 	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/participants/add", s.handleGroupParticipantChange(whatsmeow.ParticipantChangeAdd))
 	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/participants/remove", s.handleGroupParticipantChange(whatsmeow.ParticipantChangeRemove))
 	mux.HandleFunc("POST /api/sessions/{sid}/groups/{gid}/participants/promote", s.handleGroupParticipantChange(whatsmeow.ParticipantChangePromote))

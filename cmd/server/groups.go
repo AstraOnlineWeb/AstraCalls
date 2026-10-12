@@ -236,11 +236,15 @@ func (s *server) handleGroupParticipantChange(action whatsmeow.ParticipantChange
 		}
 		var b struct {
 			Participants []string `json:"participants"`
+			// ShareHistory (só no add): compartilha as últimas N mensagens do grupo
+			// com quem entrou (recurso "histórico do grupo" do WhatsApp). true = 50.
+			ShareHistory json.RawMessage `json:"shareHistory"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || len(b.Participants) == 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "participants required"})
 			return
 		}
+		shareCount := parseShareHistory(b.ShareHistory)
 		parts, err := resolveParticipants(b.Participants)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -252,10 +256,25 @@ func (s *server) handleGroupParticipantChange(action whatsmeow.ParticipantChange
 			return
 		}
 		out := make([]map[string]any, 0, len(res))
+		var added []string
 		for _, p := range res {
-			out = append(out, map[string]any{"jid": p.JID.String(), "isAdmin": p.IsAdmin})
+			row := map[string]any{"jid": p.JID.String(), "isAdmin": p.IsAdmin}
+			if p.Error != 0 {
+				row["error"] = p.Error
+			} else {
+				added = append(added, p.JID.String())
+			}
+			out = append(out, row)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "participants": out})
+		resp := map[string]any{"ok": true, "participants": out}
+		if action == whatsmeow.ParticipantChangeAdd && shareCount > 0 && len(added) > 0 {
+			if hr, herr := sess.shareGroupHistory(r.Context(), gid, added, shareCount); herr != nil {
+				resp["historyError"] = herr.Error()
+			} else {
+				resp["history"] = hr
+			}
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 
@@ -446,4 +465,21 @@ func inviteCode(s string) string {
 		s = s[i+1:]
 	}
 	return s
+}
+
+// parseShareHistory interpreta o campo shareHistory: true → 50, número → N,
+// false/ausente → 0 (não compartilha).
+func parseShareHistory(raw json.RawMessage) int {
+	v := strings.TrimSpace(string(raw))
+	switch v {
+	case "", "null", "false", "0":
+		return 0
+	case "true":
+		return groupHistoryDefaultCnt
+	}
+	var f flexFloat
+	if err := json.Unmarshal(raw, &f); err != nil || f <= 0 {
+		return 0
+	}
+	return int(f)
 }
