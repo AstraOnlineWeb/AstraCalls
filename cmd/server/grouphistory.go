@@ -428,6 +428,11 @@ func (s *Session) sendGroupDirect(ctx context.Context, gid types.JID, mode types
 	if includeIdentity {
 		content = append(content, in.MakeDeviceIdentityNode())
 	}
+	// token de reporte (<reporting><reporting_token v=2>): o zapo sempre anexa no
+	// envio direto ao grupo; sem ele o servidor devolve ack error=479.
+	if msg.GetMessageContextInfo().GetMessageSecret() != nil {
+		content = append(content, in.GetMessageReportingToken(plaintext, msg, s.ownIdentityFor(mode), gid, id))
+	}
 	node := waBinary.Node{
 		Tag: "message",
 		Attrs: waBinary.Attrs{
