@@ -127,6 +127,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/communities/{cid}/groups/link", s.handleCommunityLink(true))
 	mux.HandleFunc("POST /api/sessions/{sid}/communities/{cid}/groups/unlink", s.handleCommunityLink(false))
 	mux.HandleFunc("GET /api/sessions/{sid}/communities/{cid}/participants", s.handleCommunityParticipants)
+	mux.HandleFunc("POST /api/sessions/{sid}/communities/{cid}/participants/add", s.handleCommunityAddParticipants)
 	mux.HandleFunc("POST /api/sessions/{sid}/groups", s.handleCreateGroup)
 	mux.HandleFunc("GET /api/sessions/{sid}/groups", s.handleListGroups)
 	mux.HandleFunc("POST /api/sessions/{sid}/groups/join", s.handleJoinGroup)

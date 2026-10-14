@@ -148,6 +148,20 @@ func (s *Session) groupJSON(g *types.GroupInfo) map[string]any {
 	return out
 }
 
+// canonicalParticipants troca (in-place) cada PN pelo PN canônico registrado no
+// WhatsApp. 9º dígito BR: add/create com a forma errada volta error=451 ou
+// simplesmente não adiciona.
+func (s *Session) canonicalParticipants(ctx context.Context, parts []types.JID) {
+	for i, p := range parts {
+		if p.Server != types.DefaultUserServer {
+			continue
+		}
+		if _, pn, ok := s.resolveCanonical(ctx, p); ok && pn.User != "" && pn.User != p.User {
+			parts[i] = pn
+		}
+	}
+}
+
 // group carrega a sessão pareada + o JID do grupo do path, ou escreve o erro.
 func (s *server) group(w http.ResponseWriter, r *http.Request) (*Session, types.JID, bool) {
 	sess := s.pairedSession(w, r.PathValue("sid"))
@@ -181,6 +195,7 @@ func (s *server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	sess.canonicalParticipants(r.Context(), parts)
 	g, err := sess.client.CreateGroup(r.Context(), whatsmeow.ReqCreateGroup{Name: b.Name, Participants: parts})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -260,16 +275,7 @@ func (s *server) handleGroupParticipantChange(action whatsmeow.ParticipantChange
 			return
 		}
 		if action == whatsmeow.ParticipantChangeAdd {
-			// 9º dígito BR: o add com a forma errada volta error=451. Troca pelo PN
-			// canônico que o WhatsApp registrou (mesma resolução do envio).
-			for i, p := range parts {
-				if p.Server != types.DefaultUserServer {
-					continue
-				}
-				if _, pn, ok := sess.resolveCanonical(r.Context(), p); ok && pn.User != "" && pn.User != p.User {
-					parts[i] = pn
-				}
-			}
+			sess.canonicalParticipants(r.Context(), parts)
 		}
 		res, err := sess.client.UpdateGroupParticipants(r.Context(), gid, parts, action)
 		if err != nil {

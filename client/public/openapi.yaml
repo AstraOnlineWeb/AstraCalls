@@ -1884,6 +1884,26 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/GroupInfo/properties/participants/items" }
 
+  /api/sessions/{sid}/communities/{cid}/participants/add:
+    post:
+      tags: [Comunidades]
+      summary: Adiciona membros à comunidade
+      description: Entram pelo grupo de avisos (como no app). A conta precisa ser admin.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Cid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participants]
+              properties:
+                participants: { type: array, items: { type: string }, example: ["5561999999999"] }
+      responses:
+        "200": { description: "participants[] com ok/error por número" }
+
   /api/sessions/{sid}/groups/{gid}/leave:
     post:
       tags: [Grupos]
