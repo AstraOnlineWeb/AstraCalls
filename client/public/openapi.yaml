@@ -32,6 +32,8 @@ tags:
     description: Verificar número, listar/consultar contatos, foto, bloquear/desbloquear
   - name: Grupos
     description: Criar, listar e administrar grupos e participantes
+  - name: Comunidades
+    description: Criar comunidades, vincular/desvincular grupos, listar grupos e membros
   - name: Canais
     description: Canais/Newsletters (seguir, silenciar, mensagens)
   - name: Presença & Perfil
@@ -91,6 +93,12 @@ components:
       required: true
       schema: { type: string }
       description: ID do grupo (com ou sem @g.us).
+    Cid:
+      name: cid
+      in: path
+      required: true
+      schema: { type: string }
+      description: ID da comunidade (com ou sem @g.us).
     ChannelId:
       name: id
       in: path
@@ -133,6 +141,11 @@ components:
         participant: { type: string, description: "Opcional. Em grupo, JID de quem enviou a mensagem citada." }
         fromMe: { type: boolean, description: "Opcional. true se a mensagem citada foi enviada por você." }
         mentions: { type: array, items: { type: string }, description: "Números ou JIDs a mencionar (@) na legenda." }
+    CommunityGroups:
+      type: object
+      properties:
+        groups: { type: array, items: { type: string }, example: ["120363000000000001@g.us"] }
+        group: { type: string, description: "atalho para um grupo só" }
     GroupInfo:
       type: object
       description: "Inclui aliases de compatibilidade (id/subject/description) ao lado dos campos nativos."
@@ -147,6 +160,9 @@ components:
         id: { type: string, description: "alias de jid", example: "120363000000000000@g.us" }
         subject: { type: string, description: "alias de name" }
         description: { type: string, description: "alias de topic" }
+        isCommunity: { type: boolean, description: "true = é uma comunidade (grupo pai)" }
+        parentJid: { type: string, description: "comunidade à qual o grupo está vinculado (vazio se nenhuma)" }
+        isAnnouncementGroup: { type: boolean, description: "true = grupo de avisos da comunidade" }
         participants:
           type: array
           items:
@@ -212,6 +228,22 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/GroupInfo" }
+    CommunityLinkResult:
+      description: Resultado por grupo
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              ok: { type: boolean, description: "true = todos deram certo" }
+              results:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    group: { type: string }
+                    ok: { type: boolean }
+                    error: { type: string }
     GroupList:
       description: Lista de grupos
       content:
@@ -1721,6 +1753,136 @@ paths:
         - { $ref: "#/components/parameters/Gid" }
       responses:
         "200": { $ref: "#/components/responses/Group" }
+
+  /api/sessions/{sid}/communities:
+    post:
+      tags: [Comunidades]
+      summary: Cria uma comunidade
+      description: |
+        O grupo de avisos é criado automaticamente pelo WhatsApp junto com a comunidade.
+        Nome até 25 caracteres. `approval: true` = entrada só com aprovação de admin.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "Comunidade Astra" }
+                description: { type: string, example: "Avisos e grupos da turma" }
+                participants: { type: array, items: { type: string }, example: ["5561999999999"] }
+                approval: { type: boolean, example: false }
+      responses:
+        "200": { $ref: "#/components/responses/Group" }
+    get:
+      tags: [Comunidades]
+      summary: Lista as comunidades em que a conta está
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200": { $ref: "#/components/responses/GroupList" }
+
+  /api/sessions/{sid}/communities/{cid}:
+    get:
+      tags: [Comunidades]
+      summary: Dados da comunidade + grupos vinculados (campo groups)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Cid" }
+      responses:
+        "200": { $ref: "#/components/responses/Group" }
+        "400": { description: "O ID não é de uma comunidade" }
+
+  /api/sessions/{sid}/communities/{cid}/groups:
+    get:
+      tags: [Comunidades]
+      summary: Lista os grupos vinculados
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Cid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    jid: { type: string, example: "120363000000000001@g.us" }
+                    name: { type: string }
+                    isAnnouncementGroup: { type: boolean }
+    post:
+      tags: [Comunidades]
+      summary: Cria um grupo novo já dentro da comunidade
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Cid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "Turma 1" }
+                participants: { type: array, items: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Group" }
+
+  /api/sessions/{sid}/communities/{cid}/groups/link:
+    post:
+      tags: [Comunidades]
+      summary: Vincula grupos existentes à comunidade
+      description: A conta precisa ser admin da comunidade e dos grupos. Resultado por grupo.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Cid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommunityGroups" }
+      responses:
+        "200": { $ref: "#/components/responses/CommunityLinkResult" }
+        "502": { description: "Nenhum grupo foi vinculado (ver results[].error)" }
+
+  /api/sessions/{sid}/communities/{cid}/groups/unlink:
+    post:
+      tags: [Comunidades]
+      summary: Desvincula grupos da comunidade
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Cid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommunityGroups" }
+      responses:
+        "200": { $ref: "#/components/responses/CommunityLinkResult" }
+        "502": { description: "Nenhum grupo foi desvinculado (ver results[].error)" }
+
+  /api/sessions/{sid}/communities/{cid}/participants:
+    get:
+      tags: [Comunidades]
+      summary: Membros de todos os grupos da comunidade
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Cid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GroupInfo/properties/participants/items" }
 
   /api/sessions/{sid}/groups/{gid}/leave:
     post:

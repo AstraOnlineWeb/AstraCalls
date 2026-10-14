@@ -123,7 +123,7 @@ func (s *Session) groupJSON(g *types.GroupInfo) map[string]any {
 	for _, p := range g.Participants {
 		parts = append(parts, s.participantJSON(p))
 	}
-	return map[string]any{
+	out := map[string]any{
 		"jid":          g.JID.String(),
 		"name":         g.Name,
 		"topic":        g.Topic,
@@ -136,7 +136,16 @@ func (s *Session) groupJSON(g *types.GroupInfo) map[string]any {
 		"id":          g.JID.String(), // grupos já são @g.us
 		"subject":     g.Name,
 		"description": g.Topic,
+		// comunidade: isCommunity = a própria comunidade; parentJid = comunidade
+		// à qual o grupo está vinculado; isAnnouncementGroup = grupo de avisos dela
+		"isCommunity":         g.IsParent,
+		"parentJid":           "",
+		"isAnnouncementGroup": g.IsDefaultSubGroup,
 	}
+	if !g.LinkedParentJID.IsEmpty() {
+		out["parentJid"] = g.LinkedParentJID.String()
+	}
+	return out
 }
 
 // group carrega a sessão pareada + o JID do grupo do path, ou escreve o erro.
