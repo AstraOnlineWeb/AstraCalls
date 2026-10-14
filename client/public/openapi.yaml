@@ -3239,6 +3239,49 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
+  /api/sessions/{sid}/messages/native-form:
+    post:
+      tags: [Mensagens]
+      summary: Envia um formulário NATIVO criado no app WhatsApp Business (Formulários)
+      description: >
+        Envia o formulário nativo que a PRÓPRIA conta criou no app WhatsApp Business
+        (Ferramentas comerciais → Formulários). Abre dentro do WhatsApp do cliente, igual ao
+        envio pelo celular. O `flowId` é o do formulário da conta: envie o formulário uma vez
+        pelo celular e pegue o `flow_id` no conteúdo da mensagem (GET .../chats/{chat}/messages?raw=true).
+        Só funciona com formulário da conta que envia. Para número comum (não Business), use
+        `POST .../messages/form` (formulário em página).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, flowId]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                flowId: { type: string, example: "1615193897066865" }
+                body: { type: string, default: "Compartilhe seus dados." }
+                cta: { type: string, default: "Preencher formulário" }
+                screen: { type: string, example: contact_details, description: "Tela inicial do formulário" }
+                data: { type: object, example: { full_name_visible: true, email_visible: true, phone_number_visible: true } }
+                formType: { type: string, default: template }
+                flowToken: { type: string, description: "Opcional; gerado (UUID) se ausente" }
+                biz: { type: string, enum: [mixed, none, galaxy], default: mixed, description: "Nó <biz> do envio; galaxy é recusado (405) vindo de aparelho vinculado" }
+      responses:
+        "200":
+          description: Enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  to: { type: string }
+                  flowToken: { type: string }
+                  timestamp: { type: integer }
+
   /api/sessions/{sid}/messages/form:
     post:
       tags: [Interativas]
