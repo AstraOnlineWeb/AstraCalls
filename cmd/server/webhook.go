@@ -270,6 +270,9 @@ func messageText(m *waE2E.Message) string {
 // interactiveResponseText extrai a escolha de uma resposta interativa (nativeFlow:
 // quick_reply/cta). Usa o Body se houver; senão o "id" do buttonParamsJson.
 func interactiveResponseText(ir *waE2E.InteractiveResponseMessage) string {
+	if fr, ok := parseNativeFormResponse(ir); ok {
+		return fr.summary()
+	}
 	if b := ir.GetBody(); b != nil && b.GetText() != "" {
 		return b.GetText()
 	}

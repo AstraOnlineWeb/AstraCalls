@@ -1,0 +1,34 @@
+{
+ "interactiveResponseMessage": {
+  "body": {
+   "text": "Sent",
+   "format": "EXTENSIONS_1"
+  },
+  "contextInfo": {
+   "stanzaID": "3EB0000000000000000000",
+   "quotedType": "EXPLICIT",
+   "participant": "100000000000000@lid",
+   "quotedMessage": {
+    "interactiveMessage": {
+     "body": {
+      "text": "Teste API (mixed): compartilhe seus dados."
+     },
+     "nativeFlowMessage": {
+      "buttons": [
+       {
+        "name": "galaxy_message",
+        "buttonParamsJSON": "{\"flow_action\":\"navigate\",\"flow_action_payload\":{\"data\":{\"email_visible\":true,\"full_name_visible\":true,\"phone_number_visible\":true},\"screen\":\"contact_details\"},\"flow_cta\":\"Preencher formulário\",\"flow_id\":\"1615193897066865\",\"flow_message_version\":\"4\",\"flow_token\":\"6BAC8E8A-88BF-4560-8B3C-46C1819AEA45\",\"form_type\":\"template\"}"
+       }
+      ],
+      "messageParamsJSON": ""
+     }
+    }
+   }
+  },
+  "nativeFlowResponseMessage": {
+   "name": "galaxy_message",
+   "version": 3,
+   "paramsJSON": "{\"wa_flow_response_params\":{\"title\":\"Preencher formulário\",\"flow_id\":\"1615193897066865\",\"flow_name\":\"offer_sign_up_ea315f\",\"flow_creation_source\":\"FLEXIBLE_CHECKOUT\",\"response_message\":\"{\\\"screens\\\":[{\\\"title\\\":\\\"\\\",\\\"id\\\":\\\"contact_details\\\",\\\"components\\\":[{\\\"type\\\":\\\"TextInput\\\",\\\"name\\\":\\\"full_name\\\",\\\"label\\\":\\\"\\\",\\\"value\\\":\\\"Hh\\\",\\\"isSensitive\\\":false},{\\\"type\\\":\\\"TextInput\\\",\\\"name\\\":\\\"phone_number\\\",\\\"label\\\":\\\"\\\",\\\"value\\\":\\\"966\\\",\\\"isSensitive\\\":false},{\\\"type\\\":\\\"TextInput\\\",\\\"name\\\":\\\"email\\\",\\\"label\\\":\\\"\\\",\\\"value\\\":\\\"ggg@gnail.com\\\",\\\"isSensitive\\\":false}]}],\\\"version\\\":2}\"}}"
+  }
+ }
+}

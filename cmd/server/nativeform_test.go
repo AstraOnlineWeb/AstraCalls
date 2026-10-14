@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
+
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // Confere a mensagem montada contra a capturada de um envio real do celular.
@@ -36,5 +40,31 @@ func TestBuildNativeFormMessageMatchesPhone(t *testing.T) {
 	}
 	if msg.GetMessageContextInfo().GetMessageSecret() == nil {
 		t.Error("sem messageSecret")
+	}
+}
+
+// Resposta real capturada de um formulário nativo preenchido no celular.
+func TestParseNativeFormResponseReal(t *testing.T) {
+	raw, err := os.ReadFile("testdata/nativeform_response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg waE2E.Message
+	if err := protojson.Unmarshal(raw, &msg); err != nil {
+		t.Fatal(err)
+	}
+	fr, ok := parseNativeFormResponse(msg.GetInteractiveResponseMessage())
+	if !ok {
+		t.Fatal("não reconheceu a resposta")
+	}
+	if fr.FlowID != "1615193897066865" || fr.FlowToken != "6BAC8E8A-88BF-4560-8B3C-46C1819AEA45" || fr.FlowName == "" {
+		t.Fatalf("metadados errados: %+v", fr)
+	}
+	if fr.Answers["full_name"] != "Hh" || fr.Answers["phone_number"] != "966" || fr.Answers["email"] != "ggg@gnail.com" {
+		t.Fatalf("respostas erradas: %v", fr.Answers)
+	}
+	want := "📋 Formulário respondido\nNome: Hh\nTelefone: 966\nE-mail: ggg@gnail.com"
+	if got := messageText(&msg); got != want {
+		t.Fatalf("texto = %q; quer %q", got, want)
 	}
 }

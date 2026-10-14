@@ -791,6 +791,16 @@ func (s *Session) handleEvent(rawEvt any) {
 		default:
 			s.storeMessageEvent(evt)
 			s.dispatchWebhook("message", s.messagePayload(evt))
+			// resposta de formulário nativo do app Business → evento com os campos
+			if ir := evt.Message.GetInteractiveResponseMessage(); ir != nil && !evt.Info.IsFromMe {
+				if fr, ok := parseNativeFormResponse(ir); ok {
+					s.dispatchWebhook("form_response", map[string]any{
+						"source": "native", "from": s.callPeerOut(evt.Info.Sender.String()), "messageId": evt.Info.ID,
+						"flowId": fr.FlowID, "flowName": fr.FlowName, "flowToken": fr.FlowToken,
+						"title": fr.Title, "answers": fr.Answers, "fields": fr.Fields,
+					})
+				}
+			}
 			go s.chatwootPushIncoming(evt)
 			s.maybeMarkRead(ctx, evt)
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -162,4 +163,120 @@ func (s *server) handleSendNativeForm(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.recordOutgoing(jid, resp.ID, resp.Timestamp.UnixMilli(), msg)
 	writeJSON(w, http.StatusOK, map[string]any{"id": resp.ID, "to": jid.String(), "flowToken": token, "timestamp": resp.Timestamp.UnixMilli()})
+}
+
+// =============================================================================
+// Resposta do formulário nativo
+// =============================================================================
+//
+// O cliente responde com interactiveResponseMessage.nativeFlowResponseMessage
+// (name "galaxy_message"). Os campos vêm em paramsJSON → wa_flow_response_params
+// → response_message (outro JSON, em string):
+//
+//	{"screens":[{"id":"contact_details","components":[
+//	   {"type":"TextInput","name":"full_name","label":"","value":"Ana","isSensitive":false}, ...]}],
+//	 "version":2}
+//
+// O flow_token não vem na resposta: sai da mensagem citada (o formulário enviado).
+
+type nativeFormField struct {
+	Screen    string `json:"screen"`
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	Label     string `json:"label"`
+	Value     any    `json:"value"`
+	Sensitive bool   `json:"sensitive,omitempty"`
+}
+
+type nativeFormResponse struct {
+	FlowID    string            `json:"flowId"`
+	FlowName  string            `json:"flowName,omitempty"`
+	FlowToken string            `json:"flowToken,omitempty"`
+	Title     string            `json:"title,omitempty"`
+	Fields    []nativeFormField `json:"fields"`
+	Answers   map[string]any    `json:"answers"`
+}
+
+// parseNativeFormResponse extrai os campos de uma resposta de formulário nativo.
+func parseNativeFormResponse(ir *waE2E.InteractiveResponseMessage) (*nativeFormResponse, bool) {
+	nf := ir.GetNativeFlowResponseMessage()
+	if nf == nil || nf.GetName() != "galaxy_message" {
+		return nil, false
+	}
+	var outer struct {
+		P struct {
+			Title    string `json:"title"`
+			FlowID   string `json:"flow_id"`
+			FlowName string `json:"flow_name"`
+			Response string `json:"response_message"`
+		} `json:"wa_flow_response_params"`
+	}
+	if json.Unmarshal([]byte(nf.GetParamsJSON()), &outer) != nil || outer.P.Response == "" {
+		return nil, false
+	}
+	var inner struct {
+		Screens []struct {
+			ID         string `json:"id"`
+			Components []struct {
+				Type        string `json:"type"`
+				Name        string `json:"name"`
+				Label       string `json:"label"`
+				Value       any    `json:"value"`
+				IsSensitive bool   `json:"isSensitive"`
+			} `json:"components"`
+		} `json:"screens"`
+	}
+	if json.Unmarshal([]byte(outer.P.Response), &inner) != nil {
+		return nil, false
+	}
+	res := &nativeFormResponse{FlowID: outer.P.FlowID, FlowName: outer.P.FlowName, Title: outer.P.Title, Answers: map[string]any{}}
+	for _, sc := range inner.Screens {
+		for _, c := range sc.Components {
+			if c.Name == "" {
+				continue
+			}
+			res.Fields = append(res.Fields, nativeFormField{Screen: sc.ID, Type: c.Type, Name: c.Name, Label: c.Label, Value: c.Value, Sensitive: c.IsSensitive})
+			res.Answers[c.Name] = c.Value
+		}
+	}
+	// flow_token: da mensagem citada (o formulário que enviamos)
+	if q := ir.GetContextInfo().GetQuotedMessage().GetInteractiveMessage().GetNativeFlowMessage(); q != nil {
+		for _, b := range q.GetButtons() {
+			var bp struct {
+				FlowToken string `json:"flow_token"`
+			}
+			if b.GetName() == "galaxy_message" && json.Unmarshal([]byte(b.GetButtonParamsJSON()), &bp) == nil && bp.FlowToken != "" {
+				res.FlowToken = bp.FlowToken
+			}
+		}
+	}
+	return res, true
+}
+
+// nativeFormFieldLabels traduz os nomes dos campos padrão dos modelos do app.
+var nativeFormFieldLabels = map[string]string{
+	"full_name": "Nome", "first_name": "Nome", "last_name": "Sobrenome",
+	"phone_number": "Telefone", "email": "E-mail", "address": "Endereço",
+	"city": "Cidade", "zip_code": "CEP", "date": "Data", "message": "Mensagem",
+}
+
+// summary devolve o texto legível da resposta (Chatwoot, webhook "message").
+func (r *nativeFormResponse) summary() string {
+	var b strings.Builder
+	b.WriteString("📋 Formulário respondido")
+	for _, f := range r.Fields {
+		label := strings.TrimSpace(f.Label)
+		if label == "" {
+			label = nativeFormFieldLabels[f.Name]
+		}
+		if label == "" {
+			label = f.Name
+		}
+		v := fmt.Sprint(f.Value)
+		if f.Value == nil {
+			v = ""
+		}
+		b.WriteString("\n" + label + ": " + v)
+	}
+	return b.String()
 }

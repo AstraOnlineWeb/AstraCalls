@@ -3250,6 +3250,12 @@ paths:
         pelo celular e pegue o `flow_id` no conteúdo da mensagem (GET .../chats/{chat}/messages?raw=true).
         Só funciona com formulário da conta que envia. Para número comum (não Business), use
         `POST .../messages/form` (formulário em página).
+
+
+        A resposta do cliente chega como mensagem (texto "📋 Formulário respondido" com os
+        campos, também no Chatwoot) e no webhook `form_response` com `source:"native"`,
+        `flowId`, `flowName`, `flowToken` (o devolvido aqui no envio), `answers`
+        (`{nome_do_campo: valor}`) e `fields` (tela, tipo, nome, rótulo, valor).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       requestBody:
