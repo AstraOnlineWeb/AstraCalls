@@ -68,3 +68,17 @@ func TestParseNativeFormResponseReal(t *testing.T) {
 		t.Fatalf("texto = %q; quer %q", got, want)
 	}
 }
+
+func TestGalaxyButtonParams(t *testing.T) {
+	msg, token, err := buildNativeFormMessage("123", "Oi", "Cadastrar", "contact_details", "", "", map[string]any{"email_visible": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, body, ok := galaxyButtonParams(msg)
+	if !ok || body != "Oi" || p["flow_id"] != "123" || p["flow_cta"] != "Cadastrar" || p["flow_token"] != token {
+		t.Fatalf("leitura errada: %v %q %v", p, body, ok)
+	}
+	if _, _, ok := galaxyButtonParams(&waE2E.Message{}); ok {
+		t.Fatal("mensagem sem formulário não deveria casar")
+	}
+}

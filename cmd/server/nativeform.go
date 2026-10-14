@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"net/http"
 	"strings"
 
@@ -11,6 +13,7 @@ import (
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -279,4 +282,159 @@ func (r *nativeFormResponse) summary() string {
 		b.WriteString("\n" + label + ": " + v)
 	}
 	return b.String()
+}
+
+// =============================================================================
+// Lista dos formulários nativos da conta
+// =============================================================================
+//
+// O WhatsApp não expõe aos aparelhos vinculados a lista de formulários criados
+// no app (o WhatsApp Web só abre formulários recebidos e pede ao celular a
+// exportação de respostas). A lista sai do NOSSO banco: todo formulário que a
+// conta enviou — pelo celular (cópia sincronizada) ou pela API — fica gravado
+// com o conteúdo completo, e as respostas dos clientes também.
+
+type nativeFormInfo struct {
+	FlowID         string         `json:"flowId"`
+	FlowName       string         `json:"flowName,omitempty"`
+	FormType       string         `json:"formType,omitempty"`
+	Body           string         `json:"body,omitempty"`
+	CTA            string         `json:"cta,omitempty"`
+	Screen         string         `json:"screen,omitempty"`
+	Data           map[string]any `json:"data,omitempty"`
+	Fields         []string       `json:"fields,omitempty"` // nomes vistos nas respostas
+	SentCount      int            `json:"sentCount"`
+	LastSentAt     int64          `json:"lastSentAt,omitempty"`
+	ResponseCount  int            `json:"responseCount"`
+	LastResponseAt int64          `json:"lastResponseAt,omitempty"`
+}
+
+// galaxyButtonParams lê os parâmetros do botão de formulário de uma mensagem.
+func galaxyButtonParams(m *waE2E.Message) (map[string]any, string, bool) {
+	im := m.GetInteractiveMessage()
+	for _, b := range im.GetNativeFlowMessage().GetButtons() {
+		if b.GetName() != "galaxy_message" {
+			continue
+		}
+		var p map[string]any
+		if json.Unmarshal([]byte(b.GetButtonParamsJSON()), &p) == nil {
+			return p, im.GetBody().GetText(), true
+		}
+	}
+	return nil, "", false
+}
+
+// listNativeForms agrega os formulários enviados pela conta e as respostas.
+func (s *sessionStore) listNativeForms(ctx context.Context, sessionID string) ([]*nativeFormInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT from_me, ts, raw FROM messages
+		WHERE session_id = $1 AND raw IS NOT NULL
+		  AND (raw::text LIKE '%galaxy_message%')
+		ORDER BY ts DESC LIMIT 5000`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	forms := map[string]*nativeFormInfo{}
+	fieldSeen := map[string]map[string]bool{}
+	get := func(id string) *nativeFormInfo {
+		f := forms[id]
+		if f == nil {
+			f = &nativeFormInfo{FlowID: id}
+			forms[id] = f
+			fieldSeen[id] = map[string]bool{}
+		}
+		return f
+	}
+	for rows.Next() {
+		var fromMe bool
+		var ts int64
+		var raw []byte
+		if err := rows.Scan(&fromMe, &ts, &raw); err != nil {
+			return nil, err
+		}
+		var m waE2E.Message
+		if (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, &m) != nil {
+			continue
+		}
+		if ir := m.GetInteractiveResponseMessage(); ir != nil {
+			fr, ok := parseNativeFormResponse(ir)
+			if !ok || fr.FlowID == "" || fromMe {
+				continue
+			}
+			f := get(fr.FlowID)
+			f.ResponseCount++
+			if ts > f.LastResponseAt {
+				f.LastResponseAt = ts
+			}
+			if f.FlowName == "" {
+				f.FlowName = fr.FlowName
+			}
+			for _, fl := range fr.Fields {
+				if !fieldSeen[fr.FlowID][fl.Name] {
+					fieldSeen[fr.FlowID][fl.Name] = true
+					f.Fields = append(f.Fields, fl.Name)
+				}
+			}
+			continue
+		}
+		if !fromMe {
+			continue
+		}
+		p, body, ok := galaxyButtonParams(&m)
+		if !ok {
+			continue
+		}
+		id, _ := p["flow_id"].(string)
+		if id == "" {
+			continue
+		}
+		f := get(id)
+		f.SentCount++
+		if ts > f.LastSentAt { // linhas vêm da mais nova p/ a mais antiga: a 1ª define o modelo atual
+			f.LastSentAt = ts
+			f.Body = body
+			f.CTA, _ = p["flow_cta"].(string)
+			f.FormType, _ = p["form_type"].(string)
+			if pl, ok := p["flow_action_payload"].(map[string]any); ok {
+				f.Screen, _ = pl["screen"].(string)
+				f.Data, _ = pl["data"].(map[string]any)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]*nativeFormInfo, 0, len(forms))
+	for _, f := range forms {
+		f.Body = strings.TrimPrefix(f.Body, "‎")
+		f.CTA = strings.TrimPrefix(f.CTA, "‎")
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return max(out[i].LastSentAt, out[i].LastResponseAt) > max(out[j].LastSentAt, out[j].LastResponseAt)
+	})
+	return out, nil
+}
+
+// GET /api/sessions/{sid}/native-forms — formulários nativos que a conta já
+// enviou (pelo celular ou pela API), com o modelo pronto para reenviar.
+func (s *server) handleListNativeForms(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	if s.sessions.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "banco de mensagens desligado"})
+		return
+	}
+	forms, err := s.sessions.store.listNativeForms(r.Context(), sess.id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"forms": forms, "count": len(forms),
+		"hint": "a lista vem dos formulários que a conta já enviou; formulário novo aparece aqui depois do 1º envio pelo celular",
+	})
 }

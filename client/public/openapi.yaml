@@ -3239,6 +3239,45 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
+  /api/sessions/{sid}/native-forms:
+    get:
+      tags: [Mensagens]
+      summary: Lista os formulários nativos da conta (app WhatsApp Business)
+      description: >
+        Formulários nativos que a conta já enviou, pelo celular ou pela API, com o modelo
+        pronto para reenviar via `POST .../messages/native-form` (flowId, body, cta, screen,
+        data) e a contagem de envios e respostas. O WhatsApp não entrega a aparelhos
+        vinculados a lista de formulários criados no app: um formulário novo aparece aqui
+        depois do primeiro envio pelo celular.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: Formulários
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  forms:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        flowId: { type: string }
+                        flowName: { type: string }
+                        formType: { type: string }
+                        body: { type: string }
+                        cta: { type: string }
+                        screen: { type: string }
+                        data: { type: object }
+                        fields: { type: array, items: { type: string } }
+                        sentCount: { type: integer }
+                        lastSentAt: { type: integer }
+                        responseCount: { type: integer }
+                        lastResponseAt: { type: integer }
+
   /api/sessions/{sid}/messages/native-form:
     post:
       tags: [Mensagens]
