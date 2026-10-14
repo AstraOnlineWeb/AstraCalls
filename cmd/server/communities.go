@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -37,7 +40,46 @@ func subGroupJSON(g *types.GroupLinkTarget) map[string]any {
 	}
 }
 
-// POST /api/sessions/{sid}/communities  {name, description?, participants?, approval?}
+// createCommunity monta o <create> no formato do app/WA Web. O CreateGroup do
+// whatsmeow com IsParent manda nós de grupo comum (ephemeral, member_add_mode,
+// membership_approval_mode) e o servidor responde 400 bad-request.
+// Mesmo formato do communityCreate do Baileys (validado em produção por eles).
+func createCommunity(ctx context.Context, cli *whatsmeow.Client, name, description string) (types.JID, error) {
+	if description == "" {
+		description = name
+	}
+	in := cli.DangerousInternals()
+	content := []waBinary.Node{
+		{Tag: "description", Attrs: waBinary.Attrs{"id": in.GenerateRequestID()}, Content: []waBinary.Node{{Tag: "body", Content: []byte(description)}}},
+		{Tag: "parent", Attrs: waBinary.Attrs{"default_membership_approval_mode": "request_required"}},
+		{Tag: "allow_non_admin_sub_group_creation"},
+		{Tag: "create_general_chat"},
+	}
+	resp, err := in.SendIQ(ctx, whatsmeow.DangerousInfoQuery{
+		Namespace: "w:g2",
+		Type:      "set",
+		To:        types.GroupServerJID,
+		Content: []waBinary.Node{{
+			Tag:     "create",
+			Attrs:   waBinary.Attrs{"subject": name},
+			Content: content,
+		}},
+	})
+	if err != nil {
+		return types.JID{}, err
+	}
+	g, ok := resp.GetOptionalChildByTag("group")
+	if !ok {
+		return types.JID{}, fmt.Errorf("resposta sem <group> ao criar comunidade")
+	}
+	id := g.AttrGetter().OptionalString("id")
+	if id == "" {
+		return types.JID{}, fmt.Errorf("resposta sem id ao criar comunidade")
+	}
+	return resolveGroupJID(id)
+}
+
+// POST /api/sessions/{sid}/communities  {name, description?, participants?}
 func (s *server) handleCreateCommunity(w http.ResponseWriter, r *http.Request) {
 	sess := s.pairedSession(w, r.PathValue("sid"))
 	if sess == nil {
@@ -48,7 +90,6 @@ func (s *server) handleCreateCommunity(w http.ResponseWriter, r *http.Request) {
 		Subject      string   `json:"subject"`
 		Description  string   `json:"description"`
 		Participants []string `json:"participants"`
-		Approval     bool     `json:"approval"` // entrada só com aprovação de admin
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
@@ -64,22 +105,34 @@ func (s *server) handleCreateCommunity(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	req := whatsmeow.ReqCreateGroup{Name: name, Participants: parts}
-	req.IsParent = true
-	if b.Approval {
-		req.DefaultMembershipApprovalMode = "request_required"
-	}
-	g, err := sess.client.CreateGroup(r.Context(), req)
+	cid, err := createCommunity(r.Context(), sess.client, name, strings.TrimSpace(b.Description))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if d := strings.TrimSpace(b.Description); d != "" {
-		if err := sess.client.SetGroupTopic(r.Context(), g.JID, "", "", d); err == nil {
-			g.Topic = d
+	out := map[string]any{}
+	if len(parts) > 0 {
+		res, err := sess.client.UpdateGroupParticipants(r.Context(), cid, parts, whatsmeow.ParticipantChangeAdd)
+		if err != nil {
+			out["participantsError"] = err.Error()
+		} else {
+			added := make([]map[string]any, 0, len(res))
+			for _, p := range res {
+				added = append(added, map[string]any{"jid": p.JID.String(), "error": p.Error})
+			}
+			out["participantsResult"] = added
 		}
 	}
-	writeJSON(w, http.StatusOK, sess.groupJSON(g))
+	g, err := sess.client.GetGroupInfo(r.Context(), cid)
+	if err != nil {
+		out["jid"], out["id"], out["name"], out["isCommunity"] = cid.String(), cid.String(), name, true
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	for k, v := range sess.groupJSON(g) {
+		out[k] = v
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // GET /api/sessions/{sid}/communities  → comunidades em que a conta está

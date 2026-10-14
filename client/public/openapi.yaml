@@ -1760,7 +1760,8 @@ paths:
       summary: Cria uma comunidade
       description: |
         O grupo de avisos é criado automaticamente pelo WhatsApp junto com a comunidade.
-        Nome até 25 caracteres. `approval: true` = entrada só com aprovação de admin.
+        Nome até 25 caracteres. `participants` são adicionados logo após a criação
+        (resultado em `participantsResult`). Aprovação de entrada: `PUT /groups/{cid}/settings/approval`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       requestBody:
@@ -1774,7 +1775,6 @@ paths:
                 name: { type: string, example: "Comunidade Astra" }
                 description: { type: string, example: "Avisos e grupos da turma" }
                 participants: { type: array, items: { type: string }, example: ["5561999999999"] }
-                approval: { type: boolean, example: false }
       responses:
         "200": { $ref: "#/components/responses/Group" }
     get:
