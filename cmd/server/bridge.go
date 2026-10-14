@@ -22,32 +22,11 @@ var (
 	browserAPI     *webrtc.API
 )
 
-// detectPublicIP descobre o IP de saída (rota padrão) sem enviar pacotes.
-// Em rede de host num VPS com IP público na interface, isso retorna o IP público.
-func detectPublicIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-	if a, ok := conn.LocalAddr().(*net.UDPAddr); ok {
-		return a.IP.String()
-	}
-	return ""
-}
-
 func getBrowserAPI(log *slog.Logger) *webrtc.API {
 	browserAPIOnce.Do(func() {
-		publicIP := os.Getenv("WACALLS_PUBLIC_IP")
+		// IP fixo ou "auto" (descoberta por interface → STUN → HTTPS; ver publicip.go)
+		publicIP := resolvedPublicIP(log)
 		udpPort, _ := strconv.Atoi(os.Getenv("WACALLS_UDP_PORT"))
-		if publicIP == "auto" {
-			publicIP = detectPublicIP()
-			if publicIP != "" {
-				log.Info("browser webrtc: auto-detected public IP", "ip", publicIP)
-			} else {
-				log.Warn("browser webrtc: could not auto-detect public IP")
-			}
-		}
 		if publicIP == "" || udpPort == 0 {
 			browserAPI = webrtc.NewAPI()
 			return

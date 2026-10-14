@@ -260,7 +260,7 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_PG_URL` | — | URL de manutenção do Postgres (usuário com `CREATEDB`) |
 | `WACALLS_PG_NAMESPACE` | `wacalls` | Prefixo dos bancos (`wacalls_main` + `wacalls_<id>`) |
 | `WACALLS_API_KEY` | — | Se setada, exige `X-API-Key` em `/api/*` (**use em produção**) |
-| `WACALLS_PUBLIC_IP` | — | IP público p/ NAT 1:1 / ICE-TCP / SDP do SIP (`auto` detecta) |
+| `WACALLS_PUBLIC_IP` | — | IP público p/ NAT 1:1 / ICE-TCP / SDP do SIP. `auto` descobre o IP real mesmo dentro do Docker/NAT de nuvem (interface pública → STUN → HTTPS); o IP achado e a fonte aparecem em `GET /api/config` (`publicIp`, `publicIpSource`) |
 | `WACALLS_UDP_PORT` | — | Porta de mídia WebRTC (UDP + ICE-TCP) |
 | `WACALLS_DEFAULT_TRANSPORT` | `auto` | Transporte de áudio do navegador: `auto` (WebRTC → fallback WS), `webrtc`, `websocket` |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` |

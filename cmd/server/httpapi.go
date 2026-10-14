@@ -422,7 +422,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	cfg := map[string]any{
 		"maxCallsPerSession": s.sessions.maxCalls,
 		// Transporte de mídia padrão da chamada (ex.: "websocket") — o widget do
 		// Chatwoot lê isso p/ usar WS por padrão onde o WebRTC (UDP) não fecha.
@@ -433,7 +433,13 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"commit":  commit,
 		// Chamada em grupo (experimental) habilitada nesta instância.
 		"groupCalls": groupCallsEnabled(),
-	})
+	}
+	// IP público anunciado no WebRTC/SIP e de onde veio (env, interface, stun:…,
+	// http:…) — diagnóstico do WACALLS_PUBLIC_IP=auto.
+	if ip, src := publicIPInfo(); ip != "" {
+		cfg["publicIp"], cfg["publicIpSource"] = ip, src
+	}
+	writeJSON(w, http.StatusOK, cfg)
 }
 
 func (s *server) handleSessionList(w http.ResponseWriter, r *http.Request) {
