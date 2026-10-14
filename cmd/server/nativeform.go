@@ -27,7 +27,10 @@ import (
 //	 "form_type":"template","flow_id":"1615193897066865","flow_token":"<UUID>"}
 //
 // Aqui o AstraCalls remonta a mesma mensagem (com flow_token novo) para enviar
-// pela API um formulário que a PRÓPRIA conta criou no app.
+// pela API um formulário que a PRÓPRIA conta criou no app. Validado em 14/10/2026:
+// o formulário abre no celular do cliente. O <biz> "galaxy_message" que o
+// WhatsApp Web usa é recusado com 405 vindo de aparelho vinculado; com o <biz>
+// "mixed" (o mesmo dos botões interativos) ou sem <biz>, entrega e abre.
 
 // bizGalaxyFlowNode é o <biz> que o WhatsApp Web anexa a mensagens de formulário.
 func bizGalaxyFlowNode() waBinary.Node {
@@ -110,8 +113,9 @@ func (s *server) handleSendNativeForm(w http.ResponseWriter, r *http.Request) {
 		Data      map[string]any `json:"data"`
 		FormType  string         `json:"formType"`
 		FlowToken string         `json:"flowToken"`
-		// Biz escolhe o nó <biz> do stanza (experimental): "galaxy" (padrão, igual
-		// ao WhatsApp Web), "mixed" (o dos botões interativos) ou "none".
+		// Biz escolhe o nó <biz> do stanza: "mixed" (padrão, o dos botões
+		// interativos), "none" ou "galaxy" (o do WhatsApp Web — o servidor recusa
+		// com 405 quando vem de aparelho vinculado).
 		Biz string `json:"biz"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.To) == "" || strings.TrimSpace(b.FlowID) == "" {
@@ -139,10 +143,10 @@ func (s *server) handleSendNativeForm(w http.ResponseWriter, r *http.Request) {
 	var nodes []waBinary.Node
 	switch strings.ToLower(strings.TrimSpace(b.Biz)) {
 	case "none":
-	case "mixed":
-		nodes = []waBinary.Node{bizNativeFlowNode()}
-	default:
+	case "galaxy":
 		nodes = []waBinary.Node{bizGalaxyFlowNode()}
+	default:
+		nodes = []waBinary.Node{bizNativeFlowNode()}
 	}
 	extra := whatsmeow.SendRequestExtra{}
 	if len(nodes) > 0 {
