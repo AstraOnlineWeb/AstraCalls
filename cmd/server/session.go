@@ -161,6 +161,7 @@ func (s *Session) selfSentOrigin(id string) (origin string, ok bool) {
 // Usado por TODOS os envios (sendTo/API e sendAndMark/Chatwoot) para que o 9º
 // dígito não quebre nenhum caminho de envio.
 func (s *Session) sendResolvingLID(ctx context.Context, jid types.JID, msg *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	jid = s.canonicalBRTarget(ctx, jid)
 	resp, err := s.client.SendMessage(ctx, jid, msg, extra...)
 	if err != nil && isLIDResolveErr(err) && jid.Server == types.DefaultUserServer {
 		if lid, pn, ok := s.resolveCanonical(ctx, jid); ok {
@@ -183,6 +184,33 @@ func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Mes
 	}
 	s.markSelfSent(resp.ID, selfSentChatwoot)
 	return resp.ID, nil
+}
+
+// canonicalBRTarget corrige o destino de número brasileiro antes do envio. O
+// whatsmeow troca o PN pelo LID do banco local SEM consultar o WhatsApp; se esse
+// mapeamento estiver velho (visto em 14/10/2026: 5561996878959 → LID de outra
+// conta), a mensagem sai sem nenhum aparelho do destinatário e a API ainda
+// responde sucesso. Aqui o número é conferido no WhatsApp (IsOnWhatsApp, em cache
+// por sessão): usa a forma canônica do número (9º dígito) e, se o LID local
+// divergir do real, manda direto para o LID real.
+func (s *Session) canonicalBRTarget(ctx context.Context, jid types.JID) types.JID {
+	u := jid.User
+	if jid.Server != types.DefaultUserServer || !strings.HasPrefix(u, "55") || (len(u) != 12 && len(u) != 13) {
+		return jid
+	}
+	lid, pn, ok := s.resolveCanonical(ctx, jid)
+	if !ok {
+		return jid
+	}
+	if stored, err := s.client.Store.LIDs.GetLIDForPN(ctx, jid.ToNonAD()); err == nil && !stored.IsEmpty() && stored.User != lid.User {
+		s.log.Warn("mapeamento LID local divergente do WhatsApp; enviando ao LID real",
+			"pn", jid.String(), "lid_local", stored.String(), "lid_real", lid.String())
+		return lid
+	}
+	if pn.User != "" && pn.User != u {
+		return pn
+	}
+	return jid
 }
 
 // isLIDResolveErr indica que o whatsmeow não conseguiu resolver o LID do
