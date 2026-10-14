@@ -3291,6 +3291,14 @@ paths:
         `POST .../messages/form` (formulário em página).
 
 
+        O que dá para controlar pela API: o texto da mensagem (`body`), o texto do botão
+        (`cta`) e, nos modelos (`formType: template`), quais campos aparecem via `data`
+        (ex.: `{"full_name_visible":true,"email_visible":true,"phone_number_visible":false}`).
+        As PERGUNTAS não: são as salvas na criação do formulário no app (num formulário gerado
+        por IA, `data.custom_fields` diferentes são ignorados). Para perguntas livres, use
+        `POST .../messages/form`. Os formulários da conta saem de `GET .../native-forms`.
+
+
         A resposta do cliente chega como mensagem (texto "📋 Formulário respondido" com os
         campos, também no Chatwoot) e no webhook `form_response` com `source:"native"`,
         `flowId`, `flowName`, `flowToken` (o devolvido aqui no envio), `answers`

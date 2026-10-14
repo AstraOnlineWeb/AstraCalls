@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -29,6 +29,11 @@ import (
 //	{"flow_action":"navigate","flow_message_version":"4","flow_cta":"Preencher formulário",
 //	 "flow_action_payload":{"data":{...},"screen":"contact_details"},
 //	 "form_type":"template","flow_id":"1615193897066865","flow_token":"<UUID>"}
+//
+// O que a API controla (validado no celular em 14/10/2026): texto da mensagem,
+// texto do botão e, nos modelos (form_type "template"), quais campos aparecem
+// via data (*_visible). Perguntas NÃO: num formulário gerado por IA o app ignora
+// data.custom_fields da mensagem e mostra as perguntas salvas na criação.
 //
 // Aqui o AstraCalls remonta a mesma mensagem (com flow_token novo) para enviar
 // pela API um formulário que a PRÓPRIA conta criou no app. Validado em 14/10/2026:
