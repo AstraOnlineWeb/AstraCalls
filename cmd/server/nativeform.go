@@ -110,6 +110,9 @@ func (s *server) handleSendNativeForm(w http.ResponseWriter, r *http.Request) {
 		Data      map[string]any `json:"data"`
 		FormType  string         `json:"formType"`
 		FlowToken string         `json:"flowToken"`
+		// Biz escolhe o nó <biz> do stanza (experimental): "galaxy" (padrão, igual
+		// ao WhatsApp Web), "mixed" (o dos botões interativos) ou "none".
+		Biz string `json:"biz"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.To) == "" || strings.TrimSpace(b.FlowID) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to e flowId obrigatórios"})
@@ -133,8 +136,18 @@ func (s *server) handleSendNativeForm(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	nodes := []waBinary.Node{bizGalaxyFlowNode()}
-	extra := whatsmeow.SendRequestExtra{AdditionalNodes: &nodes}
+	var nodes []waBinary.Node
+	switch strings.ToLower(strings.TrimSpace(b.Biz)) {
+	case "none":
+	case "mixed":
+		nodes = []waBinary.Node{bizNativeFlowNode()}
+	default:
+		nodes = []waBinary.Node{bizGalaxyFlowNode()}
+	}
+	extra := whatsmeow.SendRequestExtra{}
+	if len(nodes) > 0 {
+		extra.AdditionalNodes = &nodes
+	}
 	if id := messageIDFromRequest(r); id != "" {
 		extra.ID = types.MessageID(id)
 	}
