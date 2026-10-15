@@ -2,6 +2,89 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.1.2 — 2026-10-15
+
+A versão dos **formulários nativos do WhatsApp Business**, das **comunidades** e da
+**supervisão de chamadas**: espiar a ligação em tempo real, ajustar o volume e silenciar o
+toque. Também traz o compartilhamento do histórico do grupo, a descoberta automática do IP
+público e uma revisão completa da API contra a documentação (Swagger), com correções de
+identidade (telefone × LID).
+
+### 📋 Formulários nativos do WhatsApp Business
+
+- `POST /messages/native-form` `{ to, flowId, body?, cta?, data? }`: envia o **formulário
+  nativo** criado no app Business (Ferramentas comerciais → Formulários). Abre dentro do
+  WhatsApp do cliente, sem link externo. Pela API dá para controlar o texto, o botão e
+  quais campos do modelo aparecem.
+- **Resposta capturada:** quando o cliente envia, a resposta vira texto legível
+  ("📋 Formulário respondido — Nome: …") no Chatwoot e dispara o webhook `form_response`
+  com `source: "native"` e todos os campos.
+- `GET /native-forms`: lista os formulários da conta com o **ID** de cada um.
+- **Painel:** botão **Formulários** na sessão abre um pop-up com os formulários, o ID
+  pronto para copiar e um exemplo de envio.
+- Observação: o formulário precisa ser criado pela **mesma conta** que envia, e só
+  aparece na lista depois de enviado uma vez pelo celular (o WhatsApp não sincroniza a
+  lista com aparelhos vinculados). Funciona só em conversa individual.
+
+### 🏘️ Comunidades
+
+- `POST /communities`: cria a comunidade (o grupo de avisos vem junto).
+- `GET /communities` e `GET /communities/{cid}`: lista as comunidades e mostra os grupos
+  de cada uma.
+- `POST /communities/{cid}/groups`: cria um grupo já dentro da comunidade.
+- `POST /communities/{cid}/groups/link` e `/unlink`: vincula ou desvincula grupos
+  existentes (resultado por grupo, conferido com o WhatsApp).
+- `GET /communities/{cid}/participants` e `POST /communities/{cid}/participants/add`:
+  membros de toda a comunidade e adição de novos membros.
+- Os grupos passam a informar `isCommunity`, `parentJid` e `isAnnouncementGroup`.
+
+### 🎧 Supervisão de chamadas
+
+- **Espiar a chamada:** `POST /calls/{id}/spy` (WebRTC só de escuta) ou
+  `GET /calls/{id}/spy/ws` (PCM16). O supervisor ouve os dois lados em tempo real, sem
+  entrar na ligação. Evento SSE `call-action` `kind=spy`.
+- **Volume:** `POST /calls/{id}/volume` `{ level 0..3 | percent }` ajusta o volume do
+  cliente no servidor (vale para WebRTC, WebSocket e SIP).
+- **Silenciar o toque:** `POST /calls/{id}/silence` silencia o toque do pop-up sem
+  recusar a chamada.
+- **Widget do Chatwoot:** botão de silenciar o toque, controle de volume (0–200%) e aviso
+  "Supervisor ouvindo".
+
+### 👥 Grupos
+
+- **Compartilhar histórico com quem entrou:** `POST /groups/{gid}/history/share` ou
+  `shareHistory` no add de participantes. Depende de o WhatsApp liberar o recurso para a
+  conta; quando ele recusa, a API devolve 409 com o motivo.
+- Adicionar, remover, promover, rebaixar e aprovar pedido agora aceitam o número **com
+  ou sem o 9º dígito**.
+
+### 🌐 Rede
+
+- `WACALLS_PUBLIC_IP=auto` passa a descobrir o **IP público real** da VPS (interface,
+  STUN e serviços HTTPS, nessa ordem). Não é mais preciso fixar o IP à mão. O
+  `GET /api/config` mostra `publicIp` e `publicIpSource`.
+
+### 🛠️ Correções
+
+- **Telefone em vez de LID:** `/contacts/check`, `/contacts`, `/contacts/{jid}`,
+  participantes de grupo (`id`, `pn`) e dono do grupo (`owner`) voltam a trazer o
+  telefone. O LID vem num campo próprio (`lid`, `ownerLid`).
+- **Envio que "sumia":** número brasileiro de 13 dígitos com mapeamento antigo saía sem
+  chegar ao destinatário, mesmo com a API dizendo sucesso. Agora o número é conferido no
+  WhatsApp antes do envio.
+- `/contacts/{jid}` com número de 13 dígitos não dá mais 404.
+- `/profile/qr` devolve o link completo (`https://wa.me/qr/...`) e o `code`.
+- `PUT /privacy` e `/privacy/status` respondem no mesmo formato (camelCase) do
+  `GET /privacy`.
+- `POST /chatwoot` não devolve mais o token da conta na resposta.
+- `POST /calls` aceita `duration_ms` como texto (n8n).
+
+### 📚 Documentação (Swagger)
+
+- Revisão completa: **todas as 179 rotas** conferidas contra o código, com schemas de
+  resposta, campos e erros que faltavam. Rotas novas documentadas, incluindo
+  `messages/event`, `calls/{id}/mute`, `calls/{id}/hand` e as de widget.
+
 ## v1.1.1 — 2026-10-09
 
 A versão da **chamada em GRUPO**: ligar para um grupo do WhatsApp (áudio e vídeo) pelo
