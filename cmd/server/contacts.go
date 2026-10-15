@@ -38,9 +38,24 @@ func (s *server) handleCheckNumber(w http.ResponseWriter, r *http.Request) {
 	it := resp[0]
 	out := map[string]any{"query": it.Query, "exists": it.IsIn, "numberExists": it.IsIn}
 	if it.IsIn {
-		out["jid"] = it.JID.String()
-		out["number"] = it.JID.User
-		out["chatId"] = waChatID(it.JID) // alias WAHA
+		// contas migradas para LID: o WhatsApp devolve o @lid em JID e o telefone
+		// em PhoneNumber. jid/number seguem sendo o telefone (contrato da doc);
+		// o LID vai em campo próprio.
+		pn, lid := it.JID.ToNonAD(), types.JID{}
+		if pn.Server == types.HiddenUserServer {
+			lid = pn
+			pn = it.PhoneNumber.ToNonAD()
+		}
+		if pn.IsEmpty() || pn.Server != types.DefaultUserServer {
+			pn = types.NewJID(strings.TrimPrefix(phone, "+"), types.DefaultUserServer)
+		}
+		out["jid"] = pn.String()
+		out["number"] = pn.User
+		out["chatId"] = waChatID(pn) // alias WAHA
+		out["lid"] = ""
+		if !lid.IsEmpty() {
+			out["lid"] = lid.String()
+		}
 	}
 	if it.VerifiedName != nil && it.VerifiedName.Details != nil {
 		out["verifiedName"] = it.VerifiedName.Details.GetVerifiedName()
