@@ -15,6 +15,29 @@ info:
 
     > ⚠️ A API inicia/controla as chamadas (sinalização), mas o **áudio** exige um cliente
     > WebRTC (navegador) com captura de microfone — não é possível só com chamadas HTTP.
+
+    ## Chave de widget
+    Além da chave-mestra, existe uma credencial restrita para o widget do Chatwoot, que só
+    libera `/api/events`, `GET /api/chatwoot/resolve` e as rotas de chamada
+    (`/api/sessions/{sid}/calls...`): a chave estática `WACALLS_WIDGET_KEY`
+    (`GET /api/widget-key`) ou um token efêmero por conta (`POST /api/widget-tokens`, recomendado).
+
+    ## Erros comuns
+    Os erros vêm em JSON no formato `{"error": "mensagem"}` (às vezes com campos extras,
+    ex.: `status`). Valem para todas as rotas e não são repetidos em cada uma:
+
+    - **404** `{"error":"no such session"}` — o `{sid}` não existe (qualquer rota `/api/sessions/{sid}/...`).
+    - **503** `{"error":"not paired"}` — a sessão existe mas não está pareada/conectada
+      (rotas que falam com o WhatsApp: mensagens, contatos, grupos, canais, perfil etc.).
+    - **400** — body/parâmetros inválidos ou faltando.
+    - **401** `{"error":"unauthorized"}` — API key ausente ou errada.
+    - **500/502** — falha do WhatsApp/serviço externo (mensagem em `error`).
+
+    ## Idempotência no envio
+    As rotas de envio de mensagem (`POST .../messages/*`, exceto `pix`) aceitam um id de
+    mensagem escolhido pelo cliente no header **`X-Message-ID`** ou em `?id=`. Reenviar com
+    o mesmo id NÃO duplica a mensagem no WhatsApp. Gere um id em
+    `GET .../messages/new-message-id`.
 servers:
   - url: /
     description: Mesma origem do painel
@@ -49,6 +72,8 @@ tags:
     description: "Disparo em massa (blast) com pacing anti-ban"
   - name: Observabilidade
     description: "Health checks e métricas (liveness/readiness/Prometheus)"
+  - name: Widget
+    description: "Credenciais restritas para o widget do Chatwoot (só com a chave-mestra)"
 
 security:
   - apiKeyAuth: []
@@ -118,16 +143,34 @@ components:
         id: { type: string, example: 6458cca60a17c0cefa71de9da9dc92a2 }
         name: { type: string, example: WhatsApp }
         jid: { type: string, example: "556192264108:13@s.whatsapp.net" }
-        state: { type: string, enum: [open, connecting, close], example: open }
+        lastJid: { type: string, description: "Último número conectado (continua preenchido depois de desconectar)" }
+        state:
+          type: string
+          enum: [connecting, open, logged_out, qr, pairing_code, passkey_request]
+          example: open
+          description: "connecting = conectando; open = conectada; logged_out = deslogada; qr = aguardando leitura do QR; pairing_code = aguardando o código de pareamento; passkey_request = aguardando a asserção WebAuthn"
         paired: { type: boolean, example: true }
         recording: { type: boolean, example: false, description: "Gravação de chamadas ligada para esta conta" }
+        sip_user: { type: string, description: "SIP modelo 1: usuário de registro (CREDENCIAL)" }
+        sip_pass: { type: string, description: "SIP modelo 1: senha de registro (CREDENCIAL)" }
+        sip_url: { type: string, description: "SIP modelo 1: URL/host de registro" }
+        sip_ext_enabled: { type: boolean, description: "SIP modelo 2 (PBX externo) ligado" }
+        sip_ext_host: { type: string }
+        sip_ext_port: { type: integer }
+        sip_ext_user: { type: string, description: "CREDENCIAL" }
+        sip_ext_pass: { type: string, description: "CREDENCIAL" }
+        sip_ext_dest: { type: string }
+        sip_ext_proxy: { type: string }
+        sip_ext_status: { type: string, description: "registering/registered/failed" }
+        sip_ext_error: { type: string }
     StartCallRequest:
       type: object
       required: [phone]
       properties:
         phone: { type: string, example: "5561999999999", description: "DDI+DDD+número" }
-        duration_ms: { type: integer, example: 300000 }
-        record: { type: boolean, example: false }
+        video: { type: boolean, default: false, description: "true = chamada de vídeo" }
+        record: { type: boolean, example: false, description: "Grava esta chamada" }
+        duration_ms: { oneOf: [{ type: integer }, { type: string }], description: "Reservado: aceito (número ou string) mas IGNORADO" }
     MediaBody:
       type: object
       required: [to]
@@ -153,10 +196,12 @@ components:
         jid: { type: string, example: "120363000000000000@g.us" }
         name: { type: string }
         topic: { type: string }
-        owner: { type: string }
+        owner: { type: string, description: "Dono: telefone@s.whatsapp.net quando conhecido; senão o JID original (pode ser @lid)" }
+        ownerPhone: { type: string, description: "Telefone do dono (\"\" se desconhecido)", example: "556196878959" }
+        ownerLid: { type: string, description: "LID do dono quando o grupo é LID (\"\" senão)", example: "60838698344603@lid" }
         announce: { type: boolean, description: "true = só admins enviam" }
         locked: { type: boolean, description: "true = só admins editam info" }
-        created: { type: integer, format: int64 }
+        created: { type: integer, format: int64, description: "Criação do grupo (epoch em milissegundos)" }
         id: { type: string, description: "alias de jid", example: "120363000000000000@g.us" }
         subject: { type: string, description: "alias de name" }
         description: { type: string, description: "alias de topic" }
@@ -165,21 +210,134 @@ components:
         isAnnouncementGroup: { type: boolean, description: "true = grupo de avisos da comunidade" }
         participants:
           type: array
-          items:
-            type: object
-            properties:
-              jid: { type: string, description: "JID de envio (pode ser @lid)", example: "60838698344603@lid" }
-              phone: { type: string, description: "telefone real; vazio se o LID não resolver (nunca os dígitos do LID)", example: "556196878959" }
-              lid: { type: string, description: "LID quando conhecido", example: "60838698344603@lid" }
-              number: { type: string, description: "telefone quando conhecido; senão o user do JID (compat)" }
-              name: { type: string, description: "nome do contato (agenda, pushName ou nome comercial)", example: "Raphael" }
-              pushName: { type: string, description: "nome de perfil do WhatsApp" }
-              isAdmin: { type: boolean }
-              isSuperAdmin: { type: boolean }
-              admin: { type: boolean, description: "isAdmin || isSuperAdmin" }
-              id: { type: string, description: "alias (número@c.us)" }
-              pn: { type: string, description: "alias do número" }
-              role: { type: string, enum: [participant, admin, superadmin] }
+          items: { $ref: "#/components/schemas/GroupParticipant" }
+    GroupParticipant:
+      type: object
+      description: "Participante de grupo/comunidade."
+      properties:
+        jid: { type: string, description: "JID de envio (pode ser @lid)", example: "60838698344603@lid" }
+        phone: { type: string, description: "telefone real; vazio se o LID não resolver (nunca os dígitos do LID)", example: "556196878959" }
+        lid: { type: string, description: "LID quando conhecido", example: "60838698344603@lid" }
+        number: { type: string, description: "telefone quando conhecido; senão o user do JID (compat)" }
+        name: { type: string, description: "nome do contato (agenda, pushName ou nome comercial)", example: "Raphael" }
+        pushName: { type: string, description: "nome de perfil do WhatsApp" }
+        isAdmin: { type: boolean }
+        isSuperAdmin: { type: boolean }
+        admin: { type: boolean, description: "isAdmin || isSuperAdmin" }
+        id: { type: string, description: "alias WAHA: telefone@c.us quando o telefone é conhecido; senão o JID @lid", example: "556196878959@c.us" }
+        pn: { type: string, description: "alias: SÓ o telefone real (\"\" se o LID não resolver)" }
+        role: { type: string, enum: [participant, admin, superadmin] }
+    ParticipantChange:
+      type: object
+      description: "Resultado por participante numa ação de grupo (add/remove/promote/demote)."
+      properties:
+        jid: { type: string, description: "JID devolvido pelo WhatsApp (pode ser @lid)" }
+        phone: { type: string, description: "Telefone real quando o WhatsApp informa/o LID resolve; senão \"\"" }
+        isAdmin: { type: boolean }
+        error: { type: integer, description: "Código de erro do WhatsApp p/ este participante (ex.: 403, 409, 451); ausente = sucesso" }
+    SubGroup:
+      type: object
+      description: "Grupo vinculado a uma comunidade."
+      properties:
+        jid: { type: string, example: "120363000000000001@g.us" }
+        id: { type: string, description: "alias de jid" }
+        name: { type: string }
+        subject: { type: string, description: "alias de name" }
+        isAnnouncementGroup: { type: boolean }
+    CommunityParticipantAdd:
+      type: object
+      properties:
+        jid: { type: string, description: "Pode ser @lid" }
+        phone: { type: string, description: "Telefone real quando o WhatsApp informa; senão \"\"" }
+        ok: { type: boolean }
+        error: { type: integer, description: "Código de erro do WhatsApp (só em quem falhou)" }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    WebhookConfig:
+      type: object
+      properties:
+        webhook: { type: string, description: "URL configurada (\"\" = nenhuma)" }
+        hasSecret: { type: boolean, description: "true se há secret (o valor nunca é devolvido)" }
+        events: { type: array, items: { type: string }, description: "Filtro de eventos (vazio = todos)" }
+    ChatwootConfig:
+      type: object
+      description: "Configuração da integração Chatwoot. `account_token` NUNCA é devolvido (vem vazio)."
+      properties:
+        url: { type: string }
+        account_id: { type: integer }
+        account_token: { type: string, description: "Sempre \"\" nas respostas (omitido por segurança)" }
+        inbox_id: { type: integer }
+        inbox_identifier: { type: string }
+        groups: { type: boolean }
+        channels: { type: boolean }
+        groups_skip_incoming: { type: boolean }
+        sign_msg: { type: boolean }
+        always_online: { type: boolean }
+        read_messages: { type: boolean }
+        mirror_api: { type: boolean }
+        import_history: { type: boolean }
+        import_history_days: { type: integer }
+    CallRecord:
+      type: object
+      properties:
+        sessionId: { type: string }
+        callId: { type: string }
+        owner: { type: string, nullable: true, description: "clientId de quem atendeu/iniciou" }
+        direction: { type: string, enum: [inbound, outbound] }
+        peer: { type: string, description: "JID do interlocutor" }
+        startedAt: { type: integer, format: int64, description: "epoch ms" }
+        status: { type: string, enum: [starting, ringing, connected, ended] }
+        held: { type: boolean }
+        endedAt: { type: integer, format: int64, description: "epoch ms (só no histórico)" }
+        endReason: { type: string }
+    PrivacySettings:
+      type: object
+      description: "Mesmo formato (camelCase) no GET /privacy e no `settings` do PUT."
+      properties:
+        groupAdd: { type: string }
+        lastSeen: { type: string }
+        status: { type: string }
+        profile: { type: string }
+        readReceipts: { type: string }
+        callAdd: { type: string }
+        online: { type: string }
+        messages: { type: string }
+        defense: { type: string, description: "on_standard | off" }
+        stickers: { type: string }
+    Channel:
+      type: object
+      properties:
+        jid: { type: string, example: "120363000000000000@newsletter" }
+        name: { type: string }
+        description: { type: string }
+        subscribers: { type: integer }
+        invite: { type: string, description: "Código de convite" }
+        id: { type: string, description: "alias de jid" }
+        subscribersCount: { type: integer, description: "alias de subscribers" }
+        role: { type: string, description: "Papel da conta no canal (só quando o WhatsApp informa)" }
+        muted: { type: boolean, description: "Só quando o WhatsApp informa" }
+    BlastJob:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        status: { type: string, enum: [pending, running, completed, completed_with_failures, canceled] }
+        total: { type: integer }
+        sent: { type: integer }
+        failed: { type: integer }
+        createdAt: { type: integer, format: int64, description: "epoch ms" }
+    ScheduledMessage:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        sessionId: { type: string }
+        to: { type: string, description: "JID de destino" }
+        sendAt: { type: integer, format: int64, description: "epoch ms" }
+        status: { type: string, example: pending }
+        lastError: { type: string }
+        createdAt: { type: integer, format: int64, description: "epoch ms" }
   requestBodies:
     Participants:
       required: true
@@ -202,8 +360,39 @@ components:
             type: object
             properties:
               id: { type: string, description: "ID da mensagem no WhatsApp" }
-              to: { type: string }
-              timestamp: { type: integer, format: int64 }
+              to: { type: string, description: "JID de destino" }
+              timestamp: { type: integer, format: int64, description: "epoch em milissegundos" }
+    NotFound:
+      description: "Sessão inexistente"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "no such session" }
+    NotPaired:
+      description: "Sessão não pareada/conectada"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "not paired" }
+    BadRequest:
+      description: "Body/parâmetros inválidos"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    OkTrue:
+      description: OK
+      content:
+        application/json:
+          schema: { type: object, properties: { ok: { type: boolean, example: true } } }
+    ParticipantChangeResult:
+      description: "Resultado por participante"
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              ok: { type: boolean }
+              participants: { type: array, items: { $ref: "#/components/schemas/ParticipantChange" } }
     MessageList:
       description: Lista de mensagens
       content:
@@ -220,7 +409,7 @@ components:
                 timestamp: { type: integer, format: int64 }
                 type: { type: string, example: text }
                 body: { type: string }
-                raw: { type: object }
+                raw: { type: object, description: "Só com ?raw=true" }
                 from: { type: string, description: "alias (remetente em número@c.us)" }
                 chatId: { type: string, description: "alias (chat em número@c.us)" }
     Group:
@@ -270,11 +459,80 @@ paths:
                   version: { type: string, example: "develop", description: "Build rodando (canal: develop/vX.Y.Z)" }
                   commit: { type: string, example: "c9ac957", description: "SHA do commit do build" }
                   groupCalls: { type: boolean, example: false, description: "Chamada em grupo (experimental) habilitada nesta instância (WACALLS_GROUP_CALLS)" }
+                  publicIp: { type: string, example: "203.0.113.10", description: "IP público anunciado no WebRTC/SIP (só quando conhecido)" }
+                  publicIpSource: { type: string, example: "stun:stun.l.google.com:19302", description: "De onde veio o publicIp (env, interface, stun:…, http:…)" }
+
+  /api/widget-key:
+    get:
+      tags: [Widget]
+      summary: Chave de widget ESTÁTICA da instância (só com a chave-mestra)
+      description: >
+        Devolve `WACALLS_WIDGET_KEY`, que libera só a superfície do widget (eventos SSE,
+        resolve e rotas de chamada) para a instância inteira. Se a variável não estiver
+        definida, responde 409 apontando para `POST /api/widget-tokens` (recomendado).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  widgetKey: { type: string }
+                  scope: { type: string, example: instance }
+        "409":
+          description: WACALLS_WIDGET_KEY não configurada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: widget_key_not_configured }
+                  message: { type: string }
+
+  /api/widget-tokens:
+    post:
+      tags: [Widget]
+      summary: Gera um token de widget EFÊMERO escopado a uma conta do Chatwoot (só com a chave-mestra)
+      description: >
+        Token HMAC auto-contido que libera só a superfície do widget. No SSE (`/api/events`)
+        ele só recebe eventos da própria conta: o `accountId` da query (ou derivado do
+        clientId `astrachat_accN`) precisa bater com o do token, senão 403
+        `{"error":"account_scope_mismatch"}`. Use o token como `X-API-Key` ou `?apiKey=`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId]
+              properties:
+                accountId: { type: integer, minimum: 1, example: 4 }
+                inboxId: { type: integer, example: 7, description: "Opcional (vai nas claims)" }
+                ttlSeconds: { type: integer, default: 3600, maximum: 86400, description: "Validade (padrão 1h, teto 24h)" }
+      responses:
+        "200":
+          description: Token gerado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, example: "wt1.eyJhY2MiOjR9.xxxx" }
+                  accountId: { type: integer }
+                  inboxId: { type: integer }
+                  expiresAt: { type: string, format: date-time }
+                  scope: { type: string, example: account }
+        "400": { description: "accountId é obrigatório (> 0)" }
 
   /api/sessions:
     get:
       tags: [Sessões]
       summary: Lista as contas
+      description: >
+        ⚠️ Rota administrativa: cada item expõe as credenciais SIP da sessão
+        (`sip_user`/`sip_pass` e `sip_ext_user`/`sip_ext_pass`). Não exponha a chave-mestra
+        a clientes finais.
       parameters: [{ $ref: "#/components/parameters/ClientId" }]
       responses:
         "200":
@@ -426,7 +684,7 @@ paths:
                 video_bitrate: { type: integer, default: 48, description: "QUALIDADE (vídeo): bitrate alvo em kbps (40-1200). Padrão 48 (fluido via relay). OBS: áudio e vídeo DIVIDEM o canal do relay (~56-60k total); subir muito trava." }
                 video_fps: { type: integer, default: 15, description: "QUALIDADE (vídeo): quadros por segundo (8-30)." }
                 numbers: { type: array, items: { type: string }, example: ["5561999998888", "5561999997777"] }
-                concurrency: { type: integer, default: 1, description: "ligações simultâneas (limitado ao máx. da conta)" }
+                concurrency: { type: integer, default: 1, maximum: 16, description: "ligações simultâneas (máx. 16 e limitado ao máx. da conta)" }
                 gap_ms: { type: integer, default: 1500, description: "intervalo (+jitter) entre disparos" }
                 max_ring_ms: { type: integer, default: 45000, description: "timeout de toque → no-answer" }
                 hangup_after_ms: { type: integer, default: 0, description: "corta após N ms (0 = ao fim do áudio)" }
@@ -440,7 +698,9 @@ paths:
                 properties:
                   campaignId: { type: string }
                   total: { type: integer }
-                  seconds: { type: integer }
+                  video: { type: boolean }
+                  seconds: { type: integer, description: "Duração do áudio decodificado (quando há áudio)" }
+                  videoFrames: { type: integer, description: "Frames H264 decodificados (só com video:true)" }
         "400": { description: Áudio/numbers inválido }
 
   /api/sessions/{sid}/broadcast/{cid}:
@@ -466,10 +726,12 @@ paths:
                     items:
                       type: object
                       properties:
-                        number: { type: string }
+                        number: { type: string, description: "Como foi informado" }
+                        to: { type: string, description: "JID efetivamente discado" }
                         callId: { type: string }
-                        status: { type: string, example: completed }
+                        status: { type: string, enum: [queued, ringing, answered, completed, no-answer, failed], example: completed }
                         durationMs: { type: integer }
+                        error: { type: string, description: "Motivo da falha (status=failed)" }
         "404": { description: Campanha não encontrada }
 
   /recordings/{id}:
@@ -495,6 +757,7 @@ paths:
         - { $ref: "#/components/parameters/ClientId" }
       responses:
         "204": { description: Removida }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/sessions/{sid}/pair:
     post:
@@ -506,6 +769,11 @@ paths:
         - { $ref: "#/components/parameters/ClientId" }
       responses:
         "204": { description: Pareamento iniciado }
+        "400":
+          description: "Sessão inexistente ou já pareada"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/sessions/{sid}/logout:
     post:
@@ -516,13 +784,18 @@ paths:
         - { $ref: "#/components/parameters/ClientId" }
       responses:
         "204": { description: Desconectada }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/sessions/{sid}/calls/group:
     post:
       tags: [Chamadas]
       summary: "[EXPERIMENTAL] Inicia uma chamada em GRUPO (áudio + vídeo)"
       description: >
-        Cria uma chamada em grupo ad-hoc (2+ números). EXPERIMENTAL e desligado por
+        Cria uma chamada em grupo. Dois modos: (1) ad-hoc, com `numbers` (mín. 2 números);
+        (2) `groupJid` de um grupo existente — liga para os membros do grupo (exceto a
+        própria conta) e preenche o roster (`GET .../calls/group/roster`). Se `groupJid`
+        vier, `numbers` é ignorado. Máximo de 31 destinos (o excedente é cortado).
+        EXPERIMENTAL e desligado por
         padrão — requer a env `WACALLS_GROUP_CALLS=1` no servidor; sem ela retorna 501.
         O control plane (offer, roster, troca da chave de epoch) e a criptografia estão
         implementados e validados; o acoplamento com o relay de grupo precisa de
@@ -536,14 +809,16 @@ paths:
           application/json:
             schema:
               type: object
-              required: [numbers]
+              description: "Informe `numbers` OU `groupJid`."
               properties:
                 numbers:
                   type: array
                   items: { type: string }
                   minItems: 2
+                  maxItems: 31
                   example: ["5511999990001", "5511999990002"]
-                groupJid: { type: string, example: "1234-5678@g.us" }
+                  description: "Modo ad-hoc: 2 a 31 números"
+                groupJid: { type: string, example: "120363000000000000@g.us", description: "Modo grupo: liga para os membros deste grupo (precisa de 2+ além de você)" }
                 video: { type: boolean, default: false }
       responses:
         "200":
@@ -554,9 +829,12 @@ paths:
                 type: object
                 properties:
                   callId: { type: string }
-                  targets: { type: integer }
+                  targets: { type: integer, description: "Destinos efetivamente chamados (máx. 31)" }
                   video: { type: boolean }
+        "400": { description: "groupJid inválido ou menos de 2 destinos" }
         "501": { description: Chamada em grupo desligada (experimental) }
+        "502": { description: "Falha ao ler o grupo (groupJid) ou ao enviar o offer" }
+        "503": { $ref: "#/components/responses/NotPaired" }
   /api/sessions/{sid}/calls/group/end:
     post:
       tags: [Chamadas]
@@ -565,8 +843,13 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
       responses:
-        "200": { description: Encerrada }
+        "200":
+          description: Encerrada
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ended } } }
         "404": { description: Nenhuma chamada em grupo ativa }
+        "501": { description: Chamada em grupo desligada (experimental) }
   /api/sessions/{sid}/calls/group/ws:
     get:
       tags: [Chamadas]
@@ -598,6 +881,15 @@ paths:
         `[1 byte len(pid)][pid ascii][access unit H264]` (um por participante);
         navegador→gateway: access unit H264 puro (câmera do atendente). Separado do WS
         de áudio. Requer `WACALLS_GROUP_CALLS=1` e uma chamada de grupo ativa.
+
+
+        Frames de TEXTO (JSON) de controle, gateway→navegador:
+        `{"type":"keyframe_request"}` (um participante pediu keyframe da câmera),
+        `{"type":"video_state","pid":"..","state":N}` (participante ligou 1 / desligou 0 ou 6 a câmera),
+        `{"type":"orientation","pid":"..","orientation":N}` (rotação 0..3),
+        `{"type":"participant_left","pid":".."}`.
+        Navegador→gateway: `{"type":"pli","pid":".."}` pede keyframe ao participante (`""` = todos).
+        O socket é fechado quando a chamada de grupo termina.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -612,6 +904,7 @@ paths:
       description: >
         Devolve o mapa número-do-LID → telefone e nome dos participantes da chamada de
         grupo ativa, para o painel rotular os vídeos com número+nome em vez do @lid.
+        Só é preenchido no modo `groupJid` (no modo ad-hoc com `numbers` vem `{}`).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -637,6 +930,7 @@ paths:
       description: >
         Estado global do gateway SIP (sipgo nativo, sem Asterisk): se está ligado, a
         porta, os registros (modelo 1 — PBX registrado aqui) e as chamadas SIP ativas.
+        Com o gateway desligado a resposta é só `{"enabled": false, "message": "SIP Gateway not started"}`.
       responses:
         "200":
           description: OK
@@ -646,6 +940,7 @@ paths:
                 type: object
                 properties:
                   enabled: { type: boolean, example: true }
+                  message: { type: string, description: "Só quando enabled=false" }
                   port: { type: integer, example: 5060 }
                   registrations:
                     type: array
@@ -704,7 +999,11 @@ paths:
                 sip_pass: { type: string }
                 sip_url: { type: string }
       responses:
-        "200": { description: Atualizado }
+        "200":
+          description: Atualizado
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: updated } } }
         "400": { description: Body inválido }
   /api/sessions/{sid}/sip-ext:
     get:
@@ -748,7 +1047,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [host, user]
+              description: "`host` e `user` só são obrigatórios com `enabled: true`."
               properties:
                 enabled: { type: boolean }
                 host: { type: string, example: "pbx.cliente.com" }
@@ -758,11 +1057,15 @@ paths:
                 dest: { type: string, example: "600" }
                 proxy: { type: string, example: "sip.provedor.com:5060", description: "Outbound proxy (host[:porta]); vazio = usa host" }
       responses:
-        "200": { description: Atualizado }
-        "400": { description: "host e usuário são obrigatórios / body inválido" }
+        "200":
+          description: Atualizado
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: updated } } }
+        "400": { description: "host e usuário são obrigatórios (com enabled=true) / body inválido" }
   /api/sessions/{sid}/restriction-status:
     get:
-      tags: [Sessão]
+      tags: [Sessões]
       summary: Estado de restrição/shadow-ban (time-lock 463) do número
       description: >
         Informa se o WhatsApp aplicou uma restrição de alcance (time-lock / 463)
@@ -844,29 +1147,58 @@ paths:
                   call:
                     type: object
                     properties: { callId: { type: string } }
+        "400": { description: phone required }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { description: "max concurrent calls (limite maxCallsPerSession atingido)" }
         "503": { description: Conta não pareada }
 
   /api/sessions/{sid}/calls/{id}/accept:
     post:
       tags: [Chamadas]
       summary: Atende uma chamada recebida
+      description: Reivindica a chamada para o `X-Client-Id` (evita dois atendentes pegarem a mesma) e atende no WhatsApp.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
         - { $ref: "#/components/parameters/ClientId" }
       responses:
-        "200": { description: Atendida }
+        "200":
+          description: Atendida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  call: { type: object, properties: { callId: { type: string } } }
+        "404": { description: "no such call" }
+        "409": { description: "claimed by another client (outro atendente já pegou)" }
+        "500": { description: Falha ao atender no WhatsApp }
 
   /api/sessions/{sid}/calls/{id}/reject:
     post:
       tags: [Chamadas]
       summary: Rejeita uma chamada recebida
+      description: "O id é o mesmo do evento `incoming`/`call-list`. Envia o <reject> ao WhatsApp."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
         - { $ref: "#/components/parameters/ClientId" }
       responses:
-        "200": { description: Rejeitada }
+        "200":
+          description: Rejeitada
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok } } }
+        "404":
+          description: "Chamada inexistente — recusa NÃO aplicada"
+          content:
+            application/json:
+              schema: { type: object, properties: { error: { type: string, example: "no such call" }, status: { type: string, example: not_applied } } }
+        "409":
+          description: "Falha ao enviar o reject — recusa NÃO aplicada"
+          content:
+            application/json:
+              schema: { type: object, properties: { error: { type: string }, status: { type: string, example: not_applied } } }
 
   /api/sessions/{sid}/calls/{id}/video/{action}:
     post:
@@ -897,17 +1229,69 @@ paths:
     delete:
       tags: [Chamadas]
       summary: Encerra a chamada
+      description: Idempotente — responde 204 mesmo se a chamada não existir (ou já tiver terminado).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
         - { $ref: "#/components/parameters/ClientId" }
       responses:
         "204": { description: Encerrada }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/sessions/{sid}/calls/{id}/mute:
+    post:
+      tags: [Chamadas]
+      summary: Anuncia ao interlocutor o estado do nosso microfone (mute)
+      description: >
+        Envia o `<mute_v2>` ao WhatsApp para o outro lado ver o indicador de microfone
+        desligado. Não corta o áudio por si só. O mute do PEER chega por SSE como
+        `{"type":"call-action","kind":"peer-mute","state":true|false}`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { muted: { type: boolean, example: true } } }
+      responses:
+        "200":
+          description: Anunciado
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok }, muted: { type: boolean } } }
+        "404": { description: "no such call" }
+        "409": { description: Não foi possível anunciar (estado da chamada) }
+
+  /api/sessions/{sid}/calls/{id}/hand:
+    post:
+      tags: [Chamadas]
+      summary: Levanta/abaixa a mão na chamada
+      description: >
+        Anuncia ao interlocutor a mão levantada/baixada. A mão do PEER chega por SSE como
+        `{"type":"call-action","kind":"peer-hand","state":true|false}`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { raised: { type: boolean, example: true } } }
+      responses:
+        "200":
+          description: Anunciado
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok }, raised: { type: boolean } } }
+        "404": { description: "no such call" }
+        "409": { description: Não foi possível anunciar (estado da chamada) }
 
   /api/sessions/{sid}/messages/text:
     post:
       tags: [Mensagens]
       summary: Envia uma mensagem de texto
+      description: "Idempotente com `X-Message-ID`/`?id=` (ver introdução)."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -1033,7 +1417,8 @@ paths:
                 - $ref: "#/components/schemas/MediaBody"
                 - type: object
                   properties:
-                    filename: { type: string, example: "contrato.pdf" }
+                    filename: { type: string, example: "contrato.pdf", description: "Sem mimetype, o tipo é deduzido pela extensão" }
+                    caption: { type: string, description: "Legenda (vai em documentWithCaptionMessage)" }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
@@ -1049,9 +1434,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties: { webhook: { type: string } }
+              schema: { $ref: "#/components/schemas/WebhookConfig" }
     post:
       tags: [Webhook]
       summary: Define a URL de webhook (recebe os eventos da sessão)
@@ -1071,7 +1454,7 @@ paths:
               type: object
               required: [url]
               properties:
-                url: { type: string, example: "https://meu-sistema/webhook/wacalls" }
+                url: { type: string, example: "https://meu-sistema/webhook/wacalls", description: "Vazio = remove o webhook (igual ao DELETE)" }
                 secret: { type: string, description: "Opcional. Assina cada entrega com HMAC-SHA256 no header X-Webhook-Signature: sha256=<hex>." }
                 events: { type: array, items: { type: string }, description: "Opcional. Só entrega estes tipos de evento (vazio = todos).", example: ["message", "receipt"] }
       responses:
@@ -1079,9 +1462,8 @@ paths:
           description: Salvo
           content:
             application/json:
-              schema:
-                type: object
-                properties: { webhook: { type: string } }
+              schema: { $ref: "#/components/schemas/WebhookConfig" }
+        "400": { description: Body inválido }
     delete:
       tags: [Webhook]
       summary: Remove o webhook da sessão
@@ -1106,8 +1488,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  enabled: { type: boolean }
-                  chatwoot: { type: object }
+                  enabled: { type: boolean, description: "true = configuração válida/ativa" }
+                  chatwoot: { $ref: "#/components/schemas/ChatwootConfig" }
     post:
       tags: [Chatwoot]
       summary: Conecta a sessão a uma inbox do Chatwoot (canal API)
@@ -1132,7 +1514,7 @@ paths:
               properties:
                 url: { type: string, example: "https://chatwoot.seudominio.com" }
                 account_id: { type: integer, example: 1 }
-                account_token: { type: string, example: "xxxxxxxxxxxxxxxx" }
+                account_token: { type: string, example: "xxxxxxxxxxxxxxxx", description: "Vazio/ausente = mantém o token atual (útil ao editar)" }
                 inbox_id: { type: integer, example: 5 }
                 inbox_identifier: { type: string, example: "abcd1234" }
                 groups: { type: boolean, default: false, description: "Abrir conversas de GRUPOS no Chatwoot. Cada mensagem é prefixada com o autor (*Nome*:) e leva em content_attributes: wa_participant (JID de envio), wa_participant_phone (telefone real ou vazio), wa_participant_lid, wa_participant_name. No envio pelo webhook, @<número> no texto vira menção." }
@@ -1145,7 +1527,14 @@ paths:
                 import_history: { type: boolean, default: false, description: "Ao conectar a conta, importa para o Chatwoot o histórico de conversas 1:1 que o WhatsApp envia (HistorySync), reconstruindo a timeline com a direção real (recebidas/enviadas) e a data original no texto. Não reenvia nada ao contato (as enviadas levam source_id, que bloqueia o reenvio). ATENÇÃO: o histórico só chega ao PAREAR o dispositivo — ative antes de conectar a conta" }
                 import_history_days: { type: integer, default: 30, description: "Janela do histórico a importar, em dias (teto de 365). Também há um teto de 500 mensagens por conversa" }
       responses:
-        "200": { description: Conectado }
+        "200":
+          description: Conectado (account_token omitido na resposta)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chatwoot: { $ref: "#/components/schemas/ChatwootConfig" }
         "400": { description: Campos obrigatórios faltando }
     delete:
       tags: [Chatwoot]
@@ -1206,6 +1595,9 @@ paths:
       description: |
         Configure este endereço como **webhook da inbox** no Chatwoot. Ao receber
         `message_created`/outgoing, envia a mensagem (texto e anexos) pelo WhatsApp.
+        Rota liberada de API key (é chamada pelo próprio Chatwoot). Eventos que não
+        precisam ser reenviados respondem 200 sem corpo.
+      security: []
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       requestBody:
@@ -1214,7 +1606,18 @@ paths:
           application/json:
             schema: { type: object, description: "Payload do webhook do Chatwoot" }
       responses:
-        "200": { description: Processado }
+        "200":
+          description: Processado (ou ignorado)
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok } } }
+        "400": { description: Payload inválido }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: Falha ao enviar ao WhatsApp
+          content:
+            application/json:
+              schema: { type: object, properties: { error: { type: string }, status: { type: string, example: not_sent } } }
 
   /api/sessions/{sid}/chatwoot/import-history:
     post:
@@ -1245,7 +1648,12 @@ paths:
           description: Pedido(s) enviado(s)
           content:
             application/json:
-              schema: { type: object, properties: { requested: { type: integer }, count_per_chat: { type: integer }, note: { type: string } } }
+              schema:
+                type: object
+                properties:
+                  requested: { type: integer, description: "Conversas pedidas. 0 = nenhuma mensagem conhecida para ancorar (ver note)" }
+                  count_per_chat: { type: integer, description: "Ausente quando requested=0" }
+                  note: { type: string }
         "400": { description: "Chatwoot não configurado / chat inválido" }
         "503": { description: "Sessão não conectada" }
 
@@ -1253,6 +1661,7 @@ paths:
     get:
       tags: [Eventos & Histórico]
       summary: Histórico de chamadas da conta (últimas 50)
+      description: Histórico em memória (zera ao reiniciar o servidor), mais recentes primeiro.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -1266,26 +1675,57 @@ paths:
                 properties:
                   rows:
                     type: array
-                    items: { type: object }
+                    items: { $ref: "#/components/schemas/CallRecord" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/events:
     get:
       tags: [Eventos & Histórico]
       summary: Stream de eventos em tempo real (SSE)
       description: |
-        Server-Sent Events. Tipos: `session-list`, `session-qr`, `auth-state`,
-        `call-list`, `call-status`, `call-ended`, `incoming`, `incoming-claimed`.
+        Server-Sent Events. Cada evento chega numa linha `data: {json}` (não há linha
+        `event:`); o tipo vai no campo JSON **`type`**:
+
+        - `session-list` `{sessions:[Session]}` — lista de contas (também enviado ao conectar).
+        - `session-qr` `{sessionId, qr}` — QR de pareamento.
+        - `auth-state` `{sessionId, state, paired, qr, code?, passkey?}` — estado do pareamento
+          (`code` = código de 8 caracteres; `passkey` = desafio WebAuthn com state=passkey_request).
+        - `call-list` `{calls:[CallRecord]}` — chamadas ativas.
+        - `call-status` `{sessionId, id, owner, status, peer, startedAt, held}`.
+        - `call-ended` `{sessionId, id, owner, reason, endedAt}`.
+        - `incoming` `{sessionId, id, peer, phone, name, video, offeredAt}` — chamada recebida
+          (`phone`/`name` resolvidos; `peer` pode ser @lid).
+        - `incoming-claimed` `{sessionId, id, owner}` — alguém atendeu.
+        - `video-state` `{sessionId, id, kind, peerVideo, localVideo, upgradeIncoming, upgradeOutgoing, peerOrientation}`
+          — negociação de vídeo (kind `upgrade-request` | `state`).
+        - `call-action` `{sessionId, id, kind, state, count?}` — kind `peer-mute`, `peer-hand`,
+          `spy` (com `count` de ouvintes) ou `silence`.
+        - `call-volume` `{sessionId, id, level}`.
+        - `call-transfer-offer` `{sessionId, id, peer, from, offeredAt}` — chamada transferida
+          aguardando pickup (só o alvo recebe, se houver).
+        - `call-transfer-claimed` `{sessionId, id, owner}`.
+
+        Escopo por conta: com `accountId` (ou `X-Client-Id`/`clientId` no padrão
+        `astrachat_accN`, de onde a conta N é derivada) só chegam os eventos de chamada das
+        sessões daquela conta do Chatwoot. Sem conta = painel admin (recebe tudo). Com token
+        de widget, a conta pedida precisa bater com a do token (senão 403).
       parameters:
         - name: clientId
           in: query
           schema: { type: string }
-          description: Identificador do cliente.
+          description: "Identificador do cliente (alternativa ao header X-Client-Id). `astrachat_accN` deriva a conta N."
+        - name: accountId
+          in: query
+          schema: { type: integer }
+          description: Conta do Chatwoot para escopar os eventos de chamada.
+        - { $ref: "#/components/parameters/ClientId" }
       responses:
         "200":
           description: Stream text/event-stream
           content:
             text/event-stream:
-              schema: { type: string }
+              schema: { type: string, example: "data: {\"type\":\"incoming\",\"sessionId\":\"abc\",\"id\":\"CALLID\",\"phone\":\"5561999999999\"}" }
+        "403": { description: "account_scope_mismatch (token de widget de outra conta)" }
 
   # ===================== Mensagens (ações) =====================
   /api/sessions/{sid}/messages/location:
@@ -1364,7 +1804,7 @@ paths:
       description: |
         Vota numa enquete que chegou nesta sessão. Use o `pollMessageId` (o ID da
         mensagem da enquete — vem no webhook como `id` e no Chatwoot como
-        `_PID: ..._`). Envie `selectedNames` vazio para retirar o voto. A enquete
+        `_PID: ..._`). Envie `selectedNames` vazio ou omita o campo para retirar o voto. A enquete
         precisa ter sido recebida por esta sessão (o segredo fica guardado).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
@@ -1374,11 +1814,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [pollMessageId, selectedNames]
+              required: [pollMessageId]
               properties:
                 to: { type: string, example: "5561999999999", description: "opcional; padrão = o chat da enquete" }
                 pollMessageId: { type: string, example: "3EB0C767D...", description: "ID da mensagem da enquete" }
-                selectedNames: { type: array, items: { type: string }, example: ["Tarde"] }
+                selectedNames: { type: array, items: { type: string }, example: ["Tarde"], description: "Opções escolhidas (pelo texto). Vazio/ausente = retira o voto" }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
         "404": { description: Enquete não encontrada pelo ID }
@@ -1403,10 +1843,48 @@ paths:
               properties:
                 to: { type: string, example: "5561999999999", description: "opcional; padrão = o chat do evento" }
                 eventMessageId: { type: string, description: "ID da mensagem do evento" }
-                response: { type: string, enum: [going, not_going, maybe], example: going }
+                response:
+                  type: string
+                  example: going
+                  description: >-
+                    going | not_going | maybe. Aliases aceitos (sem diferenciar maiúsculas):
+                    going = vai, yes, sim, 1; not_going = "not going", nao_vai, "não vai", "nao vai", no, 2;
+                    maybe = talvez, 3.
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
+        "400": { description: "eventMessageId obrigatório / response inválido" }
         "404": { description: Evento não encontrado pelo ID }
+
+  /api/sessions/{sid}/messages/event:
+    post:
+      tags: [Mensagens]
+      summary: Cria/envia um EVENTO (convite com data, local e link)
+      description: >
+        Envia uma EventMessage do WhatsApp. As respostas (RSVP) dos convidados chegam no
+        webhook; para responder a um evento recebido use `POST .../messages/event-response`.
+        Se a conta/WhatsApp não suportar o tipo, o erro do envio é devolvido (500).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, name, startTime]
+              properties:
+                to: { type: string, example: "120363000000000000@g.us" }
+                name: { type: string, example: "Reunião mensal" }
+                description: { type: string }
+                startTime: { type: integer, format: int64, example: 1767225600, description: "Início em epoch SEGUNDOS (obrigatório, > 0)" }
+                endTime: { type: integer, format: int64, description: "Fim em epoch segundos (opcional)" }
+                location: { type: string, description: "Nome/endereço do local (opcional)" }
+                joinLink: { type: string, description: "Link da chamada (opcional)" }
+                isCanceled: { type: boolean, default: false, description: "Marca o evento como cancelado" }
+      responses:
+        "200": { $ref: "#/components/responses/SendOK" }
+        "400": { description: "name and startTime (epoch seconds) required" }
+        "503": { $ref: "#/components/responses/NotPaired" }
 
   /api/sessions/{sid}/messages/link-preview:
     post:
@@ -1517,13 +1995,23 @@ paths:
             schema:
               type: object
               required: [to]
+              description: "Informe `messageId` e/ou `messageIds` (ao menos um id)."
               properties:
                 to: { type: string, example: "5561999999999" }
                 messageId: { type: string }
                 messageIds: { type: array, items: { type: string } }
-                participant: { type: string }
+                participant: { type: string, description: "Em grupo: JID de quem enviou" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  ids: { type: array, items: { type: string }, description: "IDs marcados como lidos" }
+        "400": { description: "messageId(s) required" }
 
   /api/sessions/{sid}/messages/typing:
     post:
@@ -1543,7 +2031,7 @@ paths:
                 typing: { type: boolean, example: true, description: "true = digitando; false = parou" }
                 audio: { type: boolean, description: "true = mostra 'gravando áudio'" }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/messages/{id}/media:
     get:
@@ -1566,6 +2054,7 @@ paths:
             application/octet-stream:
               schema: { type: string, format: binary }
         "404": { description: Mensagem não encontrada ou sem mídia }
+        "502": { description: "Falha ao baixar/decifrar a mídia no WhatsApp (ex.: mídia expirada)" }
 
   # ===================== Contatos =====================
   /api/sessions/{sid}/contacts/check:
@@ -1599,6 +2088,10 @@ paths:
     get:
       tags: [Contatos]
       summary: Lista os contatos conhecidos
+      description: >
+        Contatos guardados como `@lid` são mapeados para o telefone e deduplicados (um
+        item por pessoa). `jid`/`number`/`id` usam o telefone quando conhecido; só caem no
+        `@lid` quando não há telefone (compat). `phone` traz SÓ telefone real.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       responses:
@@ -1611,17 +2104,25 @@ paths:
                 items:
                   type: object
                   properties:
-                    jid: { type: string }
-                    number: { type: string }
+                    jid: { type: string, example: "556192264108@s.whatsapp.net", description: "telefone@s.whatsapp.net; @lid só quando não há telefone" }
+                    number: { type: string, example: "556192264108", description: "telefone; dígitos do LID só quando não há telefone (compat)" }
+                    phone: { type: string, description: "SÓ telefone real (\"\" se o LID não resolver)" }
+                    lid: { type: string, description: "LID quando conhecido (\"\" senão)", example: "53863285534946@lid" }
                     fullName: { type: string }
                     firstName: { type: string }
                     pushName: { type: string }
                     businessName: { type: string }
+                    id: { type: string, description: "alias WAHA (telefone@c.us; @lid quando não há telefone)" }
+                    name: { type: string, description: "alias: fullName → pushName → firstName → businessName" }
+                    pushname: { type: string, description: "alias de pushName" }
 
   /api/sessions/{sid}/contacts/{jid}:
     get:
       tags: [Contatos]
       summary: Info de um contato (status/About, foto, lid)
+      description: >
+        Aceita número (com ou sem o 9º dígito BR) ou `@lid`. `jid`/`number` saem no
+        telefone canônico (como o WhatsApp registrou) quando conhecido.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Jid" }
@@ -1633,11 +2134,14 @@ paths:
               schema:
                 type: object
                 properties:
-                  jid: { type: string }
-                  number: { type: string }
-                  status: { type: string }
+                  jid: { type: string, example: "556192264108@s.whatsapp.net", description: "telefone canônico; o JID informado se não houver telefone" }
+                  number: { type: string, example: "556192264108" }
+                  phone: { type: string, description: "SÓ telefone real (\"\" se não resolver)" }
+                  lid: { type: string, description: "LID quando conhecido (\"\" senão)" }
+                  status: { type: string, description: "Recado/About" }
                   pictureId: { type: string }
-                  lid: { type: string }
+                  id: { type: string, description: "alias WAHA (número@c.us)" }
+        "404": { description: "not found" }
 
   /api/sessions/{sid}/contacts/{jid}/picture:
     get:
@@ -1654,7 +2158,12 @@ paths:
             application/json:
               schema:
                 type: object
-                properties: { url: { type: string }, id: { type: string }, type: { type: string } }
+                description: 'Sem foto (ou privada): `{"url":"","profilePictureURL":""}`.'
+                properties:
+                  url: { type: string }
+                  id: { type: string }
+                  type: { type: string, example: image }
+                  profilePictureURL: { type: string, description: "alias WAHA de url" }
 
   /api/sessions/{sid}/contacts/{jid}/block:
     post:
@@ -1664,7 +2173,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Jid" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, blocked: { type: boolean, example: true } } }
 
   /api/sessions/{sid}/contacts/{jid}/unblock:
     post:
@@ -1674,7 +2187,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Jid" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, blocked: { type: boolean, example: false } } }
 
   /api/sessions/{sid}/blocklist:
     get:
@@ -1689,7 +2206,7 @@ paths:
             application/json:
               schema:
                 type: object
-                properties: { blocked: { type: array, items: { type: string } } }
+                properties: { blocked: { type: array, items: { type: string }, description: "JIDs bloqueados (podem vir como @lid)" } }
 
   # ===================== Grupos =====================
   /api/sessions/{sid}/groups:
@@ -1776,10 +2293,21 @@ paths:
               required: [name]
               properties:
                 name: { type: string, example: "Comunidade Astra" }
+                subject: { type: string, description: "alias de name" }
                 description: { type: string, example: "Avisos e grupos da turma" }
                 participants: { type: array, items: { type: string }, example: ["5561999999999"] }
       responses:
-        "200": { $ref: "#/components/responses/Group" }
+        "200":
+          description: Comunidade criada (GroupInfo + resultado dos participantes)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/GroupInfo"
+                  - type: object
+                    properties:
+                      participantsResult: { type: array, items: { $ref: "#/components/schemas/CommunityParticipantAdd" }, description: "Só quando participants foi enviado e a adição rodou" }
+                      participantsError: { type: string, description: "Erro ao adicionar os participantes (a comunidade foi criada mesmo assim)" }
     get:
       tags: [Comunidades]
       summary: Lista as comunidades em que a conta está
@@ -1796,7 +2324,16 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Cid" }
       responses:
-        "200": { $ref: "#/components/responses/Group" }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/GroupInfo"
+                  - type: object
+                    properties:
+                      groups: { type: array, items: { $ref: "#/components/schemas/SubGroup" } }
         "400": { description: "O ID não é de uma comunidade" }
 
   /api/sessions/{sid}/communities/{cid}/groups:
@@ -1813,12 +2350,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items:
-                  type: object
-                  properties:
-                    jid: { type: string, example: "120363000000000001@g.us" }
-                    name: { type: string }
-                    isAnnouncementGroup: { type: boolean }
+                items: { $ref: "#/components/schemas/SubGroup" }
     post:
       tags: [Comunidades]
       summary: Cria um grupo novo já dentro da comunidade
@@ -1834,6 +2366,7 @@ paths:
               required: [name]
               properties:
                 name: { type: string, example: "Turma 1" }
+                subject: { type: string, description: "alias de name" }
                 participants: { type: array, items: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/Group" }
@@ -1875,6 +2408,9 @@ paths:
     get:
       tags: [Comunidades]
       summary: Membros de todos os grupos da comunidade
+      description: >
+        A API do WhatsApp só devolve os JIDs dos membros, então `isAdmin`/`isSuperAdmin`/`admin`
+        vêm sempre `false` e `role` sempre `participant` aqui (consulte o grupo para saber os admins).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Cid" }
@@ -1885,7 +2421,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/GroupInfo/properties/participants/items" }
+                items: { $ref: "#/components/schemas/GroupParticipant" }
 
   /api/sessions/{sid}/communities/{cid}/participants/add:
     post:
@@ -1905,7 +2441,15 @@ paths:
               properties:
                 participants: { type: array, items: { type: string }, example: ["5561999999999"] }
       responses:
-        "200": { description: "participants[] com ok/error por número" }
+        "200":
+          description: Resultado por número
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  participants: { type: array, items: { $ref: "#/components/schemas/CommunityParticipantAdd" } }
 
   /api/sessions/{sid}/groups/{gid}/leave:
     post:
@@ -1915,7 +2459,7 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Gid" }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/groups/{gid}/participants:
     get:
@@ -1923,7 +2467,8 @@ paths:
       summary: Lista os participantes
       description: |
         Cada item traz `jid` (de envio, pode ser `@lid`), `phone` (telefone real ou vazio),
-        `lid`, `name`/`pushName` e `admin`. Para mencionar alguém no envio, use `phone`
+        `lid`, `name`/`pushName` e `admin`; `id` é telefone@c.us quando o telefone é conhecido
+        (senão o @lid) e `pn` é só o telefone real. Para mencionar alguém no envio, use `phone`
         (ou os dígitos do `lid` quando não há telefone) como `@<dígitos>` no texto.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
@@ -1935,7 +2480,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/Group/properties/participants/items" }
+                items: { $ref: "#/components/schemas/GroupParticipant" }
 
   /api/sessions/{sid}/groups/{gid}/participants/add:
     post:
@@ -1946,6 +2491,12 @@ paths:
         adicionado (recurso "histórico do grupo" do WhatsApp). `true` = 50 mensagens, ou
         um número (até 100). O resultado vem em `history` (ou o erro em `historyError`,
         sem desfazer a adição). Ver `POST .../history/share`.
+
+
+        Em todas as ações (add/remove/promote/demote) os números são canonicalizados
+        (com/sem o 9º dígito BR, como o WhatsApp registrou) antes do envio. A resposta traz
+        o resultado por participante: `jid` pode ser `@lid`; `phone` é o telefone real quando
+        o WhatsApp informa; `error` (código numérico) só aparece em quem falhou.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Gid" }
@@ -1960,7 +2511,17 @@ paths:
                 participants: { type: array, items: { type: string }, example: ["5511999999999"] }
                 shareHistory: { oneOf: [{ type: boolean }, { type: integer, minimum: 1, maximum: 100 }], example: 50 }
       responses:
-        "200": { description: OK }
+        "200":
+          description: Resultado por participante
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  participants: { type: array, items: { $ref: "#/components/schemas/ParticipantChange" } }
+                  history: { type: object, description: "Resultado do compartilhamento de histórico (mesmo formato de `result` em POST .../history/share)" }
+                  historyError: { type: string, description: "Erro do compartilhamento (a adição NÃO é desfeita)" }
 
   /api/sessions/{sid}/groups/{gid}/history/share:
     post:
@@ -2007,40 +2568,77 @@ paths:
                       nonHistoryReceivers: { type: array, items: { type: string } }
                       devices: { type: integer, description: "Aparelhos que receberam o pacote" }
         "400": { description: "Destinatário fora do grupo, própria conta ou sem mensagens salvas" }
+        "409":
+          description: "WhatsApp recusou o pacote (ex.: 479 — conta sem o flag group_history_send; ver GET .../abprops?code=15313)"
+          content:
+            application/json:
+              schema: { type: object, properties: { error: { type: string }, ack_error: { type: string, example: "479" } } }
         "502": { description: Falha no upload ou envio ao WhatsApp }
+
+  /api/sessions/{sid}/abprops:
+    get:
+      tags: [Sessões]
+      summary: Flags de experimento (AB props) que o WhatsApp liberou para a conta
+      description: >
+        Diagnóstico: consulta os AB props da conta (`<iq xmlns="abt">`). Ex.: `code=15313`
+        é o `group_history_send`, necessário para compartilhar histórico de grupo (sem ele
+        o WhatsApp recusa com 479). Sem `code`, devolve o mapa inteiro em `props`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: code, in: query, required: false, schema: { type: string }, example: "15313", description: "config_code de um flag específico" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer, description: "Quantidade de flags recebidos" }
+                  groupHistorySend: { type: boolean, description: "Flag 15313 (group_history_send) ligado" }
+                  code: { type: string, description: "Só com ?code=" }
+                  value: { type: string, description: "Valor do flag (só com ?code=; \"\" se ausente)" }
+                  present: { type: boolean, description: "Só com ?code=: o flag veio na resposta" }
+                  props: { type: object, additionalProperties: { type: string }, description: "Sem ?code=: mapa config_code → valor" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { description: Falha na consulta ao WhatsApp }
+        "503": { $ref: "#/components/responses/NotPaired" }
 
   /api/sessions/{sid}/groups/{gid}/participants/remove:
     post:
       tags: [Grupos]
       summary: Remove participantes
+      description: "Números canonicalizados (9º dígito). Resultado por participante, como em participants/add."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Gid" }
       requestBody: { $ref: "#/components/requestBodies/Participants" }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/ParticipantChangeResult" }
 
   /api/sessions/{sid}/groups/{gid}/participants/promote:
     post:
       tags: [Grupos]
       summary: Promove participantes a admin
+      description: "Números canonicalizados (9º dígito). Resultado por participante, como em participants/add."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Gid" }
       requestBody: { $ref: "#/components/requestBodies/Participants" }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/ParticipantChangeResult" }
 
   /api/sessions/{sid}/groups/{gid}/participants/demote:
     post:
       tags: [Grupos]
       summary: Rebaixa admins a participante
+      description: "Números canonicalizados (9º dígito). Resultado por participante, como em participants/add."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Gid" }
       requestBody: { $ref: "#/components/requestBodies/Participants" }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/ParticipantChangeResult" }
 
   /api/sessions/{sid}/groups/{gid}/subject:
     put:
@@ -2055,7 +2653,7 @@ paths:
           application/json:
             schema: { type: object, required: [subject], properties: { subject: { type: string } } }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/groups/{gid}/description:
     put:
@@ -2070,7 +2668,7 @@ paths:
           application/json:
             schema: { type: object, required: [description], properties: { description: { type: string } } }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/groups/{gid}/picture:
     put:
@@ -2085,7 +2683,11 @@ paths:
           application/json:
             schema: { type: object, properties: { base64: { type: string }, url: { type: string } } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, pictureId: { type: string } } }
 
   /api/sessions/{sid}/groups/{gid}/invite:
     get:
@@ -2128,7 +2730,7 @@ paths:
           application/json:
             schema: { type: object, properties: { enabled: { type: boolean } } }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/groups/{gid}/settings/locked:
     put:
@@ -2143,7 +2745,7 @@ paths:
           application/json:
             schema: { type: object, properties: { enabled: { type: boolean } } }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   # ===================== Canais =====================
   /api/sessions/{sid}/channels:
@@ -2152,7 +2754,11 @@ paths:
       summary: Lista os canais que a conta segue
       parameters: [{ $ref: "#/components/parameters/Sid" }]
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Channel" } }
 
   /api/sessions/{sid}/channels/{id}:
     get:
@@ -2162,7 +2768,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ChannelId" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Channel" }
 
   /api/sessions/{sid}/channels/{id}/messages:
     get:
@@ -2173,7 +2783,19 @@ paths:
         - { $ref: "#/components/parameters/ChannelId" }
         - { name: limit, in: query, schema: { type: integer, default: 20 } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    serverId: { type: integer }
+                    timestamp: { type: integer, format: int64, description: "epoch ms" }
+                    views: { type: integer }
+                    type: { type: string }
 
   /api/sessions/{sid}/channels/{id}/follow:
     post:
@@ -2183,7 +2805,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ChannelId" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, following: { type: boolean, example: true } } }
 
   /api/sessions/{sid}/channels/{id}/unfollow:
     post:
@@ -2193,7 +2819,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ChannelId" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, following: { type: boolean, example: false } } }
 
   /api/sessions/{sid}/channels/{id}/mute:
     post:
@@ -2203,7 +2833,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ChannelId" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, muted: { type: boolean, example: true } } }
 
   /api/sessions/{sid}/channels/{id}/unmute:
     post:
@@ -2213,7 +2847,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ChannelId" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean }, muted: { type: boolean, example: false } } }
 
   # ===================== Presença & Perfil =====================
   /api/sessions/{sid}/presence:
@@ -2227,7 +2865,7 @@ paths:
           application/json:
             schema: { type: object, properties: { available: { type: boolean, example: true } } }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/presence/{jid}/subscribe:
     post:
@@ -2237,7 +2875,7 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/Jid" }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/profile:
     get:
@@ -2251,7 +2889,12 @@ paths:
             application/json:
               schema:
                 type: object
-                properties: { jid: { type: string }, number: { type: string }, pushName: { type: string } }
+                properties:
+                  jid: { type: string, example: "556192264108:13@s.whatsapp.net", description: "JID do device (inclui o sufixo :N do aparelho)" }
+                  number: { type: string, example: "556192264108" }
+                  pushName: { type: string }
+                  id: { type: string, description: "alias WAHA (número@c.us)" }
+                  name: { type: string, description: "alias de pushName" }
 
   /api/sessions/{sid}/profile/status:
     put:
@@ -2264,7 +2907,7 @@ paths:
           application/json:
             schema: { type: object, required: [status], properties: { status: { type: string, example: "Disponível" } } }
       responses:
-        "200": { description: OK }
+        "200": { $ref: "#/components/responses/OkTrue" }
 
   /api/sessions/{sid}/status/text:
     post:
@@ -2294,6 +2937,7 @@ paths:
                 base64: { type: string }
                 url: { type: string }
                 caption: { type: string }
+                mimetype: { type: string, example: "image/jpeg" }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
@@ -2312,6 +2956,7 @@ paths:
                 base64: { type: string }
                 url: { type: string }
                 caption: { type: string }
+                mimetype: { type: string, example: "video/mp4" }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
@@ -2329,6 +2974,7 @@ paths:
               properties:
                 base64: { type: string }
                 url: { type: string }
+                mimetype: { type: string, example: "audio/ogg; codecs=opus" }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
@@ -2339,7 +2985,7 @@ paths:
       summary: Visão geral das conversas (última mensagem + contagem)
       parameters:
         - { $ref: "#/components/parameters/Sid" }
-        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 1000 } }
         - { name: offset, in: query, schema: { type: integer, default: 0 } }
       responses:
         "200":
@@ -2352,6 +2998,8 @@ paths:
                   type: object
                   properties:
                     chat: { type: string }
+                    id: { type: string, description: "alias WAHA (número@c.us / @g.us)" }
+                    type: { type: string, enum: [individual, group, channel, broadcast] }
                     lastMessage: { type: string }
                     lastType: { type: string }
                     timestamp: { type: integer, format: int64 }
@@ -2404,7 +3052,11 @@ paths:
                 type: object
                 properties:
                   code: { type: string, example: "ABCD1234", description: "Código de 8 caracteres p/ digitar no WhatsApp" }
-        "400": { description: "phone obrigatório ou conta já pareada" }
+        "400":
+          description: "phone obrigatório, sessão inexistente ou conta já pareada"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/sessions/{sid}/pair-passkey:
     post:
@@ -2412,7 +3064,9 @@ paths:
       summary: Envia a asserção WebAuthn (contas com passkey)
       description: >
         Para contas protegidas por passkey, envia a asserção WebAuthn coletada pela extensão.
-        O desafio chega via SSE `auth-state` (state=passkey_request).
+        O desafio chega via SSE `auth-state` (state=passkey_request). O body pode ser o
+        objeto WebAuthn direto (resultado de `navigator.credentials.get`) ou embrulhado em
+        `{"assertion": {...}}`. O sucesso do pareamento chega depois via `auth-state` (state=open).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -2423,9 +3077,15 @@ paths:
             schema:
               type: object
               properties:
-                assertion: { type: object, description: "Asserção WebAuthn (publicKeyCredential serializado)" }
+                assertion: { type: object, description: "Asserção WebAuthn (publicKeyCredential serializado). Opcional: pode mandar o objeto direto no body" }
       responses:
-        "200": { description: Asserção aceita }
+        "200":
+          description: Asserção enviada ao WhatsApp
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean, example: true } } }
+        "400": { description: "invalid WebAuthn assertion" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ─────────────────────────────────────────────────────────────────
   # Chamadas: toque fantasma, sinalização e controle
@@ -2434,7 +3094,9 @@ paths:
     post:
       tags: [Chamadas]
       summary: Toque fantasma (faz o número tocar e desliga)
-      description: Dispara uma chamada que só faz o destino tocar, encerrando sozinha.
+      description: >
+        Dispara uma chamada que só faz o destino tocar (offer) e encerra sozinha depois de
+        `duration_ms`, sem estabelecer áudio/vídeo.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -2448,7 +3110,7 @@ paths:
               properties:
                 phone: { type: string, example: "5561999999999" }
                 video: { type: boolean, example: false }
-                duration_ms: { type: integer, example: 3000, description: "Aceita número ou string" }
+                duration_ms: { oneOf: [{ type: integer }, { type: string }], example: 3000, description: "Tempo tocando em ms (padrão 3000, máx. 30000). Aceita número ou string" }
       responses:
         "200":
           description: Chamada fantasma disparada
@@ -2458,6 +3120,8 @@ paths:
                 type: object
                 properties:
                   call: { type: object, properties: { callId: { type: string } } }
+                  durationMs: { type: integer, description: "Duração efetivamente aplicada" }
+        "400": { description: phone required }
         "503": { description: Conta não pareada }
 
   /api/sessions/{sid}/calls/{id}/webrtc:
@@ -2516,6 +3180,9 @@ paths:
 
         A chamada precisa já existir (crie/atenda antes: `POST .../calls` ou `.../accept`).
         Áudio-only (sem vídeo). Autentique com `?apiKey=`.
+
+
+        ⚠️ Fechar o WebSocket ENCERRA a chamada no WhatsApp.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
@@ -2636,8 +3303,8 @@ paths:
             schema:
               type: object
               properties:
-                level: { type: number, minimum: 0, maximum: 3, example: 1.5, description: "Ganho (1 = normal). Alternativa: percent" }
-                percent: { type: number, minimum: 0, maximum: 300, example: 150, description: "Mesmo que level×100" }
+                level: { oneOf: [{ type: number }, { type: string }], example: 1.5, description: "Ganho 0..3 (1 = normal). Aceita número ou string; fora da faixa sofre clamp. Alternativa: percent" }
+                percent: { oneOf: [{ type: number }, { type: string }], example: 150, description: "0..300 (= level×100). Aceita número ou string" }
       responses:
         "200":
           description: Volume aplicado
@@ -2647,7 +3314,7 @@ paths:
                 type: object
                 properties:
                   status: { type: string, example: ok }
-                  level: { type: number, example: 1.5 }
+                  level: { type: number, example: 1.5, description: "Valor efetivamente aplicado (após clamp)" }
         "400": { description: level/percent ausente }
         "404": { description: Chamada inexistente }
     get:
@@ -2727,6 +3394,8 @@ paths:
                   status: { type: string, example: ok }
                   held: { type: boolean, example: true }
                   moh: { type: boolean }
+        "404": { description: "no such call" }
+        "409": { description: Estado da chamada não permite espera }
 
   /api/sessions/{sid}/calls/{id}/resume:
     post:
@@ -2746,6 +3415,8 @@ paths:
                 properties:
                   status: { type: string, example: ok }
                   held: { type: boolean, example: false }
+        "404": { description: "no such call" }
+        "409": { description: Chamada não está em espera / estado inválido }
 
   /api/sessions/{sid}/calls/{id}/transfer:
     post:
@@ -2777,12 +3448,15 @@ paths:
                   status: { type: string, example: ok }
                   transferred: { type: boolean, example: true }
                   to: { type: string }
+        "404": { description: "no such call" }
 
   /api/sessions/{sid}/calls/{id}/pickup:
     post:
       tags: [Chamadas]
       summary: Assume uma chamada transferida
-      description: Fixa o novo dono de uma chamada transferida (não re-atende no WhatsApp).
+      description: >
+        Fixa o novo dono (`X-Client-Id`) de uma chamada transferida (não re-atende no
+        WhatsApp). Depois o navegador chama `.../webrtc` (abre a ponte) e `.../resume`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
@@ -2796,6 +3470,7 @@ paths:
                 type: object
                 properties:
                   call: { type: object, properties: { callId: { type: string } } }
+        "404": { description: "no such call" }
 
   # ─────────────────────────────────────────────────────────────────
   # Envios especiais
@@ -2804,6 +3479,7 @@ paths:
     post:
       tags: [Mensagens]
       summary: Envia um sticker (figurinha)
+      description: "A figurinha precisa ser WebP pronto (512x512); não há conversão. Não suporta citação/menção."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -2811,7 +3487,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/MediaBody" }
+            schema:
+              type: object
+              required: [to]
+              description: "Envie a figurinha por **base64** OU por **url**."
+              properties:
+                to: { type: string, example: "5561999999999" }
+                base64: { type: string }
+                url: { type: string }
+                mimetype: { type: string, default: "image/webp" }
+                animated: { type: boolean, default: false, description: "true = figurinha animada" }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
@@ -2823,7 +3508,8 @@ paths:
         Monta o "Pix Copia e Cola" (BR Code EMV do Banco Central) e envia como TEXTO.
         NÃO é o Pix nativo (interactiveMessage) — o WhatsApp bloqueia esse para clientes
         não-oficiais. Informe `key` (gera o código) OU `code` (BR Code pronto). Se houver
-        `description`, ela vai numa mensagem antes do código.
+        `description`, ela vai numa mensagem antes do código. Esta rota NÃO usa o id de
+        idempotência (`X-Message-ID`).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -2851,7 +3537,9 @@ paths:
               schema:
                 type: object
                 properties:
+                  id: { type: string, description: "ID da mensagem do código" }
                   ids: { type: array, items: { type: string }, description: "IDs das mensagens (descrição + código)" }
+                  to: { type: string }
                   code: { type: string, description: "O BR Code enviado" }
         "400": { description: "key ou code obrigatório" }
 
@@ -2905,11 +3593,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [to]
+              required: [to, productId]
               properties:
                 to: { type: string }
-                productId: { type: string }
-                businessJid: { type: string }
+                productId: { type: string, description: "ID do produto no catálogo (obrigatório)" }
+                businessJid: { type: string, description: "Dono do catálogo (padrão = a própria conta)" }
                 title: { type: string }
                 description: { type: string }
                 price: { type: number, description: "Aceita número ou string" }
@@ -2922,6 +3610,7 @@ paths:
                 mimetype: { type: string }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
+        "400": { description: "productId required" }
 
   # ─────────────────────────────────────────────────────────────────
   # Grupos: solicitações de entrada e configurações
@@ -2947,8 +3636,8 @@ paths:
                     items:
                       type: object
                       properties:
-                        jid: { type: string }
-                        requestedAt: { type: integer, format: int64 }
+                        jid: { type: string, description: "Pode ser @lid" }
+                        requestedAt: { type: integer, format: int64, description: "epoch em SEGUNDOS" }
 
   /api/sessions/{sid}/groups/{gid}/requests/approve:
     post:
@@ -2960,7 +3649,22 @@ paths:
         - { $ref: "#/components/parameters/ClientId" }
       requestBody: { $ref: "#/components/requestBodies/Participants" }
       responses:
-        "200": { description: Aprovadas }
+        "200":
+          description: Aprovadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  participants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        jid: { type: string, description: "Pode ser @lid" }
+                        phone: { type: string, description: "Telefone real quando conhecido; senão \"\"" }
+                        error: { type: integer, description: "Código do WhatsApp (0 = ok)" }
 
   /api/sessions/{sid}/groups/{gid}/requests/reject:
     post:
@@ -2972,7 +3676,22 @@ paths:
         - { $ref: "#/components/parameters/ClientId" }
       requestBody: { $ref: "#/components/requestBodies/Participants" }
       responses:
-        "200": { description: Rejeitadas }
+        "200":
+          description: Rejeitadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  participants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        jid: { type: string, description: "Pode ser @lid" }
+                        phone: { type: string, description: "Telefone real quando conhecido; senão \"\"" }
+                        error: { type: integer, description: "Código do WhatsApp (0 = ok)" }
 
   /api/sessions/{sid}/groups/{gid}/settings/approval:
     put:
@@ -3051,6 +3770,7 @@ paths:
                 type: object
                 properties:
                   link: { type: string, example: "https://wa.me/qr/XXXXXXXX" }
+                  code: { type: string, example: "XXXXXXXX", description: "Só o código do link" }
 
   /api/sessions/{sid}/privacy:
     get:
@@ -3064,17 +3784,7 @@ paths:
           description: Privacidade
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  groupAdd: { type: string }
-                  lastSeen: { type: string }
-                  status: { type: string }
-                  profile: { type: string }
-                  readReceipts: { type: string }
-                  callAdd: { type: string }
-                  online: { type: string }
-                  messages: { type: string }
+              schema: { $ref: "#/components/schemas/PrivacySettings" }
     put:
       tags: [Presença & Perfil]
       summary: Altera uma configuração de privacidade
@@ -3089,8 +3799,14 @@ paths:
               type: object
               required: [name, value]
               properties:
-                name: { type: string, enum: [groupadd, last, status, profile, readreceipts, online, calladd, messages] }
-                value: { type: string, enum: [all, contacts, contact_blacklist, none, known, match_last_seen] }
+                name: { type: string, enum: [groupadd, last, status, profile, readreceipts, online, calladd, messages, defense, stickers] }
+                value:
+                  type: string
+                  enum: [all, contacts, contact_allowlist, contact_blacklist, none, known, match_last_seen, on_standard, off]
+                  description: >-
+                    Valores válidos por name: groupadd/last/status/profile = all|contacts|contact_blacklist|none;
+                    readreceipts = all|none; online = all|match_last_seen; calladd = all|known;
+                    messages = all|contacts; defense = on_standard|off; stickers = contacts|contact_allowlist|none.
       responses:
         "200":
           description: OK
@@ -3100,7 +3816,8 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean }
-                  settings: { type: object }
+                  settings: { $ref: "#/components/schemas/PrivacySettings" }
+        "400": { description: "name and value required" }
 
   /api/sessions/{sid}/privacy/status:
     get:
@@ -3117,7 +3834,14 @@ paths:
               schema:
                 type: object
                 properties:
-                  statusPrivacy: { type: object }
+                  statusPrivacy:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string, enum: [contacts, blacklist, whitelist], description: "contacts = todos os contatos; blacklist = contatos exceto list; whitelist = só os da list" }
+                        list: { type: array, items: { type: string }, description: "JIDs da lista" }
+                        isDefault: { type: boolean, description: "true = a opção ativa" }
 
   /api/sessions/{sid}/disappearing:
     put:
@@ -3189,7 +3913,18 @@ paths:
           description: Perfil Business (campos conforme disponível)
           content:
             application/json:
-              schema: { type: object }
+              schema:
+                type: object
+                properties:
+                  jid: { type: string }
+                  address: { type: string }
+                  email: { type: string }
+                  categories:
+                    type: array
+                    items: { type: object, properties: { id: { type: string }, name: { type: string } } }
+                  timezone: { type: string, example: "America/Sao_Paulo" }
+                  businessHours: { type: array, items: { type: object }, description: "Horários por dia da semana (como o WhatsApp informa)" }
+        "404": { description: "not a business account" }
 
   # ─────────────────────────────────────────────────────────────────
   # Chatwoot
@@ -3198,12 +3933,32 @@ paths:
     get:
       tags: [Chatwoot]
       summary: Resolve a sessão a partir de uma conversa do Chatwoot
-      description: Mapeia account_id/conversation_id do Chatwoot para a sessão/telefone correspondente.
+      description: >
+        Mapeia account_id/conversation_id do Chatwoot para a sessão (a da inbox da conversa)
+        e o telefone do contato (LID convertido para telefone). Em conversa de GRUPO devolve
+        `group: true`, o `group_jid` e se a chamada em grupo está ligada (`phone` vazio).
+        Liberada para a chave/token de widget.
       parameters:
         - { name: account_id, in: query, required: true, schema: { type: integer } }
         - { name: conversation_id, in: query, required: true, schema: { type: string } }
       responses:
-        "200": { description: Dados resolvidos }
+        "200":
+          description: Dados resolvidos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: { type: string }
+                  inbox_id: { type: integer }
+                  phone: { type: string, example: "5561999999999", description: "\"\" em conversa de grupo" }
+                  name: { type: string }
+                  group: { type: boolean, description: "Só em conversa de grupo" }
+                  group_jid: { type: string, description: "Só em conversa de grupo" }
+                  group_calls: { type: boolean, description: "Só em conversa de grupo: chamada em grupo habilitada" }
+        "400": { description: "account_id and conversation_id required" }
+        "404": { description: "Nenhuma sessão ligada à conta/inbox, ou contato sem telefone" }
+        "502": { description: "chatwoot lookup failed" }
 
   # ─────────────────────────────────────────────────────────────────
   # Mensagens — extras (idempotência, PTV, encaminhar, busca)
@@ -3243,6 +3998,9 @@ paths:
                 base64: { type: string, description: "Vídeo em base64 (ou use url)" }
                 url: { type: string, description: "URL do vídeo (o servidor baixa)" }
                 mimetype: { type: string, example: "video/mp4" }
+                quotedMessageId: { type: string, description: "Cita (responde) a mensagem com esse id" }
+                participant: { type: string, description: "Em grupo: JID de quem enviou a citada" }
+                fromMe: { type: boolean, description: "true se a citada é sua" }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
         "503": { description: Conta não pareada }
@@ -3277,9 +4035,10 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { name: q, in: query, required: true, schema: { type: string }, description: "Texto a buscar (ILIKE)" }
         - { name: chatId, in: query, required: false, schema: { type: string }, description: "Limita a um chat" }
-        - { name: limit, in: query, required: false, schema: { type: integer, default: 50 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 1000 } }
       responses:
-        "200": { description: Mensagens encontradas }
+        "200": { $ref: "#/components/responses/MessageList" }
+        "400": { description: "q required / chatId inválido" }
 
   # ─────────────────────────────────────────────────────────────────
   # Interativas (native flow) — botões, lista, carrossel
@@ -3339,7 +4098,7 @@ paths:
                   items:
                     type: object
                     properties:
-                      type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview] }
+                      type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview, form], description: "webview e form são sinônimos (cta_url aberto em webview tela cheia)" }
                       displayText: { type: string }
                       url: { type: string, description: "para cta_url / webview (webview abre em tela cheia dentro do WhatsApp)" }
                       id: { type: string, description: "para quick_reply" }
@@ -3369,8 +4128,9 @@ paths:
               properties:
                 to: { type: string, example: "5561999999999" }
                 body: { type: string }
+                text: { type: string, description: "alias de body (usado se body vier vazio)" }
                 footer: { type: string }
-                buttonText: { type: string, example: "Abrir menu" }
+                buttonText: { type: string, example: "Abrir menu", default: "Ver opções" }
                 sections:
                   type: array
                   items:
@@ -3405,6 +4165,7 @@ paths:
                   type: array
                   items:
                     type: object
+                    description: "Cada card exige imagem: `imageUrl` OU `base64`."
                     properties:
                       imageUrl: { type: string, description: "URL da imagem do card (ou base64)" }
                       base64: { type: string }
@@ -3415,7 +4176,7 @@ paths:
                         items:
                           type: object
                           properties:
-                            type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call] }
+                            type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview, form] }
                             displayText: { type: string }
                             url: { type: string }
                             id: { type: string }
@@ -3445,6 +4206,7 @@ paths:
                 type: object
                 properties:
                   count: { type: integer }
+                  hint: { type: string, description: "Lembrete de que a lista vem dos formulários já enviados" }
                   forms:
                     type: array
                     items:
@@ -3462,6 +4224,7 @@ paths:
                         lastSentAt: { type: integer }
                         responseCount: { type: integer }
                         lastResponseAt: { type: integer }
+        "503": { description: "banco de mensagens desligado" }
 
   /api/sessions/{sid}/messages/native-form:
     post:
@@ -3518,7 +4281,8 @@ paths:
                   id: { type: string }
                   to: { type: string }
                   flowToken: { type: string }
-                  timestamp: { type: integer }
+                  timestamp: { type: integer, description: "epoch ms" }
+        "400": { description: "to e flowId obrigatórios / destino é grupo (formulário nativo só em conversa individual)" }
 
   /api/sessions/{sid}/messages/form:
     post:
@@ -3581,7 +4345,7 @@ paths:
         - { name: token, in: path, required: true, schema: { type: string } }
       responses:
         "200": { description: "HTML do formulário" }
-        "400": { description: "Token inválido ou expirado" }
+        "400": { description: "Token inválido" }
 
   /forms/{token}/submit:
     post:
@@ -3612,6 +4376,7 @@ paths:
     post:
       tags: [Mensagens]
       summary: Agenda uma mensagem (texto ou imagem) para o futuro
+      description: "Informe `text` OU uma imagem (`imageUrl`/`base64`, com `caption` opcional)."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       requestBody:
@@ -3633,14 +4398,22 @@ paths:
           description: Agendada
           content:
             application/json:
-              schema: { type: object, properties: { id: { type: integer }, sendAt: { type: integer }, status: { type: string } } }
+              schema: { type: object, properties: { id: { type: integer }, sendAt: { type: integer, description: "epoch ms" }, status: { type: string, example: pending } } }
+        "400": { description: "to obrigatório / sendAt no passado / text ou imagem obrigatório" }
     get:
       tags: [Mensagens]
       summary: Lista as mensagens agendadas da sessão
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       responses:
-        "200": { description: Lista de agendamentos }
+        "200":
+          description: Lista de agendamentos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scheduled: { type: array, items: { $ref: "#/components/schemas/ScheduledMessage" } }
   /api/sessions/{sid}/schedule/{id}:
     delete:
       tags: [Mensagens]
@@ -3649,7 +4422,11 @@ paths:
         - { $ref: "#/components/parameters/Sid" }
         - { name: id, in: path, required: true, schema: { type: integer } }
       responses:
-        "200": { description: Cancelado }
+        "200":
+          description: Cancelado
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: canceled } } }
         "404": { description: Não encontrado ou já processado }
 
   # ─────────────────────────────────────────────────────────────────
@@ -3659,6 +4436,7 @@ paths:
     post:
       tags: [Disparo]
       summary: Dispara uma campanha (texto ou imagem) com pacing anti-ban
+      description: "Informe `text` OU uma imagem (`imageUrl`/`base64`, com `caption` opcional)."
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       requestBody:
@@ -3681,13 +4459,22 @@ paths:
           description: Campanha iniciada
           content:
             application/json:
-              schema: { type: object, properties: { jobId: { type: string }, status: { type: string }, total: { type: integer } } }
+              schema: { type: object, properties: { jobId: { type: string }, status: { type: string, example: pending }, total: { type: integer } } }
+        "400": { description: "to (lista) obrigatório / text ou imagem obrigatório" }
   /api/sessions/{sid}/blasts:
     get:
       tags: [Disparo]
       summary: Lista as campanhas da sessão
       parameters: [ { $ref: "#/components/parameters/Sid" } ]
-      responses: { "200": { description: Lista de campanhas } }
+      responses:
+        "200":
+          description: Lista de campanhas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs: { type: array, items: { $ref: "#/components/schemas/BlastJob" } }
   /api/sessions/{sid}/blasts/{id}:
     get:
       tags: [Disparo]
@@ -3695,7 +4482,26 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { name: id, in: path, required: true, schema: { type: string } }
-      responses: { "200": { description: Status da campanha }, "404": { description: Não encontrada } }
+      responses:
+        "200":
+          description: Status da campanha
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BlastJob"
+                  - type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            to: { type: string }
+                            ok: { type: boolean }
+                            msgId: { type: string }
+                            error: { type: string }
+        "404": { description: Não encontrada }
   /api/sessions/{sid}/blasts/{id}/cancel:
     post:
       tags: [Disparo]
@@ -3703,7 +4509,13 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { name: id, in: path, required: true, schema: { type: string } }
-      responses: { "200": { description: Cancelando } }
+      responses:
+        "200":
+          description: Cancelamento solicitado
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: canceling } } }
+        "404": { description: "job não encontrado" }
 
   # ─────────────────────────────────────────────────────────────────
   # Webhook — status/DLQ/replay/reenable
@@ -3713,13 +4525,44 @@ paths:
       tags: [Webhook]
       summary: Estado do circuito de entrega do webhook (circuit breaker + DLQ)
       parameters: [ { $ref: "#/components/parameters/Sid" } ]
-      responses: { "200": { description: "state (closed|open|disabled), consecutiveFailures, dlqSize" } }
+      responses:
+        "200":
+          description: Estado do circuito
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, enum: [closed, open, disabled] }
+                  consecutiveFailures: { type: integer }
+                  dlqSize: { type: integer }
+                  disabledReason: { type: string, description: "Só quando disabled" }
+                  openUntil: { type: integer, format: int64, description: "epoch ms (só com o circuito aberto)" }
   /api/sessions/{sid}/webhooks/dlq:
     get:
       tags: [Webhook]
       summary: Lista os eventos na dead-letter queue (falharam a entrega)
       parameters: [ { $ref: "#/components/parameters/Sid" } ]
-      responses: { "200": { description: Itens da DLQ } }
+      responses:
+        "200":
+          description: Itens da DLQ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        event: { type: string }
+                        url: { type: string }
+                        body: { type: object, description: "Payload original" }
+                        lastError: { type: string }
+                        attempts: { type: integer }
+                        createdAt: { type: integer, format: int64, description: "epoch ms" }
   /api/sessions/{sid}/webhooks/dlq/{id}/replay:
     post:
       tags: [Webhook]
@@ -3727,13 +4570,25 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { name: id, in: path, required: true, schema: { type: string } }
-      responses: { "200": { description: Reenviado }, "404": { description: Item não encontrado }, "409": { description: Circuito aberto/desabilitado } }
+      responses:
+        "200":
+          description: Reenviado
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: replayed } } }
+        "404": { description: Item não encontrado }
+        "409": { description: Falha no reenvio / circuito aberto/desabilitado }
   /api/sessions/{sid}/webhooks/reenable:
     post:
       tags: [Webhook]
       summary: Religa um webhook desabilitado/aberto (zera o circuito)
       parameters: [ { $ref: "#/components/parameters/Sid" } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok } } }
 
   # ─────────────────────────────────────────────────────────────────
   # Observabilidade (sem autenticação, fora de /api)
