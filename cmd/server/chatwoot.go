@@ -1471,6 +1471,7 @@ func (s *server) handleSetChatwoot(w http.ResponseWriter, r *http.Request) {
 	sess.setChatwoot(cfg)
 	b, _ := json.Marshal(cfg)
 	_ = sess.mgr.store.setChatwoot(r.Context(), sess.id, string(b))
+	cfg.AccountToken = "" // não devolve o token (mesma regra do GET)
 	writeJSON(w, http.StatusOK, map[string]any{"chatwoot": cfg})
 }
 

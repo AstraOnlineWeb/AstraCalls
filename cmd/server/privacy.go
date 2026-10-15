@@ -15,7 +15,12 @@ func (s *server) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := sess.client.GetPrivacySettings(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, privacyJSON(p))
+}
+
+// privacyJSON: mesmo formato (camelCase) no GET e na resposta do PUT.
+func privacyJSON(p types.PrivacySettings) map[string]any {
+	return map[string]any{
 		"groupAdd":     string(p.GroupAdd),
 		"lastSeen":     string(p.LastSeen),
 		"status":       string(p.Status),
@@ -24,7 +29,9 @@ func (s *server) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
 		"callAdd":      string(p.CallAdd),
 		"online":       string(p.Online),
 		"messages":     string(p.Messages),
-	})
+		"defense":      string(p.Defense),
+		"stickers":     string(p.Stickers),
+	}
 }
 
 // PUT /api/sessions/{sid}/privacy  {name, value}
@@ -48,7 +55,7 @@ func (s *server) handleSetPrivacy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": p})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": privacyJSON(p)})
 }
 
 // GET /api/sessions/{sid}/privacy/status  → quem pode ver cada status (lista)
@@ -62,7 +69,15 @@ func (s *server) handleGetStatusPrivacy(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"statusPrivacy": sp})
+	list := make([]map[string]any, 0, len(sp))
+	for _, it := range sp {
+		jids := make([]string, 0, len(it.List))
+		for _, j := range it.List {
+			jids = append(jids, j.String())
+		}
+		list = append(list, map[string]any{"type": string(it.Type), "list": jids, "isDefault": it.IsDefault})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"statusPrivacy": list})
 }
 
 // PUT /api/sessions/{sid}/disappearing  {seconds}

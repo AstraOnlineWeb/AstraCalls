@@ -49,6 +49,7 @@ func (s *server) handleGroupRequestChange(action whatsmeow.ParticipantRequestCha
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		sess.canonicalParticipants(r.Context(), parts)
 		res, err := sess.client.UpdateGroupRequestParticipants(r.Context(), gid, parts, action)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -56,7 +57,7 @@ func (s *server) handleGroupRequestChange(action whatsmeow.ParticipantRequestCha
 		}
 		out := make([]map[string]any, 0, len(res))
 		for _, p := range res {
-			out = append(out, map[string]any{"jid": p.JID.String(), "error": p.Error})
+			out = append(out, map[string]any{"jid": p.JID.String(), "phone": sess.participantPhone(p.JID, p.PhoneNumber), "error": p.Error})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "participants": out})
 	}

@@ -757,10 +757,10 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body struct {
-		Phone      string `json:"phone"`
-		DurationMs int    `json:"duration_ms"`
-		Record     bool   `json:"record"`
-		Video      bool   `json:"video"`
+		Phone      string  `json:"phone"`
+		DurationMs flexInt `json:"duration_ms"` // reservado (ignorado); aceita número ou string
+		Record     bool    `json:"record"`
+		Video      bool    `json:"video"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Phone) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone required"})

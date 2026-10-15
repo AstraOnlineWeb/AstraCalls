@@ -46,6 +46,11 @@ func (s *server) handleSubscribePresence(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if jid.Server == types.DefaultUserServer {
+		if _, pn, ok := sess.resolveCanonical(r.Context(), jid); ok && pn.User != "" {
+			jid = pn
+		}
+	}
 	if err := sess.client.SubscribePresence(r.Context(), jid); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

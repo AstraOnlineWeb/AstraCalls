@@ -68,10 +68,13 @@ func (s *Session) participantJSON(p types.GroupParticipant) map[string]any {
 		"isAdmin":      p.IsAdmin,
 		"isSuperAdmin": p.IsSuperAdmin,
 		"admin":        p.IsAdmin || p.IsSuperAdmin,
-		// aliases WAHA
+		// aliases WAHA: id/pn usam o telefone quando conhecido (nunca dígitos do LID em pn)
 		"id":   waChatID(p.JID),
-		"pn":   number,
+		"pn":   phone,
 		"role": waRole(p.IsAdmin, p.IsSuperAdmin),
+	}
+	if phone != "" {
+		out["id"] = waChatID(types.NewJID(phone, types.DefaultUserServer))
 	}
 	if !lid.IsEmpty() {
 		out["lid"] = lid.String()
@@ -128,6 +131,8 @@ func (s *Session) groupJSON(g *types.GroupInfo) map[string]any {
 		"name":         g.Name,
 		"topic":        g.Topic,
 		"owner":        g.OwnerJID.String(),
+		"ownerPhone":   "",
+		"ownerLid":     "",
 		"announce":     g.IsAnnounce, // só admins enviam
 		"locked":       g.IsLocked,   // só admins editam info
 		"created":      g.GroupCreated.UnixMilli(),
@@ -141,6 +146,23 @@ func (s *Session) groupJSON(g *types.GroupInfo) map[string]any {
 		"isCommunity":         g.IsParent,
 		"parentJid":           "",
 		"isAnnouncementGroup": g.IsDefaultSubGroup,
+	}
+	// dono: em grupo LID o OwnerJID é @lid; expõe o telefone quando conhecido
+	ownerPN := g.OwnerPN
+	if ownerPN.IsEmpty() && g.OwnerJID.Server == types.DefaultUserServer {
+		ownerPN = g.OwnerJID
+	}
+	if g.OwnerJID.Server == types.HiddenUserServer {
+		out["ownerLid"] = g.OwnerJID.String()
+		if ownerPN.IsEmpty() {
+			if p, ok := s.resolvedPhone(g.OwnerJID); ok {
+				ownerPN = types.NewJID(p, types.DefaultUserServer)
+			}
+		}
+	}
+	if !ownerPN.IsEmpty() {
+		out["ownerPhone"] = ownerPN.User
+		out["owner"] = ownerPN.ToNonAD().String()
 	}
 	if !g.LinkedParentJID.IsEmpty() {
 		out["parentJid"] = g.LinkedParentJID.String()
@@ -160,6 +182,16 @@ func (s *Session) canonicalParticipants(ctx context.Context, parts []types.JID) 
 			parts[i] = pn
 		}
 	}
+}
+
+// participantPhone devolve o telefone real de um participante (PN informado
+// pelo WhatsApp ou mapeado do LID); "" quando não resolve.
+func (s *Session) participantPhone(jid, pn types.JID) string {
+	if pn.User != "" && pn.Server == types.DefaultUserServer {
+		return pn.User
+	}
+	p, _ := s.resolvedPhone(jid)
+	return p
 }
 
 // group carrega a sessão pareada + o JID do grupo do path, ou escreve o erro.
@@ -274,9 +306,7 @@ func (s *server) handleGroupParticipantChange(action whatsmeow.ParticipantChange
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if action == whatsmeow.ParticipantChangeAdd {
-			sess.canonicalParticipants(r.Context(), parts)
-		}
+		sess.canonicalParticipants(r.Context(), parts)
 		res, err := sess.client.UpdateGroupParticipants(r.Context(), gid, parts, action)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -285,7 +315,7 @@ func (s *server) handleGroupParticipantChange(action whatsmeow.ParticipantChange
 		out := make([]map[string]any, 0, len(res))
 		var added []string
 		for _, p := range res {
-			row := map[string]any{"jid": p.JID.String(), "isAdmin": p.IsAdmin}
+			row := map[string]any{"jid": p.JID.String(), "phone": sess.participantPhone(p.JID, p.PhoneNumber), "isAdmin": p.IsAdmin}
 			if p.Error != 0 {
 				row["error"] = p.Error
 			} else {

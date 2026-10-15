@@ -401,7 +401,7 @@ func (s *Session) communityAdd(ctx context.Context, cid types.JID, parts []types
 	}
 	out := make([]map[string]any, 0, len(res))
 	for _, p := range res {
-		row := map[string]any{"jid": p.JID.String(), "ok": p.Error == 0}
+		row := map[string]any{"jid": p.JID.String(), "phone": s.participantPhone(p.JID, p.PhoneNumber), "ok": p.Error == 0}
 		if p.Error != 0 {
 			row["error"] = p.Error
 		}

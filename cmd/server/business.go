@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 )
 
 // GET /api/sessions/{sid}/contacts/{jid}/business  → perfil comercial (business)
@@ -50,5 +51,7 @@ func (s *server) handleContactQR(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"link": link})
+	// o WhatsApp devolve só o código; o link "me adicione" é wa.me/qr/<código>
+	code := strings.TrimPrefix(link, "https://wa.me/qr/")
+	writeJSON(w, http.StatusOK, map[string]any{"link": "https://wa.me/qr/" + code, "code": code})
 }

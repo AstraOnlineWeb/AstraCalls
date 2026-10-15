@@ -74,20 +74,87 @@ func (s *server) handleListContacts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	out := make([]map[string]any, 0, len(all))
+	// o whatsmeow grava o mesmo contato na chave PN e na @lid: mapeia o LID
+	// para o telefone e deduplica, para jid/number nunca virarem dígitos do LID.
+	type entry struct {
+		pn, lid types.JID
+		c       types.ContactInfo
+	}
+	byKey := map[string]*entry{}
+	order := []string{}
+	merge := func(dst *types.ContactInfo, src types.ContactInfo) {
+		if dst.FullName == "" {
+			dst.FullName = src.FullName
+		}
+		if dst.FirstName == "" {
+			dst.FirstName = src.FirstName
+		}
+		if dst.PushName == "" {
+			dst.PushName = src.PushName
+		}
+		if dst.BusinessName == "" {
+			dst.BusinessName = src.BusinessName
+		}
+	}
 	for jid, c := range all {
-		out = append(out, map[string]any{
-			"jid":          jid.String(),
-			"number":       jid.User,
-			"fullName":     c.FullName,
-			"firstName":    c.FirstName,
-			"pushName":     c.PushName,
-			"businessName": c.BusinessName,
+		var pn, lid types.JID
+		switch jid.Server {
+		case types.HiddenUserServer:
+			lid = jid
+			if p, ok := sess.resolvedPhone(jid); ok {
+				pn = types.NewJID(p, types.DefaultUserServer)
+			}
+		case types.DefaultUserServer:
+			pn = jid
+		default:
+			continue
+		}
+		key := "lid:" + lid.User
+		if !pn.IsEmpty() {
+			key = "pn:" + pn.User
+		}
+		e, ok := byKey[key]
+		if !ok {
+			e = &entry{pn: pn, lid: lid, c: c}
+			byKey[key] = e
+			order = append(order, key)
+			continue
+		}
+		if e.lid.IsEmpty() {
+			e.lid = lid
+		}
+		merge(&e.c, c)
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, k := range order {
+		e := byKey[k]
+		if e.lid.IsEmpty() && !e.pn.IsEmpty() {
+			if l, err := sess.client.Store.LIDs.GetLIDForPN(r.Context(), e.pn); err == nil {
+				e.lid = l
+			}
+		}
+		main := e.pn
+		if main.IsEmpty() {
+			main = e.lid
+		}
+		row := map[string]any{
+			"jid":          main.String(),
+			"number":       main.User, // telefone; só cai no LID quando não há telefone (compat)
+			"phone":        e.pn.User, // SÓ telefone real; "" se o LID não resolver
+			"lid":          "",
+			"fullName":     e.c.FullName,
+			"firstName":    e.c.FirstName,
+			"pushName":     e.c.PushName,
+			"businessName": e.c.BusinessName,
 			// aliases WAHA
-			"id":       waChatID(jid),
-			"name":     firstNonEmptyOf(c.FullName, c.PushName, c.FirstName, c.BusinessName),
-			"pushname": c.PushName,
-		})
+			"id":       waChatID(main),
+			"name":     firstNonEmptyOf(e.c.FullName, e.c.PushName, e.c.FirstName, e.c.BusinessName),
+			"pushname": e.c.PushName,
+		}
+		if !e.lid.IsEmpty() {
+			row["lid"] = e.lid.String()
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -103,25 +170,62 @@ func (s *server) handleContactInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	info, err := sess.client.GetUserInfo(r.Context(), []types.JID{jid})
+	// identidade canônica: telefone (com/sem 9º dígito como o WhatsApp registrou)
+	var pn, lid types.JID
+	switch jid.Server {
+	case types.HiddenUserServer:
+		lid = jid
+		if p, ok := sess.resolvedPhone(jid); ok {
+			pn = types.NewJID(p, types.DefaultUserServer)
+		}
+	case types.DefaultUserServer:
+		pn = jid
+		if l, p, ok := sess.resolveCanonical(r.Context(), jid); ok {
+			lid = l
+			if p.User != "" {
+				pn = p
+			}
+		}
+	}
+	query := jid
+	if !pn.IsEmpty() {
+		query = pn
+	}
+	info, err := sess.client.GetUserInfo(r.Context(), []types.JID{query})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	ui, ok := info[jid]
+	ui, ok := info[query]
+	if !ok {
+		// o WhatsApp pode indexar a resposta pelo outro JID (LID/PN)
+		for _, v := range info {
+			ui, ok = v, true
+			break
+		}
+	}
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
+	if lid.IsEmpty() && !ui.LID.IsEmpty() {
+		lid = ui.LID
+	}
+	main := pn
+	if main.IsEmpty() {
+		main = jid
+	}
 	out := map[string]any{
-		"jid":       jid.String(),
-		"number":    jid.User,
+		"jid":       main.String(),
+		"number":    main.User,
+		"phone":     pn.User,
+		"lid":       "",
 		"status":    ui.Status,
 		"pictureId": ui.PictureID,
-		"id":        waChatID(jid), // alias WAHA
+		"id":        waChatID(main), // alias WAHA
 	}
-	if !ui.LID.IsEmpty() {
-		out["lid"] = ui.LID.String()
+	if !lid.IsEmpty() {
+		out["lid"] = lid.ToNonAD().String()
 	}
 	writeJSON(w, http.StatusOK, out)
 }
