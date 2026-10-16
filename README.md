@@ -382,17 +382,6 @@ cd client && npm run build    # type-check + build de produção do painel
 
 ---
 
-## 🙏 Agradecimentos
-
-- [**whatsmeow**](https://github.com/tulir/whatsmeow) — biblioteca Go do protocolo WhatsApp Web
-- [**pion/webrtc**](https://github.com/pion/webrtc) — pilha WebRTC em Go puro (ICE + DTLS + SCTP)
-- [**opus_mlow**](https://github.com/edgardmessias/opus_mlow) — codec MLow nativo
-- [**meowcaller**](https://github.com/purpshell/meowcaller) — referência do motor de chamadas (inclusive **grupo**: epoch, relay SFU, SRTCP)
-- [**zapo**](https://github.com/w3nder/zapo) — referência da pilha de mídia (MediaClock, mute/raise hand)
-- [**sipgo**](https://github.com/emiago/sipgo) — pilha SIP em Go
-- [**WAHA**](https://github.com/devlikeapro/waha) — inspiração para o storage por sessão, a API de mensagens e a integração Chatwoot
-
----
 
 ## 🛠️ Suporte Profissional
 
