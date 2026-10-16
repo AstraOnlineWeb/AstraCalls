@@ -12,9 +12,10 @@ VoIP nativo (áudio + vídeo, 1:1 e em grupo), gateway **SIP/PBX**, suíte compl
 [![pion](https://img.shields.io/badge/pion-WebRTC-FF6B6B)](https://github.com/pion/webrtc)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 [![Docker](https://img.shields.io/badge/Docker-amd64%20%2B%20arm64-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/astraonline/astracalls)
+[![n8n](https://img.shields.io/npm/v/n8n-nodes-astracalls?label=n8n%20node&logo=n8n&color=EA4B71)](https://www.npmjs.com/package/n8n-nodes-astracalls)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](#-licença)
 
-[Visão Geral](#-visão-geral) · [Funcionalidades](#-funcionalidades) · [Arquitetura](#-arquitetura) · [Início Rápido](#-início-rápido) · [Configuração](#-configuração) · [Deploy](#-deploy-em-produção-docker-swarm--traefik) · [API](#-api) · [Suporte](#️-suporte-profissional)
+[Visão Geral](#-visão-geral) · [Funcionalidades](#-funcionalidades) · [Arquitetura](#-arquitetura) · [Início Rápido](#-início-rápido) · [Configuração](#-configuração) · [Deploy](#-deploy-em-produção-docker-swarm--traefik) · [API](#-api) · [n8n](#-integração-com-n8n) · [Suporte](#️-suporte-profissional)
 
 </div>
 
@@ -314,7 +315,7 @@ Notas de produção:
 
 ## 🔌 API
 
-A documentação completa (OpenAPI 3, **140 rotas**) é servida pelo próprio servidor em
+A documentação completa (OpenAPI 3, **179 rotas**) é servida pelo próprio servidor em
 **`/api-docs.html`** (Swagger UI) e está em [`client/public/openapi.yaml`](./client/public/openapi.yaml).
 
 Todas as rotas são escopadas por sessão (`/api/sessions/{sid}/…`). Os eventos chegam por um
@@ -336,6 +337,25 @@ Todas as rotas são escopadas por sessão (`/api/sessions/{sid}/…`). Os evento
 | **SIP** | `GET /api/sip/status`, `GET/POST /sip` (credenciais p/ o PBX registrar aqui), `GET/POST /sip-ext` (registrar num PBX externo: host, porta, usuário, senha, ramal, proxy) |
 | **Widget / formulários** | `GET /api/widget-key`, `POST /api/widget-tokens`, `GET /forms/{token}`, `POST /forms/{token}/submit` (públicas, token como capability) |
 | **Infra** | `GET /api/config` (flags, versão, commit), `GET /livez`, `/readyz`, `/metrics`, `GET /recordings/{id}` |
+
+---
+
+## 🔗 Integração com n8n
+
+Automatize o WhatsApp no **n8n sem escrever código**: o node oficial [`n8n-nodes-astracalls`](https://www.npmjs.com/package/n8n-nodes-astracalls) já está publicado no npm, todo em português.
+
+**Instalação:** no n8n, abra **Configurações → Community Nodes → Install**, digite `n8n-nodes-astracalls` e clique em **Install**. No Docker, use `N8N_COMMUNITY_PACKAGES=n8n-nodes-astracalls`.
+
+**Credencial:** a URL do seu AstraCalls e a API Key (`WACALLS_API_KEY`).
+
+| Node | O que faz |
+|---|---|
+| **AstraCalls** | 55 operações em 8 recursos: **Mensagem** (texto, mídia, documento, enquete, botões, lista, formulário nativo, reagir, editar, apagar…), **Chamada** (ligar, ligação fantasma, disparo de ligações com áudio/vídeo), **Grupo**, **Comunidade**, **Contato**, **Sessão**, **Formulário** e **Requisição Personalizada** (qualquer uma das 179 rotas) |
+| **AstraCalls Trigger** | Inicia o fluxo com 15 eventos: mensagem recebida, leitura, reação, voto em enquete, formulário respondido, entrada/saída de grupo, gravação de chamada, desconexão da sessão… Configura o webhook da sessão sozinho ao ativar |
+
+- **Fácil de usar:** a sessão é escolhida numa lista (nome + número), o destino aceita número com ou sem o 9º dígito e a mídia vem por URL ou de um arquivo de etapa anterior.
+- **Pronto para responder:** o gatilho entrega `de`, `nome`, `texto` e `responderPara` prontos para usar no envio, e ignora as mensagens da própria conta (sem loop).
+- **Agentes de IA:** o node pode ser usado como ferramenta pelos agentes de IA do n8n.
 
 ---
 
