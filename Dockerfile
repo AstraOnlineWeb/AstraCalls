@@ -71,6 +71,9 @@ ENV CGO_ENABLED=1 \
 ARG BUILD_VERSION=dev
 ARG BUILD_REV=dev
 RUN go build -tags mlow -ldflags "-X main.version=${BUILD_VERSION} -X main.commit=${BUILD_REV}" -o /wacalls ./cmd/server
+# Conector SIP (PABX IP -> Botfy): binário separado, Go puro (sem cgo/MLow). Roda
+# como OUTRO serviço da stack trocando o entrypoint (ver README, "Conector SIP").
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${BUILD_VERSION}" -o /sipconnector ./cmd/sipconnector
 
 # ---------- Stage 4: runtime enxuto ----------
 FROM debian:bookworm-slim AS runtime
@@ -79,6 +82,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=opus /opt/libopus_mlow.so /usr/local/lib/libopus_mlow.so
 RUN ldconfig
 COPY --from=server /wacalls /usr/local/bin/wacalls
+COPY --from=server /sipconnector /usr/local/bin/sipconnector
 COPY --from=client /app/client/dist /app/client/dist
 COPY --from=server /astracalls-passkey.zip /app/client/dist/astracalls-passkey.zip
 WORKDIR /app
