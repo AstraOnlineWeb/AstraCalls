@@ -1,12 +1,66 @@
 package main
 
 import (
+	"context"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 )
+
+// O 200 do REGISTER precisa listar o binding no Contact (RFC 3261 §10.3): o
+// 3CX confere e, sem ele, deixa o tronco "Não registrado" (sem rota de saída).
+func TestSIPRegisterOKHasContact(t *testing.T) {
+	log := slog.Default()
+	mgr := &SessionManager{broker: NewBroker(), log: log, maxCalls: 8, sessions: map[string]*Session{}}
+	mgr.register(&Session{id: "s1", mgr: mgr, log: log, reg: newCallRegistry(), SIPUser: "wa_test1234", SIPPass: "segredo"})
+
+	gw, err := NewSIPGateway(mgr, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = gw.server.ListenAndServe(ctx, "udp", "127.0.0.1:15093") }()
+
+	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("3CX-test"))
+	cli, _ := sipgo.NewClient(ua, sipgo.WithClientHostname("127.0.0.1"), sipgo.WithClientPort(15094))
+	pbx, _ := sipgo.NewServer(ua) // recebe as respostas na porta do Via
+	go func() { _ = pbx.ListenAndServe(ctx, "udp", "127.0.0.1:15094") }()
+	time.Sleep(200 * time.Millisecond)
+
+	target := sip.Uri{Scheme: "sip", Host: "127.0.0.1", Port: 15093}
+	aor := sip.Uri{Scheme: "sip", User: "wa_test1234", Host: "127.0.0.1"}
+	req := sip.NewRequest(sip.REGISTER, target)
+	from := &sip.FromHeader{Address: aor, Params: sip.NewParams()}
+	from.Params.Add("tag", "t1")
+	req.AppendHeader(from)
+	req.AppendHeader(&sip.ToHeader{Address: aor, Params: sip.NewParams()})
+	req.AppendHeader(&sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "wa_test1234", Host: "127.0.0.1", Port: 15094}})
+	req.AppendHeader(sip.NewHeader("Expires", "120"))
+	req.AppendHeader(sip.NewHeader("Authorization",
+		buildAuth("wa_test1234", "astracalls", "segredo", "REGISTER", "sip:127.0.0.1:15093", "n1")))
+
+	rctx, rcancel := context.WithTimeout(ctx, 3*time.Second)
+	defer rcancel()
+	res, err := cli.Do(rctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("esperava 200, got %d", res.StatusCode)
+	}
+	ct := res.Contact()
+	if ct == nil || ct.Address.Port != 15094 || ct.Address.User != "wa_test1234" {
+		t.Fatalf("200 sem o Contact registrado: %v", res)
+	}
+	if !strings.Contains(ct.String(), "expires=120") {
+		t.Fatalf("Contact sem expires: %s", ct)
+	}
+}
 
 // 3CX: o INVITE de saída vem com o caller ID do ramal no From (não o usuário
 // SIP da sessão); a sessão é achada pelo IP do PBX registrado em nós.

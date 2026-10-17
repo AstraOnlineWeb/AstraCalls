@@ -204,6 +204,14 @@ func (gw *SIPGateway) handleRegister(req *sip.Request, tx sip.ServerTransaction)
 	gw.log.Info("SIP REGISTER success", "sip_user", sipUser, "session", sess.id, "contact", contact, "expires", expires)
 
 	resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
+	// RFC 3261 §10.3: o 200 lista o binding registrado no Contact. PBXs como o
+	// 3CX conferem o próprio Contact aqui; sem ele tratam o registro como falho
+	// (tronco "Não registrado" e sem rota de saída) mesmo com o 200.
+	if contactHeader != nil {
+		params := sip.NewParams()
+		params.Add("expires", strconv.Itoa(expires))
+		resp.AppendHeader(&sip.ContactHeader{Address: contactURI, Params: params})
+	}
 	resp.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expires)))
 	_ = tx.Respond(resp)
 }
@@ -775,11 +783,17 @@ func sipUserPart(jid string) string {
 // ========== Helpers ==========
 
 func (gw *SIPGateway) findSessionBySIPUser(sipUser string) *Session {
-	for _, info := range gw.sessions.infos() {
-		if info.SIPUser == sipUser {
-			if sess, ok := gw.sessions.Get(info.ID); ok {
-				return sess
-			}
+	if sipUser == "" {
+		return nil
+	}
+	gw.sessions.mu.RLock()
+	defer gw.sessions.mu.RUnlock()
+	for _, sess := range gw.sessions.sessions {
+		sess.mu.Lock()
+		match := sess.SIPUser == sipUser
+		sess.mu.Unlock()
+		if match {
+			return sess
 		}
 	}
 	return nil
