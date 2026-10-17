@@ -21,9 +21,12 @@ const (
 	modeRegisterOut = "register_out" // o conector registra como ramal no PABX
 )
 
+// AuthUser é o usuário do DIGEST quando o PABX separa ramal e login (no 3CX é o
+// "ID de autenticação"). Vazio = autentica com o próprio ramal/usuário.
 type Agent struct {
 	Email     string `json:"email"`
 	Extension string `json:"extension"`
+	AuthUser  string `json:"authUser"`
 	Password  string `json:"password,omitempty"`
 }
 
@@ -39,6 +42,7 @@ type Line struct {
 	Transport string  `json:"transport"`
 	Proxy     string  `json:"proxy"`
 	User      string  `json:"user"`
+	AuthUser  string  `json:"authUser"`
 	Password  string  `json:"password,omitempty"`
 	DID       string  `json:"did"`
 	Agents    []Agent `json:"agents"`
@@ -65,6 +69,7 @@ func (l *Line) normalize(prev *Line) error {
 	}
 	l.Host = strings.TrimSpace(l.Host)
 	l.User = strings.TrimSpace(l.User)
+	l.AuthUser = strings.TrimSpace(l.AuthUser)
 	l.Proxy = strings.TrimSpace(l.Proxy)
 	l.DID = strings.TrimSpace(l.DID)
 	if l.Port <= 0 {
@@ -98,6 +103,7 @@ func (l *Line) normalize(prev *Line) error {
 	for _, a := range l.Agents {
 		a.Email = strings.ToLower(strings.TrimSpace(a.Email))
 		a.Extension = strings.TrimSpace(a.Extension)
+		a.AuthUser = strings.TrimSpace(a.AuthUser)
 		if a.Email == "" || a.Extension == "" {
 			continue
 		}
@@ -117,6 +123,14 @@ func (l *Line) normalize(prev *Line) error {
 	l.Agents = agentes
 	l.UpdatedAt = time.Now().Unix()
 	return nil
+}
+
+// authOr: usuário do digest — o ID de autenticação quando há, senão o próprio usuário.
+func authOr(authUser, user string) string {
+	if authUser != "" {
+		return authUser
+	}
+	return user
 }
 
 func (l Line) agentByEmail(email string) *Agent {
@@ -143,13 +157,13 @@ func (l Line) public() map[string]any {
 	agentes := make([]map[string]any, 0, len(l.Agents))
 	for _, a := range l.Agents {
 		agentes = append(agentes, map[string]any{
-			"email": a.Email, "extension": a.Extension, "hasPassword": a.Password != "",
+			"email": a.Email, "extension": a.Extension, "authUser": a.AuthUser, "hasPassword": a.Password != "",
 		})
 	}
 	return map[string]any{
 		"id": l.ID, "accountId": l.AccountID, "inboxId": l.InboxID, "name": l.Name,
 		"enabled": l.Enabled, "mode": l.Mode, "host": l.Host, "port": l.Port,
-		"transport": l.Transport, "proxy": l.Proxy, "user": l.User,
+		"transport": l.Transport, "proxy": l.Proxy, "user": l.User, "authUser": l.AuthUser,
 		"hasPassword": l.Password != "", "did": l.DID, "agents": agentes,
 	}
 }

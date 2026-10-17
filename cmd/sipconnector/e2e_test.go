@@ -42,11 +42,38 @@ type fakePBX struct {
 	cliDialog  *sipgo.DialogClientSession
 	rtp        *net.UDPConn
 	onRefer    func(*sip.Request, sip.ServerTransaction)
+
+	// PABX estilo 3CX: o ramal (AOR) autentica com OUTRO login (ID de autenticação).
+	// ramal -> {login, senha}; ramal fora do mapa entra sem senha.
+	creds     map[string][2]string
+	nonces    *nonceStore
+	authUsers []string // logins que autenticaram com sucesso
+}
+
+// exigeDigest devolve true se o pedido pode seguir; senão já respondeu 401.
+func (p *fakePBX) exigeDigest(req *sip.Request, tx sip.ServerTransaction, ramal string) bool {
+	p.mu.Lock()
+	cred, ok := p.creds[ramal]
+	p.mu.Unlock()
+	if !ok {
+		return true
+	}
+	if h := req.GetHeader("Authorization"); h != nil &&
+		p.nonces.checkDigest(h.Value(), string(req.Method), cred[0], cred[1]) {
+		p.mu.Lock()
+		p.authUsers = append(p.authUsers, parseDigestHeader(h.Value())["username"])
+		p.mu.Unlock()
+		return true
+	}
+	res := sip.NewResponseFromRequest(req, 401, "Unauthorized", nil)
+	res.AppendHeader(sip.NewHeader("WWW-Authenticate", p.nonces.challenge()))
+	_ = tx.Respond(res)
+	return false
 }
 
 func startFakePBX(t *testing.T, ctx context.Context) *fakePBX {
 	t.Helper()
-	p := &fakePBX{port: freeUDPPort(t), registered: make(chan struct{}, 4)}
+	p := &fakePBX{port: freeUDPPort(t), registered: make(chan struct{}, 4), nonces: newNonceStore()}
 	ua, _ := sipgo.NewUA(sipgo.WithUserAgent("fake-pbx"))
 	srv, _ := sipgo.NewServer(ua)
 	cli, _ := sipgo.NewClient(ua, sipgo.WithClientHostname("127.0.0.1"))
@@ -58,6 +85,9 @@ func startFakePBX(t *testing.T, ctx context.Context) *fakePBX {
 		t.Fatal(err)
 	}
 	srv.OnRegister(func(req *sip.Request, tx sip.ServerTransaction) {
+		if !p.exigeDigest(req, tx, req.From().Address.User) {
+			return
+		}
 		res := sip.NewResponseFromRequest(req, 200, "OK", nil)
 		res.AppendHeader(sip.NewHeader("Expires", "300"))
 		_ = tx.Respond(res)
@@ -68,6 +98,9 @@ func startFakePBX(t *testing.T, ctx context.Context) *fakePBX {
 	})
 	// ligação que o conector faz PARA o PABX: atende na hora
 	srv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
+		if !p.exigeDigest(req, tx, req.From().Address.User) {
+			return
+		}
 		d, err := p.dialog.ReadInvite(req, tx)
 		if err != nil {
 			return
@@ -461,4 +494,58 @@ func TestEndToEndWithFakePBX(t *testing.T) {
 			t.Fatal("IP estranho aceito")
 		}
 	})
+}
+
+// 3CX: o ramal é "800"/"201", mas o digest usa o ID de autenticação. Registro e
+// discagem têm que autenticar com o ID e continuar se identificando pelo ramal.
+func TestAuthIDSeparadoDoRamal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pbx := startFakePBX(t, ctx)
+	pbx.creds = map[string][2]string{"800": {"Xk7pQ2mZ", "s3nha"}, "201": {"Ab12Cd34", "outra"}}
+	s := startConnector(t, ctx)
+
+	line := Line{ID: "inbox3cx", AccountID: 1, Enabled: true, Mode: modeRegisterOut, Host: "127.0.0.1",
+		Port: pbx.port, User: "800", AuthUser: "Xk7pQ2mZ", Password: "s3nha",
+		Agents: []Agent{{Email: "ana@botfy", Extension: "201", AuthUser: "Ab12Cd34", Password: "outra"}}}
+	if err := line.normalize(nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.store.put(line)
+	s.sip.applyLine(line)
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-pbx.registered:
+		case <-time.After(5 * time.Second):
+			st, ag := s.sip.lineStatus(line)
+			t.Fatalf("não registrou com o ID de autenticação: %+v %+v", st, ag)
+		}
+	}
+
+	c, err := s.sip.dial(line, line.agentByEmail("ana@botfy"), "5511999990000", "tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for c.currentStatus() != statusConnected && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if c.currentStatus() != statusConnected {
+		t.Fatal("a discagem pelo ramal 201 não autenticou com o ID")
+	}
+	c.hangup("user_ended")
+
+	pbx.mu.Lock()
+	defer pbx.mu.Unlock()
+	usados := map[string]bool{}
+	for _, u := range pbx.authUsers {
+		usados[u] = true
+	}
+	if !usados["Xk7pQ2mZ"] || !usados["Ab12Cd34"] || usados["800"] || usados["201"] {
+		t.Fatalf("logins usados no digest: %v", pbx.authUsers)
+	}
+	if line.public()["authUser"] != "Xk7pQ2mZ" {
+		t.Fatal("authUser não aparece na config pública")
+	}
 }

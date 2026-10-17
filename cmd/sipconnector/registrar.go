@@ -36,7 +36,8 @@ type regTarget struct {
 	port        int
 	transport   string
 	proxy       string
-	user        string
+	user        string // ramal/AOR: From, To e Contact
+	authUser    string // login do digest (vazio = user)
 	password    string
 	contactUser string
 }
@@ -144,7 +145,7 @@ func (r *uacRegistrar) register(ctx context.Context, expires int) (int, int, err
 		return 0, 0, err
 	}
 	if res.StatusCode == 401 || res.StatusCode == 407 {
-		res, err = r.ua.client.DoDigestAuth(ctx, req, res, sipgo.DigestAuth{Username: t.user, Password: t.password})
+		res, err = r.ua.client.DoDigestAuth(ctx, req, res, sipgo.DigestAuth{Username: authOr(t.authUser, t.user), Password: t.password})
 		if err != nil {
 			return 0, 0, err
 		}

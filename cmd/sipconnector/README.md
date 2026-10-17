@@ -24,8 +24,12 @@ a aba "Ligações SIP (PABX)", com `PUT /api/lines/{id}`.
 | `register_out` | o conector registra como ramal no PABX (`host`, `user`, `password`) | o PABX encaminha a URA/fila para esse ramal |
 | `register_in` | o PABX registra no conector (`user`/`password` são do tronco) | PABX com tronco SIP apontando para o conector |
 
-**`agents`** (`[{email, extension, password}]`): para cada atendente, o conector registra
-**um ramal no PABX da linha**.
+**`agents`** (`[{email, extension, authUser, password}]`): para cada atendente, o conector
+registra **um ramal no PABX da linha**.
+
+**`authUser`** (na linha e em cada ramal) é o login do digest quando o PABX separa o ramal do
+usuário de autenticação. No **3CX** é o "ID de autenticação" do ramal (um código aleatório).
+O ramal continua sendo a identidade SIP (From/To/Contact). Vazio = autentica com o próprio ramal.
 - Uma ligação para esse ramal toca **só** para aquele atendente: o evento `incoming` traz
   `agentEmail`.
 - Quando o atendente disca pelo ticket (`agentEmail` no `POST .../calls`), a ligação sai

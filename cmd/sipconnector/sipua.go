@@ -117,12 +117,13 @@ func (u *sipUA) applyLine(l Line) {
 	base := regTarget{lineID: l.ID, host: l.Host, port: l.Port, transport: l.Transport, proxy: l.Proxy}
 	if l.Mode == modeRegisterOut {
 		t := base
-		t.user, t.password, t.contactUser = l.User, l.Password, contactUserFor(l.ID, "")
+		t.user, t.authUser, t.password, t.contactUser = l.User, l.AuthUser, l.Password, contactUserFor(l.ID, "")
 		targets = append(targets, t)
 	}
 	for _, a := range l.Agents {
 		t := base
-		t.extension, t.user, t.password, t.contactUser = a.Extension, a.Extension, a.Password, contactUserFor(l.ID, a.Extension)
+		t.extension, t.user, t.authUser, t.password = a.Extension, a.Extension, a.AuthUser, a.Password
+		t.contactUser = contactUserFor(l.ID, a.Extension)
 		targets = append(targets, t)
 	}
 	u.mu.Lock()
@@ -447,9 +448,10 @@ func (u *sipUA) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 // dial liga para `phone` pelo ramal do agente (se informado e mapeado) ou pela linha.
 func (u *sipUA) dial(line Line, agent *Agent, phone, owner string) (*Call, error) {
 	host, port, user, password, transport := line.Host, line.Port, line.User, line.Password, line.Transport
+	authUser := line.AuthUser
 	ext := ""
 	if agent != nil {
-		user, password, ext = agent.Extension, agent.Password, agent.Extension
+		user, authUser, password, ext = agent.Extension, agent.AuthUser, agent.Password, agent.Extension
 	}
 	destination := ""
 	if line.Mode == modeRegisterIn && agent == nil {
@@ -515,7 +517,7 @@ func (u *sipUA) dial(line Line, agent *Agent, phone, owner string) (*Call, error
 
 	go func() {
 		defer cancel()
-		err := d.WaitAnswer(ctx, sipgo.AnswerOptions{Username: user, Password: password})
+		err := d.WaitAnswer(ctx, sipgo.AnswerOptions{Username: authOr(authUser, user), Password: password})
 		if err != nil {
 			c.end(dialFailureReason(err))
 			return
