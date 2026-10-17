@@ -651,6 +651,10 @@ func (s *server) handleHold(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
+	if c := s.sipAgentByID(sess, r.PathValue("id")); c != nil {
+		s.sipAgentHold(c, w, r)
+		return
+	}
 	id := r.PathValue("id")
 	ac, ok := sess.reg.get(id)
 	if !ok {
@@ -677,6 +681,10 @@ func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
+	if c := s.sipAgentByID(sess, r.PathValue("id")); c != nil {
+		s.sipAgentResume(c, w, r)
+		return
+	}
 	id := r.PathValue("id")
 	ac, ok := sess.reg.get(id)
 	if !ok {
@@ -698,6 +706,10 @@ func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {
+		return
+	}
+	if c := s.sipAgentByID(sess, r.PathValue("id")); c != nil {
+		s.sipAgentTransfer(c, w, r)
 		return
 	}
 	id := r.PathValue("id")
@@ -731,6 +743,10 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 func (s *server) handlePickup(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {
+		return
+	}
+	if c := s.sipAgentByID(sess, r.PathValue("id")); c != nil {
+		s.sipAgentPickup(c, w, r)
 		return
 	}
 	id := r.PathValue("id")
@@ -828,6 +844,10 @@ func (s *server) doFakeCall(sess *Session, w http.ResponseWriter, r *http.Reques
 
 func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request) {
 	callID := r.PathValue("id")
+	if c := s.sipAgentByID(sess, callID); c != nil {
+		s.sipAgentWebRTC(c, w, r)
+		return
+	}
 	ac, ok := sess.reg.get(callID)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})

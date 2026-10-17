@@ -3481,6 +3481,11 @@ paths:
       description: >
         Passa a chamada para outro atendente (troca de dono + ponte), sem tocar o leg do
         WhatsApp. Com `to` = clientId do atendente alvo; sem ele, a oferta vai para todos.
+        Também vale para a chamada SIP do modo agente (`sip-…`): ela vai para a espera com
+        música (`moh:false` = silêncio), a ponte WS da IA recebe `{"type":"call-transferred"}`
+        e é fechada SEM derrubar a ligação, o dono é liberado e sai `call-transfer-offer`.
+        O atendente assume com `.../pickup` e conecta o áudio com `.../webrtc` ou `.../ws`,
+        o que tira a chamada da espera.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
@@ -3493,6 +3498,7 @@ paths:
               type: object
               properties:
                 to: { type: string, description: "clientId do atendente alvo (opcional = fila)" }
+                moh: { type: boolean, description: "música de espera durante a transferência (padrão true)" }
       responses:
         "200":
           description: Transferida
@@ -3513,6 +3519,7 @@ paths:
       description: >
         Fixa o novo dono (`X-Client-Id`) de uma chamada transferida (não re-atende no
         WhatsApp). Depois o navegador chama `.../webrtc` (abre a ponte) e `.../resume`.
+        Na chamada SIP do modo agente, conectar `.../webrtc` ou `.../ws` já tira da espera.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }

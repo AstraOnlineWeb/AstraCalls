@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/pion/rtp"
+
+	"wacalls/internal/voip/call"
 )
 
 // sipDebugEnabled liga os logs de diagnóstico do SIP/ponte de áudio. Desligado por
@@ -86,6 +88,12 @@ type SIPRTPBridge struct {
 	// esvazia. Necessário quando a fonte (agente/TTS) manda em rajadas.
 	paced    bool
 	outQueue []int16
+
+	// held: em espera (transferência) — o pacer ignora a fila e toca a música
+	// de espera (moh, 8 kHz) ou silêncio; o áudio novo do agente é descartado.
+	held   bool
+	moh    []int16
+	mohPos int
 
 	mu         sync.Mutex
 	activeSent bool
@@ -286,6 +294,25 @@ func (b *SIPRTPBridge) ClearOutput() {
 	b.mu.Unlock()
 }
 
+// SetHold liga/desliga a espera (só no modo ritmado): com moh toca a música de
+// espera para quem ligou; sem, silêncio. Entrar em espera descarta a fila.
+func (b *SIPRTPBridge) SetHold(held, moh bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.held = held
+	b.outQueue = b.outQueue[:0]
+	b.moh = nil
+	if held && moh {
+		var d downsampler16to8
+		low := d.process(call.MOHLoop())
+		b.moh = make([]int16, len(low))
+		for i, v := range low {
+			b.moh[i] = floatToInt16(v)
+		}
+		b.mohPos = 0
+	}
+}
+
 // limite da fila de saída ritmada: 60 s de áudio a 8 kHz.
 const sipPacedMaxSamples = 8000 * 60
 
@@ -301,8 +328,15 @@ func (b *SIPRTPBridge) pacerLoop() {
 		}
 		b.mu.Lock()
 		samples := make([]int16, frame)
-		n := copy(samples, b.outQueue)
-		b.outQueue = b.outQueue[:copy(b.outQueue, b.outQueue[n:])]
+		if b.held {
+			for i := 0; i < frame && len(b.moh) > 0; i++ {
+				samples[i] = b.moh[b.mohPos]
+				b.mohPos = (b.mohPos + 1) % len(b.moh)
+			}
+		} else {
+			n := copy(samples, b.outQueue)
+			b.outQueue = b.outQueue[:copy(b.outQueue, b.outQueue[n:])]
+		}
 		b.mu.Unlock()
 		_ = b.sendSamples(samples)
 	}
@@ -318,6 +352,10 @@ func (b *SIPRTPBridge) WritePCM(pcm []float32) error {
 		samples[i] = floatToInt16(v)
 	}
 	if b.paced {
+		if b.held {
+			b.mu.Unlock()
+			return nil
+		}
 		b.outQueue = append(b.outQueue, samples...)
 		if over := len(b.outQueue) - sipPacedMaxSamples; over > 0 {
 			b.outQueue = b.outQueue[over:]

@@ -41,3 +41,7 @@ func generateMOH() []float32 {
 	}
 	return buf
 }
+
+// MOHLoop expõe o loop de música de espera (16 kHz mono) para outras pontes de
+// áudio (ex.: espera da chamada SIP do modo agente).
+func MOHLoop() []float32 { return mohLoop }

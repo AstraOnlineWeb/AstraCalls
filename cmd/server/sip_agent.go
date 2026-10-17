@@ -12,6 +12,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+
+	"wacalls/internal/voip/media"
 )
 
 // Modo agente do SIP: um INVITE entrante (alguém ligando para o ramal) é ATENDIDO
@@ -45,11 +47,16 @@ type sipAgentCall struct {
 	settled     chan struct{}
 	settledOnce sync.Once
 
-	mu        sync.Mutex
-	ws        *wsBridge
-	answered  bool
-	ended     bool
-	ringTimer *time.Timer
+	mu sync.Mutex
+	ws *wsBridge
+	// ponte WebRTC do navegador (atendente humano que assumiu via transferência).
+	browser     *Bridge
+	browserOpus media.Codec
+	browserBuf  []float32 // PCM 16 kHz acumulado até 20 ms (quadro Opus)
+	held        bool
+	answered    bool
+	ended       bool
+	ringTimer   *time.Timer
 }
 
 func (gw *SIPGateway) agentCall(sessionID, id string) *sipAgentCall {
@@ -190,6 +197,7 @@ func (gw *SIPGateway) handleAgentInvite(sess *Session, req *sip.Request, tx sip.
 		if ws := c.wsConn(); ws != nil {
 			_ = ws.WritePCM(pcm)
 		}
+		c.writeBrowser(pcm)
 	}, func(d string) {
 		if ws := c.wsConn(); ws != nil {
 			ws.SendEvent(map[string]any{"type": "dtmf", "digit": d})
@@ -325,7 +333,16 @@ func (c *sipAgentCall) end(reason string, code int) {
 	}
 	ws := c.ws
 	c.ws = nil
+	br, oc := c.browser, c.browserOpus
+	c.browser, c.browserOpus = nil, nil
 	c.mu.Unlock()
+	if br != nil {
+		br.DisableTerminate()
+		br.Close()
+	}
+	if oc != nil {
+		oc.Close()
+	}
 
 	switch {
 	case !answered && code > 0:
@@ -433,10 +450,24 @@ func (s *server) sipAgentWS(c *sipAgentCall, w http.ResponseWriter, r *http.Requ
 	old := c.ws
 	c.ws = bridge
 	answered := c.answered
+	held := c.held
+	// a ponte WS assume o áudio: solta a do navegador, se houver.
+	oldBr, oldOC := c.browser, c.browserOpus
+	c.browser, c.browserOpus, c.browserBuf = nil, nil, nil
 	c.mu.Unlock()
 	if old != nil {
 		old.DisableTerminate()
 		old.Close()
+	}
+	if oldBr != nil {
+		oldBr.DisableTerminate()
+		oldBr.Close()
+	}
+	if oldOC != nil {
+		oldOC.Close()
+	}
+	if held {
+		c.setHold(false, false)
 	}
 	if answered {
 		bridge.SendEvent(map[string]any{"type": "call-status", "status": string(StatusConnected)})
@@ -446,6 +477,191 @@ func (s *server) sipAgentWS(c *sipAgentCall, w http.ResponseWriter, r *http.Requ
 	go bridge.keepAlive()
 	bridge.readLoop()
 	s.log.Info("sip agent ws: disconnected", "call", c.id)
+}
+
+// ===== transferência para atendente humano =====
+
+// browserFrame16k = 20 ms a 16 kHz (vira 960 amostras a 48 kHz, quadro Opus válido).
+const browserFrame16k = 320
+
+// writeBrowser manda o áudio de quem ligou (16 kHz) para o navegador do atendente.
+func (c *sipAgentCall) writeBrowser(pcm []float32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.browser == nil || c.browserOpus == nil {
+		return
+	}
+	c.browserBuf = append(c.browserBuf, pcm...)
+	for len(c.browserBuf) >= browserFrame16k {
+		frame := media.Upsample16to48(c.browserBuf[:browserFrame16k])
+		c.browserBuf = c.browserBuf[:copy(c.browserBuf, c.browserBuf[browserFrame16k:])]
+		if opus, err := c.browserOpus.Encode(frame); err == nil && len(opus) > 0 {
+			_ = c.browser.WriteOpus(opus, 20*time.Millisecond)
+		}
+	}
+}
+
+// setHold põe/tira a chamada da espera: em espera quem ligou ouve música (moh)
+// e o áudio do agente/atendente não passa.
+func (c *sipAgentCall) setHold(held, moh bool) {
+	c.mu.Lock()
+	c.held = held
+	c.mu.Unlock()
+	c.rtp.SetHold(held, moh)
+	b := c.gw.sessions.broker
+	if cr, ok := b.getCall(c.id); ok && cr != nil {
+		rec := *cr
+		rec.Held = held
+		b.upsertCall(rec)
+	}
+}
+
+// sipAgentHold / sipAgentResume: POST /calls/{id}/hold {"moh":bool} e /resume.
+func (s *server) sipAgentHold(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MOH *bool `json:"moh"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !c.isAnswered() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "call not answered"})
+		return
+	}
+	moh := body.MOH == nil || *body.MOH
+	c.setHold(true, moh)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "held": true, "moh": moh})
+}
+
+func (s *server) sipAgentResume(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
+	if !c.isAnswered() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "call not answered"})
+		return
+	}
+	c.setHold(false, false)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "held": false})
+}
+
+// detachAgentWS solta a ponte WS atual (a IA) sem encerrar a chamada.
+func (c *sipAgentCall) detachAgentWS(reason string) {
+	c.mu.Lock()
+	ws := c.ws
+	c.ws = nil
+	c.mu.Unlock()
+	if ws != nil {
+		ws.SendEvent(map[string]any{"type": "call-transferred", "reason": reason})
+		ws.DisableTerminate()
+		ws.Close()
+	}
+}
+
+func (c *sipAgentCall) isAnswered() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.answered && !c.ended
+}
+
+// sipAgentTransfer: POST /calls/{id}/transfer numa chamada SIP do modo agente.
+// Transferência CEGA para um atendente: põe em espera com música (opcional
+// {"moh":false}), desliga a ponte WS da IA (ela recebe {"type":"call-transferred"}
+// e o fechamento NÃO derruba a ligação), libera o dono e manda
+// call-transfer-offer (para {"to":"<clientId>"} ou para todos da conta).
+// O atendente assume com /pickup (ou /accept) e abre o áudio com /webrtc ou /ws.
+func (s *server) sipAgentTransfer(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		To  string `json:"to"`
+		MOH *bool  `json:"moh"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !c.isAnswered() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "call not answered"})
+		return
+	}
+	moh := body.MOH == nil || *body.MOH
+	c.setHold(true, moh)
+	c.detachAgentWS("transfer")
+	s.broker.reassignOwner(c.id, nil)
+	to := strings.TrimSpace(body.To)
+	s.broker.emitTransferOffer(c.sessionID, c.id, c.phone, clientID(r), to)
+	s.log.Info("SIP agent: transferida", "id", c.id, "to", to)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": to})
+}
+
+// sipAgentPickup: POST /calls/{id}/pickup — o atendente assume a chamada
+// transferida. A chamada SAI da espera quando o áudio dele conecta (/webrtc ou
+// /ws) ou com /resume.
+func (s *server) sipAgentPickup(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
+	if !c.isAnswered() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "call not answered"})
+		return
+	}
+	owner := clientID(r)
+	if !s.broker.reassignOwner(c.id, &owner) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	s.broker.emitTransferClaimed(c.sessionID, c.id, owner)
+	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": c.id}})
+}
+
+// sipAgentWebRTC: POST /calls/{id}/webrtc {sdp_offer} — áudio da chamada SIP no
+// navegador (Opus/WebRTC). Substitui a ponte WS da IA, se houver, e tira da espera.
+func (s *server) sipAgentWebRTC(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SDPOffer string `json:"sdp_offer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.SDPOffer == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sdp_offer required"})
+		return
+	}
+	br, answer, err := NewBridge(body.SDPOffer, s.log)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	oc, ocErr := media.NewOpusCodec(48000, 960)
+	if ocErr != nil {
+		s.log.Warn("browser Opus codec unavailable — call audio disabled", "err", ocErr)
+		oc = nil
+	}
+	br.OnBrowserRTP = func(payload []byte) {
+		if oc == nil {
+			return
+		}
+		pcm48, err := oc.Decode(payload)
+		if err != nil {
+			return
+		}
+		_ = c.rtp.WritePCM(media.Downsample48to16(pcm48))
+	}
+	br.OnTerminalICE = func() { go c.end("agent_hangup", 486) }
+
+	c.mu.Lock()
+	if c.ended {
+		c.mu.Unlock()
+		br.DisableTerminate()
+		br.Close()
+		if oc != nil {
+			oc.Close()
+		}
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	oldBr, oldOC := c.browser, c.browserOpus
+	c.browser, c.browserOpus, c.browserBuf = br, oc, nil
+	held := c.held
+	c.mu.Unlock()
+	if oldBr != nil {
+		oldBr.DisableTerminate()
+		oldBr.Close()
+	}
+	if oldOC != nil {
+		oldOC.Close()
+	}
+	c.detachAgentWS("webrtc")
+	if held {
+		c.setHold(false, false)
+	}
+	_ = c.answer() // atender pelo navegador direto também vale
+	writeJSON(w, http.StatusOK, map[string]string{"sdp_answer": answer})
 }
 
 // ===== re-INVITE / ACK / OPTIONS =====

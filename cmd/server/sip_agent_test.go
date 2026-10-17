@@ -508,3 +508,135 @@ func TestSIPAgentWSContract(t *testing.T) {
 		t.Fatal("PBX não recebeu BYE")
 	}
 }
+
+// TestSIPAgentTransfer: IA atende pelo WS, transfere (espera com música, WS da IA
+// solto sem derrubar a ligação), operador assume com /pickup e conecta o áudio.
+func TestSIPAgentTransfer(t *testing.T) {
+	h := newAgentHarness(t, 15103, 15104, sipAgentOpts{InboundMode: "agent"})
+	pbxRTP, _ := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	defer pbxRTP.Close()
+	offer := "v=0\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio " + itoa(pbxRTP.LocalAddr().(*net.UDPAddr).Port) + " RTP/AVP 0\r\n"
+	from := &sip.FromHeader{Address: sip.Uri{Scheme: "sip", User: "5561999998888", Host: "127.0.0.1"}, Params: sip.NewParams()}
+	from.Params.Add("tag", "tr1")
+	d, err := h.dua.Invite(h.ctx, sip.Uri{Scheme: "sip", User: "2001", Host: "127.0.0.1", Port: 15103}, []byte(offer), from, sip.NewHeader("Content-Type", "application/sdp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := h.waitEvent(t, "incoming")
+	id := ev["id"].(string)
+	c := h.gw.agentCall("s1", id)
+	b := h.gw.sessions.broker
+	srv := &server{log: slog.Default(), broker: b}
+
+	// a ponte da IA aceita (vira dona)
+	req := httptest.NewRequest("POST", "/", nil)
+	req.Header.Set("X-Client-Id", "bridge")
+	rec := httptest.NewRecorder()
+	srv.sipAgentAccept(c, rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("accept %d", rec.Code)
+	}
+	if ev := h.waitEvent(t, "incoming-claimed"); ev["owner"] != "bridge" {
+		t.Fatalf("claimed %v", ev)
+	}
+	if code := finalCode(t, h.ctx, d); code != 200 {
+		t.Fatalf("got %d", code)
+	}
+	_ = d.Ack(h.ctx)
+
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { srv.sipAgentWS(c, w, r) }))
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/?events=1"
+	ai, _, err := websocket.Dial(h.ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{"pcm16"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rctx, rcancel := context.WithTimeout(h.ctx, 3*time.Second)
+	defer rcancel()
+	_, _, _ = ai.Read(rctx) // call-status connected
+
+	// operador sem posse ainda: /accept dá 409
+	req = httptest.NewRequest("POST", "/", nil)
+	req.Header.Set("X-Client-Id", "op1")
+	rec = httptest.NewRecorder()
+	srv.sipAgentAccept(c, rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("accept do operador antes da transferência deveria dar 409, got %d", rec.Code)
+	}
+
+	// IA transfere
+	req = httptest.NewRequest("POST", "/", strings.NewReader(`{"to":"op1"}`))
+	req.Header.Set("X-Client-Id", "bridge")
+	rec = httptest.NewRecorder()
+	srv.sipAgentTransfer(c, rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("transfer %d %s", rec.Code, rec.Body)
+	}
+	_, data, err := ai.Read(rctx)
+	if err != nil || !strings.Contains(string(data), "call-transferred") {
+		t.Fatalf("IA deveria receber call-transferred: %s %v", data, err)
+	}
+	if _, _, err := ai.Read(rctx); err == nil {
+		t.Fatal("WS da IA deveria fechar")
+	}
+	if cr, _ := b.getCall(id); cr == nil || !cr.Held || cr.Owner != nil {
+		t.Fatalf("esperava em espera e sem dono: %+v", cr)
+	}
+
+	// quem ligou ouve música de espera (não silêncio) e a ligação NÃO cai
+	_ = pbxRTP.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1500)
+	heard := false
+	for i := 0; i < 50 && !heard; i++ {
+		n, _, err := pbxRTP.ReadFromUDP(buf)
+		if err != nil {
+			t.Fatalf("sem RTP em espera: %v", err)
+		}
+		var p rtp.Packet
+		if p.Unmarshal(buf[:n]) == nil {
+			for _, x := range p.Payload {
+				if x != 0xFF && x != 0x7F {
+					heard = true
+					break
+				}
+			}
+		}
+	}
+	if !heard {
+		t.Fatal("em espera só chegou silêncio")
+	}
+	select {
+	case <-h.bye:
+		t.Fatal("transferência não pode mandar BYE")
+	default:
+	}
+	if h.gw.agentCall("s1", id) == nil {
+		t.Fatal("chamada sumiu após a transferência")
+	}
+
+	// operador assume e conecta o áudio (WS); sai da espera
+	req = httptest.NewRequest("POST", "/", nil)
+	req.Header.Set("X-Client-Id", "op1")
+	rec = httptest.NewRecorder()
+	srv.sipAgentPickup(c, rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("pickup %d", rec.Code)
+	}
+	if ev := h.waitEvent(t, "call-transfer-claimed"); ev["owner"] != "op1" {
+		t.Fatalf("transfer-claimed %v", ev)
+	}
+	op, _, err := websocket.Dial(h.ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{"pcm16"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = op.Read(rctx)
+	if cr, _ := b.getCall(id); cr == nil || cr.Held || cr.Owner == nil || *cr.Owner != "op1" {
+		t.Fatalf("esperava op1 dono e fora da espera: %+v", cr)
+	}
+	c.end("agent_hangup", 486)
+	select {
+	case <-h.bye:
+	case <-time.After(3 * time.Second):
+		t.Fatal("PBX não recebeu BYE")
+	}
+}
