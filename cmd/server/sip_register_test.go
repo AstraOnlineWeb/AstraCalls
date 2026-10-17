@@ -100,3 +100,30 @@ func TestSessionForRegisteredPBX(t *testing.T) {
 		t.Fatalf("IP ambíguo casou com %s", s.id)
 	}
 }
+
+// Chamada WhatsApp atendida pelo painel/ponte enquanto toca no PBX: o toque SIP é
+// cancelado e marcado como "atendida por outro" (não derruba a chamada).
+func TestCancelInboundRing(t *testing.T) {
+	log := slog.Default()
+	mgr := &SessionManager{broker: NewBroker(), log: log, maxCalls: 8, sessions: map[string]*Session{}}
+	gw, err := NewSIPGateway(mgr, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ring := &inboundRing{cancel: cancel}
+	gw.inboundRinging["wa1"] = ring
+
+	if !gw.cancelInboundRing("wa1") {
+		t.Fatal("deveria haver toque para cancelar")
+	}
+	if ctx.Err() == nil || !ring.claimed {
+		t.Fatalf("toque não cancelado/marcado: err=%v claimed=%v", ctx.Err(), ring.claimed)
+	}
+	if _, ok := gw.inboundRinging["wa1"]; ok {
+		t.Fatal("toque continua registrado")
+	}
+	if gw.cancelInboundRing("wa1") || gw.cancelInboundRing("outra") {
+		t.Fatal("sem toque registrado não deveria cancelar nada")
+	}
+}

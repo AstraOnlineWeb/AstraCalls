@@ -27,6 +27,9 @@ type SIPGateway struct {
 	registrations  map[string]*sipRegistration // keyed by sip_user (modelo 1: PBX registra em nós)
 	activeCalls    map[string]*sipCall         // keyed by SIP Call-ID (SIP->WhatsApp)
 	inboundDialogs map[string]*inboundDialog   // keyed by SIP Call-ID (WhatsApp->SIP)
+	// WhatsApp->SIP ainda tocando no PBX, por callId do WhatsApp: cancela o INVITE
+	// quando a chamada é atendida por outro lado (painel, ponte de voz).
+	inboundRinging map[string]*inboundRing
 	extRegs        map[string]*sipUACRegistrar // keyed by session id (modelo 2: nós registramos no PBX)
 	agentCalls     map[string]*sipAgentCall    // keyed by id "sip-…" (modo agente: SIP entrante atendido)
 	agentDialogs   map[string]*sipAgentCall    // keyed by SIP Call-ID, vive até o diálogo acabar
@@ -43,6 +46,30 @@ type sipRegistration struct {
 
 func (r *sipRegistration) expired() bool {
 	return !r.expiresAt.IsZero() && time.Now().After(r.expiresAt)
+}
+
+// inboundRing é o INVITE WhatsApp->SIP ainda sem resposta do PBX.
+type inboundRing struct {
+	cancel  context.CancelFunc
+	claimed bool // atendida por outro lado: o cancelamento não encerra a chamada
+}
+
+// cancelInboundRing para o toque no PBX de uma chamada WhatsApp que outro cliente
+// (painel, ponte de voz) acabou de atender: envia CANCEL ao PBX e solta a ponte
+// RTP do SIP, sem encerrar a chamada no WhatsApp. Devolve se havia toque.
+func (gw *SIPGateway) cancelInboundRing(waCallID string) bool {
+	gw.mu.Lock()
+	r, ok := gw.inboundRinging[waCallID]
+	if ok {
+		r.claimed = true
+		delete(gw.inboundRinging, waCallID)
+	}
+	gw.mu.Unlock()
+	if ok {
+		r.cancel()
+		gw.log.Info("inbound: atendida por outro cliente, cancelando o toque no PBX", "wa_call_id", waCallID)
+	}
+	return ok
 }
 
 // inboundDialog representa uma chamada WhatsApp->SIP (somos o UAC).
@@ -91,6 +118,7 @@ func NewSIPGateway(sessions *SessionManager, log *slog.Logger) (*SIPGateway, err
 		registrations:  make(map[string]*sipRegistration),
 		activeCalls:    make(map[string]*sipCall),
 		inboundDialogs: make(map[string]*inboundDialog),
+		inboundRinging: make(map[string]*inboundRing),
 		extRegs:        make(map[string]*sipUACRegistrar),
 		agentCalls:     make(map[string]*sipAgentCall),
 		agentDialogs:   make(map[string]*sipAgentCall),
@@ -783,7 +811,36 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 			gw.mu.Unlock()
 		}
 
-		if err := d.WaitAnswer(waitCtx, sipgo.AnswerOptions{}); err != nil {
+		ring := &inboundRing{cancel: cancel}
+		gw.mu.Lock()
+		gw.inboundRinging[callID] = ring
+		gw.mu.Unlock()
+
+		err := d.WaitAnswer(waitCtx, sipgo.AnswerOptions{})
+
+		gw.mu.Lock()
+		claimed := ring.claimed
+		if gw.inboundRinging[callID] == ring {
+			delete(gw.inboundRinging, callID)
+		}
+		gw.mu.Unlock()
+
+		if claimed {
+			// outro cliente atendeu: o PBX já recebeu o CANCEL; a chamada segue no
+			// WhatsApp, só sem a perna SIP (a ponte RTP sai do registro dela).
+			if oldB, found := sess.reg.setRTPBridge(callID, nil); found && oldB != nil {
+				oldB.Close()
+			}
+			if err == nil {
+				// corrida: o PBX atendeu junto com o cancelamento — derruba a perna SIP
+				_ = d.Ack(context.Background())
+				byeCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+				_ = d.Bye(byeCtx)
+				c()
+			}
+			return
+		}
+		if err != nil {
 			gw.log.Info("inbound: SIP not answered", "err", err)
 			sess.terminateCallByID(callID)
 			return
