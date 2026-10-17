@@ -24,6 +24,8 @@ type SessionManager struct {
 	// sipInbound, se definido, é chamado quando o WhatsApp recebe uma chamada,
 	// para tocar num softphone/PBX SIP registrado (gateway SIP).
 	sipInbound func(sess *Session, callID, peerNumber string)
+	// sipAgentCount conta as chamadas SIP do modo agente da sessão (limite de chamadas).
+	sipAgentCount func(sessionID string) int
 
 	// sipExtApply/sipExtRemove (modelo 2) sincronizam o registro da sessão num PBX
 	// externo: apply (re)inicia conforme a config; remove para ao deletar a sessão.
@@ -179,9 +181,14 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 		}
 		s.SIPUser = row.SIPUser
 		s.SIPPass = row.SIPPass
+		var agent sipAgentOpts
+		if row.SIPExtOpts != "" {
+			_ = json.Unmarshal([]byte(row.SIPExtOpts), &agent)
+		}
 		s.setSIPExt(sipExtConfig{
 			Enabled: row.SIPExtEnabled, Host: row.SIPExtHost, Port: row.SIPExtPort,
 			User: row.SIPExtUser, Pass: row.SIPExtPass, Dest: row.SIPExtDest, Proxy: row.SIPExtProxy,
+			Agent: agent,
 		})
 		s.setWebhook(row.Webhook, row.WebhookSecret, splitEvents(row.WebhookEvents))
 		s.setRecording(row.Recording)

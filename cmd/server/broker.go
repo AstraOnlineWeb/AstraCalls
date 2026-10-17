@@ -27,6 +27,7 @@ type CallRecord struct {
 	Held      bool       `json:"held"`
 	EndedAt   *int64     `json:"endedAt,omitempty"`
 	EndReason string     `json:"endReason,omitempty"`
+	Source    string     `json:"source,omitempty"` // "sip" no modo agente; vazio = WhatsApp
 }
 
 type AuthSnapshot struct {
@@ -58,6 +59,8 @@ type SessionInfo struct {
 	SIPExtProxy   string `json:"sip_ext_proxy"`
 	SIPExtStatus  string `json:"sip_ext_status"`
 	SIPExtError   string `json:"sip_ext_error"`
+	// modo do INVITE entrante: originate | agent | auto.
+	SIPExtInboundMode string `json:"sip_ext_inbound_mode"`
 }
 
 type subscriber struct {
@@ -327,7 +330,18 @@ func (b *Broker) emitIncoming(sessionID, id, peer, phone, name string, video boo
 	b.broadcastForSession(sessionID, map[string]any{
 		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer,
 		"phone": phone, "name": name,
-		"video": video, "offeredAt": time.Now().UnixMilli(),
+		"video": video, "offeredAt": time.Now().UnixMilli(), "source": "whatsapp",
+	})
+}
+
+// emitIncomingSIP é o "incoming" de uma ligação SIP atendida pelo modo agente:
+// mesmo formato da chamada WhatsApp (peer = phone = número do chamador) + source
+// "sip" e o bloco sip {callId, from, to, codec}.
+func (b *Broker) emitIncomingSIP(sessionID, id, phone, name string, sipInfo map[string]any) {
+	b.broadcastForSession(sessionID, map[string]any{
+		"type": "incoming", "sessionId": sessionID, "id": id, "peer": phone,
+		"phone": phone, "name": name, "video": false, "offeredAt": time.Now().UnixMilli(),
+		"source": "sip", "sip": sipInfo,
 	})
 }
 

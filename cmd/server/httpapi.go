@@ -48,6 +48,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/sip", s.handleSIPConfig)
 	mux.HandleFunc("GET /api/sessions/{sid}/sip-ext", s.handleSIPExtConfig)
 	mux.HandleFunc("POST /api/sessions/{sid}/sip-ext", s.handleSIPExtConfig)
+	mux.HandleFunc("GET /api/sessions/{sid}/sip-agent", s.handleSIPAgentConfig)
+	mux.HandleFunc("POST /api/sessions/{sid}/sip-agent", s.handleSIPAgentConfig)
 
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
 	// Rota WebSocket de mídia — funciona atrás de proxy reverso HTTP (Cloudflare etc.)
@@ -769,7 +771,7 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 	owner := clientID(r)
 	// (removido) regra "1 chamada por operador" — agora o mesmo navegador/aba
 	// pode disparar várias ligações na mesma sessão (até -max-calls-per-session).
-	if max := s.sessions.maxCalls; max > 0 && sess.reg.count() >= max {
+	if max := s.sessions.maxCalls; max > 0 && sess.activeCallCount() >= max {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "max concurrent calls"})
 		return
 	}
@@ -872,8 +874,20 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"sdp_answer": answer})
 }
 
+// sipAgentByID devolve a chamada do modo agente SIP com esse id na sessão (ou nil).
+func (s *server) sipAgentByID(sess *Session, id string) *sipAgentCall {
+	if s.sipGW == nil || !strings.HasPrefix(id, "sip-") {
+		return nil
+	}
+	return s.sipGW.agentCall(sess.id, id)
+}
+
 func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if c := s.sipAgentByID(sess, id); c != nil {
+		s.sipAgentAccept(c, w, r)
+		return
+	}
 	ac, ok := sess.reg.get(id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
@@ -897,6 +911,10 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 
 func (s *server) doReject(sess *Session, w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if c := s.sipAgentByID(sess, id); c != nil {
+		s.sipAgentReject(c, w, r)
+		return
+	}
 	ac, ok := sess.reg.get(id)
 	if !ok {
 		// callId desconhecido: NÃO responde 200 (antes respondia, então o cliente
@@ -919,6 +937,11 @@ func (s *server) doReject(sess *Session, w http.ResponseWriter, r *http.Request)
 
 func (s *server) doEndCall(sess *Session, w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if c := s.sipAgentByID(sess, id); c != nil {
+		c.end("agent_hangup", 486)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if ac, ok := sess.reg.get(id); ok {
 		_ = ac.cm.EndCall(r.Context(), core.EndCallReasonUserEnded)
 	}

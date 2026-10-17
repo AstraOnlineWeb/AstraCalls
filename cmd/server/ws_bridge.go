@@ -40,6 +40,8 @@ type wsBridge struct {
 	OnBrowserPCM func(pcm16 []float32)
 	// OnTerminalWS é disparado quando o socket fecha (encerra a chamada).
 	OnTerminalWS func()
+	// OnText recebe frames de TEXTO do consumidor (comandos JSON, ex.: clear).
+	OnText func(data []byte)
 }
 
 func newWSBridge(conn *websocket.Conn, log *slog.Logger, events bool) *wsBridge {
@@ -121,6 +123,12 @@ func (b *wsBridge) readLoop() {
 		if err != nil {
 			break
 		}
+		if mt == websocket.MessageText {
+			if b.OnText != nil {
+				b.OnText(data)
+			}
+			continue
+		}
 		if mt != websocket.MessageBinary || len(data) == 0 || b.OnBrowserPCM == nil {
 			continue
 		}
@@ -177,6 +185,10 @@ func (s *server) handleWSBridge(w http.ResponseWriter, r *http.Request) {
 
 	sess := s.sessionByID(w, sid)
 	if sess == nil {
+		return
+	}
+	if c := s.sipAgentByID(sess, callID); c != nil {
+		s.sipAgentWS(c, w, r)
 		return
 	}
 	ac, ok := sess.reg.get(callID)

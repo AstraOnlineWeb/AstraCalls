@@ -72,6 +72,8 @@ type Session struct {
 	SIPExtPass    string
 	SIPExtDest    string
 	SIPExtProxy   string // outbound proxy (host[:porta]) — p/ onde mandar REGISTER/INVITE; vazio = usa Host
+	// SIPAgent: o que fazer com INVITE entrante (originar WhatsApp ou atender p/ o agente).
+	SIPAgent sipAgentOpts
 	// estado do registro no PBX externo (registering/registered/failed), atualizado
 	// pelo registrador UAC; exibido no painel. Protegido por s.mu.
 	sipExtStatus string
@@ -650,7 +652,7 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 			"call_id", callID, "from", evt.From.String(), "group_jid", g)
 		return
 	}
-	if max := s.mgr.maxCalls; max > 0 && s.reg.count() >= max {
+	if max := s.mgr.maxCalls; max > 0 && s.activeCallCount() >= max {
 		s.rejectOffer(ctx, node, evt.From)
 		return
 	}
@@ -1032,6 +1034,7 @@ func (s *Session) info() SessionInfo {
 	extPass := s.SIPExtPass
 	extDest := s.SIPExtDest
 	extProxy := s.SIPExtProxy
+	inboundMode := s.SIPAgent.mode()
 	extStatus := s.sipExtStatus
 	extErr := s.sipExtError
 	s.mu.Unlock()
@@ -1041,7 +1044,7 @@ func (s *Session) info() SessionInfo {
 		SIPUser: s.SIPUser, SIPPass: s.SIPPass, SIPURL: s.SIPURL,
 		SIPExtEnabled: extEnabled, SIPExtHost: extHost, SIPExtPort: extPort,
 		SIPExtUser: extUser, SIPExtPass: extPass, SIPExtDest: extDest, SIPExtProxy: extProxy,
-		SIPExtStatus: extStatus, SIPExtError: extErr,
+		SIPExtStatus: extStatus, SIPExtError: extErr, SIPExtInboundMode: inboundMode,
 	}
 }
 
@@ -1220,6 +1223,39 @@ type sipExtConfig struct {
 	Pass    string
 	Dest    string
 	Proxy   string // outbound proxy (host[:porta]); vazio = usa Host
+	Agent   sipAgentOpts
+}
+
+// Modos do INVITE entrante (campo inboundMode da config SIP da sessão).
+const (
+	sipInboundOriginate = "originate" // padrão: disca no WhatsApp p/ o número do Request-URI
+	sipInboundAgent     = "agent"     // atende e entrega ao agente de voz (SSE + WS pcm16)
+	sipInboundAuto      = "auto"      // agent se ligaram p/ o próprio ramal; senão originate
+)
+
+// sipAgentOpts é a config do modo agente (persistida como JSON em sip_ext_opts).
+type sipAgentOpts struct {
+	InboundMode string `json:"inboundMode,omitempty"`
+	AutoAnswer  bool   `json:"agentAutoAnswer,omitempty"`
+	RingTimeout int    `json:"agentRingTimeoutSeconds,omitempty"`
+}
+
+func (o sipAgentOpts) mode() string {
+	switch o.InboundMode {
+	case sipInboundAgent, sipInboundAuto:
+		return o.InboundMode
+	}
+	return sipInboundOriginate
+}
+
+func (o sipAgentOpts) ringTimeout() time.Duration {
+	if o.RingTimeout > 0 {
+		return time.Duration(o.RingTimeout) * time.Second
+	}
+	if ringTimeoutSecs > 0 {
+		return time.Duration(ringTimeoutSecs) * time.Second
+	}
+	return 60 * time.Second
 }
 
 func (s *Session) sipExtSnapshot() sipExtConfig {
@@ -1228,6 +1264,7 @@ func (s *Session) sipExtSnapshot() sipExtConfig {
 	return sipExtConfig{
 		Enabled: s.SIPExtEnabled, Host: s.SIPExtHost, Port: s.SIPExtPort,
 		User: s.SIPExtUser, Pass: s.SIPExtPass, Dest: s.SIPExtDest, Proxy: s.SIPExtProxy,
+		Agent: s.SIPAgent,
 	}
 }
 
@@ -1240,6 +1277,7 @@ func (s *Session) setSIPExt(c sipExtConfig) {
 	s.SIPExtPass = c.Pass
 	s.SIPExtDest = c.Dest
 	s.SIPExtProxy = c.Proxy
+	s.SIPAgent = c.Agent
 	s.mu.Unlock()
 }
 
@@ -1248,6 +1286,16 @@ func (s *Session) setSIPExtStatus(state, errMsg string) {
 	s.sipExtStatus = state
 	s.sipExtError = errMsg
 	s.mu.Unlock()
+}
+
+// activeCallCount soma as chamadas WhatsApp e as do modo agente SIP da sessão
+// (as duas dividem o limite WACALLS_MAX_CALLS).
+func (s *Session) activeCallCount() int {
+	n := s.reg.count()
+	if s.mgr != nil && s.mgr.sipAgentCount != nil {
+		n += s.mgr.sipAgentCount(s.id)
+	}
+	return n
 }
 
 func (s *Session) terminateCallByID(callID string) {

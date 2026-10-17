@@ -54,6 +54,10 @@ export type SIPExtConfig = {
   pass: string;
   dest: string;
   proxy?: string;
+  // INVITE que chega no ramal: originate (disca no WhatsApp) | agent (agente de voz) | auto
+  inboundMode?: "originate" | "agent" | "auto";
+  agentAutoAnswer?: boolean;
+  agentRingTimeoutSeconds?: number;
   status?: string;
   error?: string;
   advertise?: string;

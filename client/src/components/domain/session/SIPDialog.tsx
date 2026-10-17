@@ -32,7 +32,15 @@ const emptyExt: SIPExtConfig = {
   pass: "",
   dest: "",
   proxy: "",
+  inboundMode: "originate",
+  agentAutoAnswer: false,
 };
+
+const inboundModes: { value: NonNullable<SIPExtConfig["inboundMode"]>; label: string; hint: string }[] = [
+  { value: "originate", label: "Discar no WhatsApp", hint: "O PBX manda o número de destino e a chamada sai pelo WhatsApp (padrão)." },
+  { value: "agent", label: "Atender com o agente de voz", hint: "Quem liga para o ramal é atendido pelo agente (evento incoming + WS de áudio)." },
+  { value: "auto", label: "Automático", hint: "Ligou para o próprio ramal: agente. Ligou para outro número: disca no WhatsApp." },
+];
 
 const StatusBadge = ({ status, error }: { status?: string; error?: string }) => {
   if (!status) return null;
@@ -100,6 +108,9 @@ export const SIPDialog = ({ session }: { session: SessionInfo }) => {
         pass: ext.pass,
         dest: ext.dest.trim(),
         proxy: (ext.proxy ?? "").trim(),
+        inboundMode: ext.inboundMode ?? "originate",
+        agentAutoAnswer: !!ext.agentAutoAnswer,
+        agentRingTimeoutSeconds: ext.agentRingTimeoutSeconds,
       });
       toast.success(ext.enabled ? "Registro no PBX salvo — conectando…" : "Registro no PBX desativado");
       setOpen(false);
@@ -312,6 +323,37 @@ export const SIPDialog = ({ session }: { session: SessionInfo }) => {
               />
             </div>
 
+            <div className="space-y-1">
+              <Label htmlFor="sip-inbound-mode">Chamada que chega no ramal</Label>
+              <select
+                id="sip-inbound-mode"
+                value={ext.inboundMode ?? "originate"}
+                onChange={(e) => setE("inboundMode", e.target.value as SIPExtConfig["inboundMode"])}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {inboundModes.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[0.7rem] text-muted-foreground">
+                {inboundModes.find((m) => m.value === (ext.inboundMode ?? "originate"))?.hint}
+              </p>
+            </div>
+
+            {(ext.inboundMode ?? "originate") !== "originate" ? (
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm">Atender na hora</p>
+                  <p className="text-[0.7rem] text-muted-foreground">
+                    Responde 200 OK sem esperar o POST /accept da ponte do agente.
+                  </p>
+                </div>
+                <Switch checked={!!ext.agentAutoAnswer} onCheckedChange={(v) => setE("agentAutoAnswer", v)} />
+              </div>
+            ) : null}
+
             <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
               <p className="font-medium text-foreground">Como funciona</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-4">
@@ -323,7 +365,7 @@ export const SIPDialog = ({ session }: { session: SessionInfo }) => {
                 <li>
                   <b>WhatsApp → PBX:</b> chamadas recebidas tocam no ramal/fila do campo acima.
                 </li>
-                <li>Codec <b>G.711 u-law (PCMU)</b>, transporte UDP.</li>
+                <li>Codec <b>G.711 (PCMU ou PCMA)</b>, transporte UDP.</li>
               </ul>
             </div>
           </div>

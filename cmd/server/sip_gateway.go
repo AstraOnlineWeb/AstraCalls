@@ -27,6 +27,8 @@ type SIPGateway struct {
 	activeCalls    map[string]*sipCall         // keyed by SIP Call-ID (SIP->WhatsApp)
 	inboundDialogs map[string]*inboundDialog   // keyed by SIP Call-ID (WhatsApp->SIP)
 	extRegs        map[string]*sipUACRegistrar // keyed by session id (modelo 2: nós registramos no PBX)
+	agentCalls     map[string]*sipAgentCall    // keyed by id "sip-…" (modo agente: SIP entrante atendido)
+	agentDialogs   map[string]*sipAgentCall    // keyed by SIP Call-ID, vive até o diálogo acabar
 }
 
 type sipRegistration struct {
@@ -69,7 +71,9 @@ func NewSIPGateway(sessions *SessionManager, log *slog.Logger) (*SIPGateway, err
 	if err != nil {
 		return nil, fmt.Errorf("sipgo server: %w", err)
 	}
-	client, err := sipgo.NewClient(ua)
+	// WithClientNAT põe rport no Via: o PBX responde para o IP:porta de onde o
+	// pacote saiu (NAT), não para o que anunciamos.
+	client, err := sipgo.NewClient(ua, sipgo.WithClientNAT())
 	if err != nil {
 		return nil, fmt.Errorf("sipgo client: %w", err)
 	}
@@ -83,6 +87,8 @@ func NewSIPGateway(sessions *SessionManager, log *slog.Logger) (*SIPGateway, err
 		activeCalls:    make(map[string]*sipCall),
 		inboundDialogs: make(map[string]*inboundDialog),
 		extRegs:        make(map[string]*sipUACRegistrar),
+		agentCalls:     make(map[string]*sipAgentCall),
+		agentDialogs:   make(map[string]*sipAgentCall),
 	}
 	gw.dialogUA = &sipgo.DialogUA{
 		Client: client,
@@ -96,6 +102,8 @@ func NewSIPGateway(sessions *SessionManager, log *slog.Logger) (*SIPGateway, err
 	srv.OnInvite(gw.handleInvite)
 	srv.OnBye(gw.handleBye)
 	srv.OnCancel(gw.handleCancel)
+	srv.OnAck(gw.handleAck)
+	srv.OnOptions(gw.handleOptions)
 
 	return gw, nil
 }
@@ -214,6 +222,12 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	sipUser := fromHeader.Address.User
 	destPhone := toHeader.Address.User
 
+	// re-INVITE dentro de um diálogo do modo agente (hold, refresh).
+	if c := gw.agentCallBySIP(sipCallID); c != nil {
+		gw.agentReInvite(c, req, tx)
+		return
+	}
+
 	// Check if this is a Re-INVITE for an already active call
 	gw.mu.Lock()
 	sc, exists := gw.activeCalls[sipCallID]
@@ -237,12 +251,16 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 
 		localIP := getLocalIP()
 		localPort := 10000
+		pt := rtpPTPCMU
 		if s, ok := gw.sessions.Get(sc.sessionID); ok {
 			if ac, found := s.reg.get(sc.waCallID); found && ac.rtpBridge != nil {
 				localPort = ac.rtpBridge.LocalPort()
+				ac.rtpBridge.mu.Lock()
+				pt = ac.rtpBridge.pt
+				ac.rtpBridge.mu.Unlock()
 			}
 		}
-		sdpAnswer := buildSIPSDP(localIP, localPort)
+		sdpAnswer := buildSIPSDPAnswer(localIP, localPort, pt, 0)
 		ok200 := sip.NewResponseFromRequest(req, 200, "OK", []byte(sdpAnswer))
 		ok200.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 		_ = tx.Respond(ok200)
@@ -270,8 +288,18 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		sess = gw.sessionForExtInvite(sourceIPOf(req.Source()))
 	}
 	if sess == nil {
+		// modelo 1 + modo agente: o PBX registrado em nós liga PARA o usuário SIP
+		// da sessão (o From é o chamador). Só aceita vindo do IP desse registro.
+		sess = gw.sessionForAgentInvite(toHeader.Address.User, sourceIPOf(req.Source()))
+	}
+	if sess == nil {
 		gw.log.Warn("SIP INVITE: sessão não encontrada", "sip_user", sipUser, "source", req.Source())
 		gw.reply(tx, req, 403, "Forbidden - Not Registered")
+		return
+	}
+	// modo agente: atende o INVITE e entrega ao agente de voz (não usa o WhatsApp).
+	if wantsAgent(sess, req) {
+		gw.handleAgentInvite(sess, req, tx)
 		return
 	}
 	if sess.client.Store.ID == nil {
@@ -335,18 +363,36 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 
-	rtpBridge.OnCapturedPCM = func(pcm []float32) {
+	rtpBridge.SetHandlers(func(pcm []float32) {
 		ac.spies.feed(spySideAgent, pcm)
 		ac.cm.FeedCapturedPCM(pcm)
-	}
+	}, nil)
 	sess.setRTPBridge(callID, rtpBridge)
 
-	// Build SDP answer for audio (G.711 u-law, dynamic RTP port)
+	// SDP answer com o codec G.711 que o PBX ofertou (PCMU se não der pra ler a oferta).
+	pt := rtpPTPCMU
+	if p, ok := parseSDPOffer(string(req.Body())).pickG711(); ok {
+		pt = p
+	}
+	rtpBridge.SetCodec(pt, 0)
 	localIP := getLocalIP()
-	sdpAnswer := buildSIPSDP(localIP, rtpBridge.LocalPort())
+	sdpAnswer := buildSIPSDPAnswer(localIP, rtpBridge.LocalPort(), pt, 0)
+
+	// O handler do sipgo precisa ficar bloqueado até a resposta final: ao
+	// retornar, a transação do INVITE é terminada e o 200 OK tardio se perderia.
+	settled := make(chan struct{})
+	var settleOnce sync.Once
+	settle := func() { settleOnce.Do(func() { close(settled) }) }
+	defer func() {
+		select {
+		case <-settled:
+		case <-time.After(3 * time.Minute):
+		}
+	}()
 
 	// Send 200 OK only when WhatsApp call is connected (Active)
 	rtpBridge.OnActive = func() {
+		defer settle()
 		ok200 := sip.NewResponseFromRequest(req, 200, "OK", []byte(sdpAnswer))
 		ok200.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 		_ = tx.Respond(ok200)
@@ -354,6 +400,7 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 
 	rtpBridge.OnEnded = func(reason string) {
+		defer settle()
 		// Se a chamada WhatsApp falhou/rejeitou antes de conectar, respondemos erro no INVITE.
 		gw.log.Info("SIP INVITE/CALL: WhatsApp call ended", "sip_call_id", sipCallID, "reason", reason)
 
@@ -373,6 +420,15 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 
 func (gw *SIPGateway) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 	sipCallID := req.CallID().Value()
+
+	// BYE de uma chamada do modo agente: o chamador desligou.
+	if c := gw.agentCallBySIP(sipCallID); c != nil {
+		if err := c.dlg.ReadBye(req, tx); err != nil {
+			gw.reply(tx, req, 481, "Call/Transaction Does Not Exist")
+		}
+		c.end("remote_hangup", 0)
+		return
+	}
 
 	gw.mu.Lock()
 	inb, isInbound := gw.inboundDialogs[sipCallID]
@@ -493,6 +549,26 @@ func (gw *SIPGateway) sessionForExtInvite(sourceIP string) *Session {
 		}
 	}
 	return nil
+}
+
+// sessionForAgentInvite acha a sessão (modelo 1) cujo usuário SIP é o destino do
+// INVITE, desde que o pedido venha do IP em que esse usuário está registrado e a
+// sessão esteja num modo que atende para o agente.
+func (gw *SIPGateway) sessionForAgentInvite(toUser, sourceIP string) *Session {
+	if toUser == "" || sourceIP == "" {
+		return nil
+	}
+	gw.mu.RLock()
+	reg, ok := gw.registrations[toUser]
+	gw.mu.RUnlock()
+	if !ok || reg.expired() || !pbxHostMatches(reg.contactURI.Host, sourceIP) {
+		return nil
+	}
+	sess, found := gw.sessions.Get(reg.sessionID)
+	if !found || sess.sipExtSnapshot().Agent.mode() == sipInboundOriginate {
+		return nil
+	}
+	return sess
 }
 
 // pbxHostMatches compara o host configurado do PBX (pode ser hostname) com o IP

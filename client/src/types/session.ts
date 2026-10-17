@@ -24,4 +24,5 @@ export type SessionInfo = {
   sip_ext_dest?: string;
   sip_ext_status?: string;
   sip_ext_error?: string;
+  sip_ext_inbound_mode?: "originate" | "agent" | "auto";
 };

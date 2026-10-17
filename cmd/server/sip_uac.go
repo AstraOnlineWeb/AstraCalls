@@ -52,7 +52,7 @@ const (
 	sipRegFailed      = "failed"
 )
 
-// intervalo (segundos) de expiração pedido no REGISTER; re-registramos na metade.
+// intervalo (segundos) de expiração pedido no REGISTER; re-registramos com 80%.
 const sipExtDefaultExpires = 300
 
 type sipUACRegistrar struct {
@@ -63,10 +63,12 @@ type sipUACRegistrar struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu      sync.Mutex
-	cfg     sipExtConfig
-	state   string
-	lastErr string
+	mu         sync.Mutex
+	cfg        sipExtConfig
+	state      string
+	lastErr    string
+	cseq       uint32    // CSeq do REGISTER: cresce sempre (mesmo Call-ID — RFC 3261 §10.3)
+	validUntil time.Time // até quando o último registro aceito vale
 }
 
 func newSIPUACRegistrar(gw *SIPGateway, sessionID string, cfg sipExtConfig) *sipUACRegistrar {
@@ -116,23 +118,25 @@ func (r *sipUACRegistrar) stop() {
 }
 
 func (r *sipUACRegistrar) loop() {
-	backoff := 15 * time.Second
+	go r.keepAliveLoop()
+	backoff := 5 * time.Second
 	for {
 		if r.ctx.Err() != nil {
 			return
 		}
 		code, expires, err := r.register(r.ctx, sipExtDefaultExpires)
 		switch {
-		case err != nil:
-			r.setState(sipRegFailed, err.Error())
-			r.gw.log.Warn("SIP UAC register failed", "session", r.sessionID, "host", r.host(), "err", err)
-		case code == 200:
+		case err == nil && code == 200:
+			r.mu.Lock()
+			r.validUntil = time.Now().Add(time.Duration(expires) * time.Second)
+			r.mu.Unlock()
 			r.setState(sipRegRegistered, "")
 			r.gw.log.Info("SIP UAC registered", "session", r.sessionID, "host", r.host(), "expires", expires)
-			backoff = 15 * time.Second
-			wait := time.Duration(expires/2) * time.Second
-			if wait < 60*time.Second {
-				wait = 60 * time.Second
+			backoff = 5 * time.Second
+			// renova com 80% do Expires devolvido pelo PBX.
+			wait := time.Duration(expires) * time.Second * 8 / 10
+			if wait < 30*time.Second {
+				wait = 30 * time.Second
 			}
 			select {
 			case <-r.ctx.Done():
@@ -140,19 +144,80 @@ func (r *sipUACRegistrar) loop() {
 			case <-time.After(wait):
 			}
 			continue
+		case err != nil:
+			r.failed(err.Error())
 		default:
-			msg := fmt.Sprintf("registro recusado pelo PBX (SIP %d)", code)
-			r.setState(sipRegFailed, msg)
-			r.gw.log.Warn("SIP UAC register rejected", "session", r.sessionID, "host", r.host(), "code", code)
+			r.failed(fmt.Sprintf("registro recusado pelo PBX (SIP %d)", code))
 		}
-		// caminho de falha: espera com backoff exponencial e tenta de novo.
+		// caminho de falha: retenta logo (5 s, 10 s, 20 s… até 60 s).
 		select {
 		case <-r.ctx.Done():
 			return
 		case <-time.After(backoff):
 		}
-		if backoff < 2*time.Minute {
+		if backoff < 60*time.Second {
 			backoff *= 2
+		}
+	}
+}
+
+// failed registra a falha de um REGISTER. Enquanto o registro anterior ainda
+// vale no PBX, o estado continua "registered" (só uma renovação falhou) — evita
+// o painel piscar "falhou" a cada 500/timeout isolado.
+func (r *sipUACRegistrar) failed(msg string) {
+	r.mu.Lock()
+	stillValid := time.Now().Before(r.validUntil)
+	callID, cseq := r.callID, r.cseq
+	r.mu.Unlock()
+	r.gw.log.Warn("SIP UAC register failed", "session", r.sessionID, "host", r.host(),
+		"err", msg, "call_id", callID, "cseq", cseq, "still_valid", stillValid)
+	if stillValid {
+		r.setState(sipRegRegistered, "última renovação falhou: "+msg)
+		return
+	}
+	r.setState(sipRegFailed, msg)
+}
+
+// sipKeepAliveSecs: intervalo do OPTIONS de keep-alive ao PBX (mantém o NAT
+// aberto para os INVITEs chegarem). 0 desliga.
+var sipKeepAliveSecs = envInt("WACALLS_SIP_KEEPALIVE_SECONDS", 25)
+
+func (r *sipUACRegistrar) keepAliveLoop() {
+	if sipKeepAliveSecs <= 0 {
+		return
+	}
+	t := time.NewTicker(time.Duration(sipKeepAliveSecs) * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-t.C:
+		}
+		if st, _ := r.snapshot(); st != sipRegRegistered {
+			continue
+		}
+		r.mu.Lock()
+		cfg := r.cfg
+		r.mu.Unlock()
+		port := cfg.Port
+		if port <= 0 {
+			port = 5060
+		}
+		req := sip.NewRequest(sip.OPTIONS, sip.Uri{Scheme: "sip", Host: cfg.Host, Port: port})
+		if px := strings.TrimSpace(cfg.Proxy); px != "" {
+			req.SetDestination(sipHostPort(px, port))
+		}
+		aor := sip.Uri{Scheme: "sip", User: cfg.User, Host: cfg.Host}
+		from := &sip.FromHeader{Address: aor, Params: sip.NewParams()}
+		from.Params.Add("tag", generateRandomString(12))
+		req.AppendHeader(from)
+		req.AppendHeader(&sip.ToHeader{Address: sip.Uri{Scheme: "sip", Host: cfg.Host}, Params: sip.NewParams()})
+		ctx, cancel := context.WithTimeout(r.ctx, 5*time.Second)
+		_, err := r.gw.client.Do(ctx, req) // qualquer resposta (até 401/405) serve
+		cancel()
+		if err != nil && sipDebugEnabled {
+			r.gw.log.Info("SIP UAC keep-alive sem resposta", "session", r.sessionID, "err", err)
 		}
 	}
 }
@@ -186,11 +251,16 @@ func (r *sipUACRegistrar) register(ctx context.Context, expires int) (code int, 
 		Params:  sip.NewParams(),
 	}
 	callID := sip.CallIDHeader(r.callID)
+	r.mu.Lock()
+	r.cseq++
+	cseq := &sip.CSeqHeader{SeqNo: r.cseq, MethodName: sip.REGISTER}
+	r.mu.Unlock()
 
 	req.AppendHeader(from)
 	req.AppendHeader(to)
 	req.AppendHeader(contact)
 	req.AppendHeader(&callID)
+	req.AppendHeader(cseq)
 	req.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expires)))
 
 	res, err := r.gw.client.Do(ctx, req)
@@ -199,6 +269,14 @@ func (r *sipUACRegistrar) register(ctx context.Context, expires int) (code int, 
 	}
 	if res.StatusCode == 401 || res.StatusCode == 407 {
 		res, err = r.gw.client.DoDigestAuth(ctx, req, res, sipgo.DigestAuth{Username: cfg.User, Password: cfg.Pass})
+		// o reenvio com Authorization incrementa o CSeq: acompanha o contador.
+		if h := req.CSeq(); h != nil {
+			r.mu.Lock()
+			if h.SeqNo > r.cseq {
+				r.cseq = h.SeqNo
+			}
+			r.mu.Unlock()
+		}
 		if err != nil {
 			return 0, 0, err
 		}

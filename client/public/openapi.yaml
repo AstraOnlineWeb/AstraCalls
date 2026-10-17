@@ -137,6 +137,12 @@ components:
       schema: { type: string }
       description: Número ou JID do chat.
   schemas:
+    SIPAgentConfig:
+      type: object
+      properties:
+        inboundMode: { type: string, enum: [originate, agent, auto], example: agent }
+        agentAutoAnswer: { type: boolean, description: "true = 200 OK logo após o 180, sem esperar o POST /accept" }
+        agentRingTimeoutSeconds: { type: integer, example: 30, description: "Sem accept nesse prazo o INVITE recebe 480 (0 = WACALLS_RING_TIMEOUT_SECONDS)" }
     Session:
       type: object
       properties:
@@ -1035,6 +1041,9 @@ paths:
                   status: { type: string, example: "registered", description: "registering/registered/failed" }
                   error: { type: string }
                   advertise: { type: string, description: "host:porta SIP anunciado no Contact" }
+                  inboundMode: { type: string, enum: [originate, agent, auto], description: "O que fazer com INVITE entrante (ver /sip-agent)" }
+                  agentAutoAnswer: { type: boolean }
+                  agentRingTimeoutSeconds: { type: integer }
     post:
       tags: [SIP]
       summary: "SIP modelo 2 — grava/aplica o registro no PBX externo"
@@ -1056,6 +1065,9 @@ paths:
                 pass: { type: string }
                 dest: { type: string, example: "600" }
                 proxy: { type: string, example: "sip.provedor.com:5060", description: "Outbound proxy (host[:porta]); vazio = usa host" }
+                inboundMode: { type: string, enum: [originate, agent, auto], description: "Opcional; ausente = mantém. Ver /sip-agent" }
+                agentAutoAnswer: { type: boolean, description: "Opcional; ausente = mantém" }
+                agentRingTimeoutSeconds: { type: integer, description: "Opcional; ausente = mantém" }
       responses:
         "200":
           description: Atualizado
@@ -1063,6 +1075,50 @@ paths:
             application/json:
               schema: { type: object, properties: { status: { type: string, example: updated } } }
         "400": { description: "host e usuário são obrigatórios (com enabled=true) / body inválido" }
+  /api/sessions/{sid}/sip-agent:
+    get:
+      tags: [SIP]
+      summary: "SIP modo agente — o que fazer com a ligação que CHEGA no ramal"
+      description: >
+        `originate` (padrão): o INVITE é uma ordem de discar no WhatsApp para o número do
+        Request-URI (gateway PBX→WhatsApp). `agent`: o AstraCalls ATENDE o INVITE e entrega a
+        chamada ao agente de voz como uma chamada recebida comum — evento `incoming` no SSE
+        (`source: "sip"`, `phone` = número do From/P-Asserted-Identity, bloco `sip`),
+        `POST /calls/{id}/accept` responde 200 OK, `GET /calls/{id}/ws` fala PCM16 16 kHz,
+        `DELETE /calls/{id}` manda BYE, `POST /calls/{id}/reject` responde 486 (603 com
+        `{"reason":"decline"}`). `auto`: agente quando ligaram para o próprio ramal/usuário SIP,
+        originate quando o destino é outro número. Vale para os dois modelos (PBX registrado em
+        nós ou nós registrados no PBX). Codec G.711 PCMU/PCMA conforme a oferta; DTMF
+        (telephone-event) chega no WS como `{"type":"dtmf","digit":"5"}`; a ponte pode mandar
+        `{"type":"clear"}` para descartar o áudio ainda não tocado. Chamadas SIP e WhatsApp
+        dividem o limite WACALLS_MAX_CALLS (acima dele: 486).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SIPAgentConfig" }
+    post:
+      tags: [SIP]
+      summary: "SIP modo agente — altera só o modo (não mexe no registro no PBX)"
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SIPAgentConfig" }
+      responses:
+        "200":
+          description: Config em vigor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SIPAgentConfig" }
+        "400": { description: "inboundMode inválido ou agentRingTimeoutSeconds fora de 0..600" }
   /api/sessions/{sid}/restriction-status:
     get:
       tags: [Sessões]
@@ -1693,7 +1749,7 @@ paths:
         - `call-list` `{calls:[CallRecord]}` — chamadas ativas.
         - `call-status` `{sessionId, id, owner, status, peer, startedAt, held}`.
         - `call-ended` `{sessionId, id, owner, reason, endedAt}`.
-        - `incoming` `{sessionId, id, peer, phone, name, video, offeredAt}` — chamada recebida
+        - `incoming` `{sessionId, id, peer, phone, name, video, offeredAt, source}` — chamada recebida. `source`: `whatsapp` ou `sip` (modo agente do SIP, com o bloco extra `sip: {callId, from, to, codec}` e `id` começando com `sip-`)
           (`phone`/`name` resolvidos; `peer` pode ser @lid).
         - `incoming-claimed` `{sessionId, id, owner}` — alguém atendeu.
         - `video-state` `{sessionId, id, kind, peerVideo, localVideo, upgradeIncoming, upgradeOutgoing, peerOrientation}`
