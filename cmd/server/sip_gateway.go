@@ -293,6 +293,11 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		sess = gw.sessionForAgentInvite(toHeader.Address.User, sourceIPOf(req.Source()))
 	}
 	if sess == nil {
+		// modelo 1 com o From = caller ID do ramal (3CX): casa pelo IP do PBX que
+		// está registrado em nós.
+		sess = gw.sessionForRegisteredPBX(sourceIPOf(req.Source()))
+	}
+	if sess == nil {
 		gw.log.Warn("SIP INVITE: sessão não encontrada", "sip_user", sipUser, "source", req.Source())
 		gw.reply(tx, req, 403, "Forbidden - Not Registered")
 		return
@@ -568,6 +573,39 @@ func (gw *SIPGateway) sessionForAgentInvite(toUser, sourceIP string) *Session {
 	if !found || sess.sipExtSnapshot().Agent.mode() == sipInboundOriginate {
 		return nil
 	}
+	return sess
+}
+
+// sessionForRegisteredPBX acha a sessão de um PBX registrado em nós (modelo 1)
+// pelo IP de origem do INVITE, comparado com o host do Contact do registro.
+// Só casa quando há exatamente uma sessão para aquele IP (sem ambiguidade).
+func (gw *SIPGateway) sessionForRegisteredPBX(sourceIP string) *Session {
+	if sourceIP == "" {
+		return nil
+	}
+	gw.mu.RLock()
+	var regs []*sipRegistration
+	for _, r := range gw.registrations {
+		if !r.expired() {
+			regs = append(regs, r)
+		}
+	}
+	gw.mu.RUnlock()
+
+	sessionID := ""
+	for _, r := range regs {
+		if !pbxHostMatches(r.contactURI.Host, sourceIP) {
+			continue
+		}
+		if sessionID != "" && sessionID != r.sessionID {
+			return nil // mais de uma sessão atrás do mesmo IP
+		}
+		sessionID = r.sessionID
+	}
+	if sessionID == "" {
+		return nil
+	}
+	sess, _ := gw.sessions.Get(sessionID)
 	return sess
 }
 
