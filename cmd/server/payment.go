@@ -75,7 +75,7 @@ func pixFromButtonParams(paramsJSON string) string {
 func hasPaymentButton(im *waE2E.InteractiveMessage) bool {
 	if nf := im.GetNativeFlowMessage(); nf != nil {
 		for _, btn := range nf.GetButtons() {
-			if strings.Contains(btn.GetName(), "payment") {
+			if isPaymentButton(btn.GetName()) {
 				return true
 			}
 		}
@@ -91,7 +91,7 @@ func interactiveText(im *waE2E.InteractiveMessage) string {
 	}
 	if nf := im.GetNativeFlowMessage(); nf != nil {
 		for _, btn := range nf.GetButtons() {
-			if strings.Contains(btn.GetName(), "payment") {
+			if isPaymentButton(btn.GetName()) {
 				if t := pixFromButtonParams(btn.GetButtonParamsJSON()); t != "" {
 					return t
 				}
@@ -107,4 +107,9 @@ func interactiveType(im *waE2E.InteractiveMessage) string {
 		return "payment"
 	}
 	return "interactive"
+}
+
+// isPaymentButton: payment_info (chave Pix) e review_and_pay (cobrança com valor).
+func isPaymentButton(name string) bool {
+	return strings.Contains(name, "payment") || name == "review_and_pay"
 }

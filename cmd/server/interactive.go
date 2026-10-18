@@ -31,16 +31,24 @@ func newMessageSecret() []byte {
 }
 
 // bizNativeFlowNode é o stanza <biz> obrigatório p/ o WhatsApp renderizar o nativeFlow.
-func bizNativeFlowNode() waBinary.Node {
+func bizNativeFlowNode() waBinary.Node { return bizNativeFlowNodeNamed("mixed") }
+
+// bizNativeFlowNodeNamed monta o <biz> com o nome do native_flow. O Android escolhe
+// o parser por ESSE nome (não pelo botão do proto): "mixed" serve para botões e
+// carrossel; a cobrança (review_and_pay) exige "order_details" e a mensagem de
+// catálogo exige "catalog_message" — com "mixed" o celular mostra "não suportado"
+// ou descarta.
+func bizNativeFlowNodeNamed(name string) waBinary.Node {
+	attrs := waBinary.Attrs{"name": name}
+	if name == "mixed" {
+		attrs["v"] = "9"
+	}
 	return waBinary.Node{
 		Tag: "biz",
 		Content: []waBinary.Node{{
-			Tag:   "interactive",
-			Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
-			Content: []waBinary.Node{{
-				Tag:   "native_flow",
-				Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
-			}},
+			Tag:     "interactive",
+			Attrs:   waBinary.Attrs{"type": "native_flow", "v": "1"},
+			Content: []waBinary.Node{{Tag: "native_flow", Attrs: attrs}},
 		}},
 	}
 }
@@ -48,7 +56,12 @@ func bizNativeFlowNode() waBinary.Node {
 // sendNativeFlow envia a mensagem interativa com o stanza <biz> anexado + resolução
 // de LID (9º dígito) + id idempotente, e escreve a resposta HTTP.
 func (s *server) sendNativeFlow(sess *Session, w http.ResponseWriter, r *http.Request, jid types.JID, msg *waE2E.Message) {
-	nodes := []waBinary.Node{bizNativeFlowNode()}
+	s.sendNativeFlowNamed(sess, w, r, jid, msg, "mixed")
+}
+
+// sendNativeFlowNamed = sendNativeFlow com o nome do native_flow do <biz>.
+func (s *server) sendNativeFlowNamed(sess *Session, w http.ResponseWriter, r *http.Request, jid types.JID, msg *waE2E.Message, flowName string) {
+	nodes := []waBinary.Node{bizNativeFlowNodeNamed(flowName)}
 	extra := whatsmeow.SendRequestExtra{AdditionalNodes: &nodes}
 	if id := messageIDFromRequest(r); id != "" {
 		extra.ID = types.MessageID(id)
@@ -326,7 +339,25 @@ func (s *server) handleSendCarousel(w http.ResponseWriter, r *http.Request) {
 			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 		}
-		nbtns := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(c.Buttons))
+		nbtns := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(c.Buttons)+1)
+		hasCatalog, hasURL := false, false
+		for _, bt := range c.Buttons {
+			switch bt.Type {
+			case "cta_catalog", "catalog":
+				hasCatalog = true
+			case "cta_url", "webview", "form":
+				hasURL = true
+			}
+		}
+		if hasCatalog && !hasURL {
+			// card só com botão de catálogo é descartado pelo celular (só o Web mostra):
+			// acrescenta um link para o catálogo como 1º botão.
+			cat := "https://wa.me/c/" + sess.ownNumber()
+			nbtns = append(nbtns, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+				Name:             proto.String("cta_url"),
+				ButtonParamsJSON: proto.String(jsonStr(map[string]string{"display_text": "Ver catálogo", "url": cat, "merchant_url": cat})),
+			})
+		}
 		for i, bt := range c.Buttons {
 			name, params := sess.groupSafeButton(isGroup, bt.Type, bt.DisplayText, bt.URL, bt.ID, bt.CopyCode, bt.PhoneNumber, i)
 			if name == "" {
@@ -388,6 +419,16 @@ func (s *Session) groupSafeButton(isGroup bool, typ, display, url2, id, copyCode
 			waURL := "https://wa.me/" + num + "?text=" + url.QueryEscape(text)
 			return "cta_url", jsonStr(map[string]string{"display_text": display, "url": waURL, "merchant_url": waURL})
 		}
+	}
+	if typ == "cta_catalog" || typ == "catalog" {
+		// Botão nativo de catálogo: o app monta o link sozinho a partir do telefone
+		// (NUNCA o LID: link de catálogo com LID dá 404). Com id abre o produto,
+		// sem id abre o catálogo inteiro.
+		params := map[string]string{"business_phone_number": s.ownNumber()}
+		if id != "" {
+			params["catalog_product_id"] = id
+		}
+		return "cta_catalog", jsonStr(params)
 	}
 	return nativeFlowButton(typ, display, url2, id, copyCode, phone, idx)
 }

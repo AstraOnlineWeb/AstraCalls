@@ -2507,6 +2507,35 @@ paths:
                   ok: { type: boolean }
                   participants: { type: array, items: { $ref: "#/components/schemas/CommunityParticipantAdd" } }
 
+  /api/sessions/{sid}/groups/{gid}/status:
+    post:
+      tags: [Grupos]
+      summary: Posta um status do grupo (24 h)
+      description: >
+        Status do grupo: fica 24 h na aba Atualizações, dentro do grupo, fora da conversa — só os
+        membros veem. Texto com cor de fundo OU imagem com legenda (a imagem é enviada de novo a
+        cada post).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Gid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string, example: "Promoção só hoje!" }
+                backgroundColor: { type: string, example: "#233E4F", description: "#RRGGBB ou #AARRGGBB" }
+                textColor: { type: string, example: "#FFFFFF" }
+                font: { type: integer, example: 6, description: "fonte do status de texto (número do enum)" }
+                imageUrl: { type: string }
+                base64: { type: string }
+                caption: { type: string }
+      responses:
+        "200": { description: "Postado: {id, to, timestamp}" }
+        "400": { description: "text ou imagem obrigatório / cor inválida" }
+
   /api/sessions/{sid}/groups/{gid}/leave:
     post:
       tags: [Grupos]
@@ -3568,11 +3597,15 @@ paths:
       tags: [Mensagens]
       summary: Envia cobrança Pix (Copia e Cola / BR Code)
       description: >
-        Monta o "Pix Copia e Cola" (BR Code EMV do Banco Central) e envia como TEXTO.
-        NÃO é o Pix nativo (interactiveMessage) — o WhatsApp bloqueia esse para clientes
-        não-oficiais. Informe `key` (gera o código) OU `code` (BR Code pronto). Se houver
-        `description`, ela vai numa mensagem antes do código. Esta rota NÃO usa o id de
-        idempotência (`X-Message-ID`).
+        Padrão: monta o "Pix Copia e Cola" (BR Code EMV do Banco Central) e envia como TEXTO.
+        Informe `key` (gera o código) OU `code` (BR Code pronto). Se houver `description`,
+        ela vai numa mensagem antes do código.
+
+        Com `style: "charge"`: envia o CARTÃO DE COBRANÇA nativo do WhatsApp Business (o
+        mesmo do "Cobrar" do app) — referência (`txid`), itens, total em R$ e botão Pagar
+        que abre o fluxo de pagamento. Exige `key` e `amount` (ou `items`, cuja soma vira o
+        total). `description` vira o texto do cartão e `footer` o rodapé. Requer conta
+        WhatsApp Business. Neste modo a rota aceita `X-Message-ID`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -3592,6 +3625,18 @@ paths:
                 txid: { type: string, example: "PEDIDO123", description: "máx 25" }
                 description: { type: string, example: "Cobrança do plano" }
                 code: { type: string, description: "BR Code pronto (ignora key/amount/etc.)" }
+                style: { type: string, enum: [text, charge], description: "charge = cartão de cobrança nativo" }
+                keyType: { type: string, enum: [CPF, CNPJ, EMAIL, PHONE, EVP], description: "tipo da chave (charge); deduzido se ausente" }
+                footer: { type: string, description: "rodapé do cartão (charge)" }
+                items:
+                  type: array
+                  description: "itens da cobrança (charge); sem itens vira um item 'Cobrança' com o amount"
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string, example: "Camisa" }
+                      amount: { type: number, example: 49.9, description: "valor unitário em reais" }
+                      quantity: { type: integer, example: 2 }
       responses:
         "200":
           description: Pix enviado
@@ -4161,7 +4206,7 @@ paths:
                   items:
                     type: object
                     properties:
-                      type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview, form], description: "webview e form são sinônimos (cta_url aberto em webview tela cheia)" }
+                      type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview, form, cta_catalog], description: "webview e form são sinônimos (cta_url aberto em webview tela cheia); cta_catalog abre o produto `id` no catálogo (sem id, o catálogo inteiro)" }
                       displayText: { type: string }
                       url: { type: string, description: "para cta_url / webview (webview abre em tela cheia dentro do WhatsApp)" }
                       id: { type: string, description: "para quick_reply" }
@@ -4206,6 +4251,79 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
+  /api/sessions/{sid}/messages/catalog:
+    post:
+      tags: [Mensagens]
+      summary: Mensagem de catálogo (abre a vitrine)
+      description: >
+        Botão nativo "Ver catálogo" que abre a vitrine inteira da empresa dentro do WhatsApp
+        (celular e Web). `productId` usa esse produto como miniatura. Requer conta Business com
+        catálogo. Para produtos lado a lado use /messages/carousel com botões
+        `{"type":"cta_catalog","id":"<produto>"}` (o card ganha um link "Ver catálogo" se não
+        tiver nenhum, senão o celular descarta).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                body: { type: string, example: "Confira nosso catálogo 👇" }
+                footer: { type: string }
+                productId: { type: string, description: "retailer id do produto da miniatura" }
+      responses:
+        "200": { description: "Enviada: {id, to, timestamp}" }
+
+  /api/sessions/{sid}/meta-ai:
+    post:
+      tags: [Mensagens]
+      summary: Pergunta à Meta AI pela conta conectada
+      description: >
+        Manda a pergunta (texto ou imagem) para a Meta AI como o próprio app e devolve a
+        resposta completa. `thread` mantém o contexto por 30 min (ex.: o número do cliente).
+        `instructions` vai antes da 1ª pergunta de cada conversa. `replyTo` manda "Pensando…" no
+        chat e edita com a resposta; `label` marca com o selo IA (só conta Business, só conversa
+        privada). ATENÇÃO: a memória da Meta AI é da conta, não da conversa — o que um cliente
+        disser pode aparecer para outro; não use com dado pessoal.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt: { type: string, example: "Resuma em 2 linhas: ..." }
+                imageUrl: { type: string }
+                base64: { type: string }
+                thread: { type: string, example: "5561999999999" }
+                instructions: { type: string, example: "Responda em português, curto." }
+                timeoutSeconds: { type: integer, example: 35 }
+                replyTo: { type: string, example: "5561999999999" }
+                label: { type: boolean }
+      responses:
+        "200":
+          description: Resposta
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer: { type: string }
+                  complete: { type: boolean }
+                  chunks: { type: integer }
+                  thread: { type: string }
+                  threadNew: { type: boolean }
+                  promptId: { type: string }
+                  messageId: { type: string, description: "mensagem editada no replyTo" }
+                  ms: { type: integer }
+        "504": { description: "A Meta AI não respondeu a tempo (answer pode vir parcial)" }
+
   /api/sessions/{sid}/messages/carousel:
     post:
       tags: [Interativas]
@@ -4239,7 +4357,7 @@ paths:
                         items:
                           type: object
                           properties:
-                            type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview, form] }
+                            type: { type: string, enum: [quick_reply, cta_url, cta_copy, cta_call, webview, form, cta_catalog], description: "cta_catalog = produto `id` no catálogo; card sem link ganha \"Ver catálogo\"" }
                             displayText: { type: string }
                             url: { type: string }
                             id: { type: string }

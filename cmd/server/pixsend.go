@@ -2,19 +2,23 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"google.golang.org/protobuf/proto"
 )
 
-// O WhatsApp bloqueia o envio de cobrança Pix NATIVA (interactiveMessage/nativeFlow)
-// por clientes não-oficiais — isso é recurso da API oficial do WhatsApp Business.
-// A forma que funciona 100% é mandar o "Pix Copia e Cola" (BR Code no padrão EMV do
-// Banco Central) como texto: o cliente cola no app do banco e paga. Este arquivo
-// monta esse BR Code e o envia.
+// Dois jeitos de cobrar por Pix:
+//   - padrão: o "Pix Copia e Cola" (BR Code no padrão EMV do Banco Central) como
+//     texto — funciona em qualquer conta; o cliente cola no app do banco;
+//   - style "charge": o CARTÃO DE COBRANÇA nativo do WhatsApp Business
+//     (nativeFlow review_and_pay), o mesmo do "Cobrar" do app: referência, itens,
+//     total e botão Pagar que abre o fluxo de pagamento. Só sai com o <biz>
+//     native_flow name="order_details" (com "mixed" o celular não renderiza).
 
 // emvField codifica um campo EMV: ID(2) + tamanho(2) + valor. O tamanho é em bytes.
 func emvField(id, value string) string {
@@ -139,9 +143,21 @@ func (s *server) handleSendPix(w http.ResponseWriter, r *http.Request) {
 		TxID         string    `json:"txid"`
 		Description  string    `json:"description"`
 		Code         string    `json:"code"`
+		// cobrança nativa (style=charge)
+		Style   string          `json:"style"`
+		KeyType string          `json:"keyType"`
+		Footer  string          `json:"footer"`
+		Items   []pixChargeItem `json:"items"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(b.Style), "charge") {
+		s.sendPixCharge(sess, w, r, pixChargeReq{
+			To: b.To, Key: b.Key, KeyType: b.KeyType, MerchantName: b.MerchantName,
+			Amount: b.Amount.Float(), Reference: b.TxID, Body: b.Description, Footer: b.Footer, Items: b.Items,
+		})
 		return
 	}
 	code := strings.TrimSpace(b.Code)
@@ -184,4 +200,160 @@ func (s *server) handleSendPix(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": id, "ids": ids, "to": jid.String(), "code": code,
 	})
+}
+
+// ===== cobrança nativa (review_and_pay) =====
+
+type pixChargeItem struct {
+	Name     string    `json:"name"`
+	Amount   flexFloat `json:"amount"` // valor unitário em reais
+	Quantity int       `json:"quantity"`
+}
+
+type pixChargeReq struct {
+	To, Key, KeyType, MerchantName string
+	Amount                         float64
+	Reference, Body, Footer        string
+	Items                          []pixChargeItem
+}
+
+// pixKeyType deduz o tipo da chave Pix (o cartão mostra "Copiar chave <tipo>").
+func pixKeyType(key, explicit string) string {
+	if t := strings.ToUpper(strings.TrimSpace(explicit)); t != "" {
+		if t == "RANDOM" || t == "ALEATORIA" {
+			return "EVP"
+		}
+		return t
+	}
+	k := strings.TrimSpace(key)
+	digits := digitsOnly(k)
+	switch {
+	case strings.Contains(k, "@"):
+		return "EMAIL"
+	case strings.HasPrefix(k, "+"):
+		return "PHONE"
+	case len(k) == 36 && strings.Count(k, "-") == 4:
+		return "EVP"
+	case len(digits) == 14:
+		return "CNPJ"
+	case len(digits) == 11 && strings.Contains(k, "."):
+		return "CPF" // 123.456.789-00
+	case len(digits) == 11 && digits[2] == '9':
+		return "PHONE" // DDD + 9xxxx-xxxx (ambíguo com CPF: mande keyType se for CPF)
+	case len(digits) == 11:
+		return "CPF"
+	case len(digits) >= 10:
+		return "PHONE"
+	}
+	return "EVP"
+}
+
+func cents(v float64) int64 { return int64(v*100 + 0.5) }
+
+// buildPixChargeMessage monta o cartão de cobrança. Valores em centavos com
+// offset 100. Itens que não são produto do catálogo vão com isCustomItem: sem
+// isso o WhatsApp Web procura o item no catálogo e o painel fica carregando.
+func buildPixChargeMessage(c pixChargeReq, merchantFallback string) (*waE2E.Message, string, error) {
+	type amt struct {
+		Value  int64 `json:"value"`
+		Offset int   `json:"offset"`
+	}
+	type item struct {
+		Name          string `json:"name"`
+		Amount        amt    `json:"amount"`
+		Quantity      int    `json:"quantity"`
+		IsCustomItem  bool   `json:"isCustomItem"`
+		IsQuantitySet bool   `json:"isQuantitySet"`
+	}
+	items := make([]item, 0, len(c.Items))
+	var total int64
+	for _, it := range c.Items {
+		q := it.Quantity
+		if q <= 0 {
+			q = 1
+		}
+		v := cents(it.Amount.Float())
+		name := strings.TrimSpace(it.Name)
+		if name == "" || v <= 0 {
+			return nil, "", errors.New("cada item precisa de name e amount > 0")
+		}
+		items = append(items, item{Name: name, Amount: amt{v, 100}, Quantity: q, IsCustomItem: true, IsQuantitySet: true})
+		total += v * int64(q)
+	}
+	if len(items) == 0 {
+		total = cents(c.Amount)
+		if total <= 0 {
+			return nil, "", errors.New("amount > 0 obrigatório na cobrança")
+		}
+		items = append(items, item{Name: "Cobrança", Amount: amt{total, 100}, Quantity: 1, IsCustomItem: true, IsQuantitySet: true})
+	} else if c.Amount > 0 && cents(c.Amount) != total {
+		return nil, "", errors.New("amount diferente da soma dos itens")
+	}
+	merchant := strings.TrimSpace(c.MerchantName)
+	if merchant == "" {
+		merchant = merchantFallback
+	}
+	ref := strings.TrimSpace(c.Reference)
+	if ref == "" {
+		ref = "PIX" + strings.ToUpper(strconv.FormatInt(time.Now().UnixMilli(), 36))
+	}
+	params := map[string]any{
+		"currency":     "BRL",
+		"reference_id": ref,
+		"type":         "physical-goods",
+		"total_amount": amt{total, 100},
+		"payment_settings": []any{map[string]any{
+			"type": "pix_static_code",
+			"pix_static_code": map[string]string{
+				"merchant_name": merchant, "key": strings.TrimSpace(c.Key), "key_type": pixKeyType(c.Key, c.KeyType),
+			},
+		}},
+		"order": map[string]any{
+			"status": "payment_requested", "subtotal": amt{total, 100}, "order_type": "ORDER", "items": items,
+		},
+		"native_payment_methods": []any{},
+		"share_payment_status":   false,
+		"is_soft_deleted":        false,
+	}
+	pj, _ := json.Marshal(params)
+	body := strings.TrimSpace(c.Body)
+	if body == "" {
+		body = "Sua cobrança está pronta."
+	}
+	im := &waE2E.InteractiveMessage{
+		Body: &waE2E.InteractiveMessage_Body{Text: proto.String(body)},
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				MessageVersion: proto.Int32(1),
+				Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{{
+					Name: proto.String("review_and_pay"), ButtonParamsJSON: proto.String(string(pj)),
+				}},
+			},
+		},
+	}
+	if f := strings.TrimSpace(c.Footer); f != "" {
+		im.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(f)}
+	}
+	return &waE2E.Message{
+		InteractiveMessage: im,
+		MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: newMessageSecret()},
+	}, ref, nil
+}
+
+func (s *server) sendPixCharge(sess *Session, w http.ResponseWriter, r *http.Request, c pixChargeReq) {
+	if strings.TrimSpace(c.Key) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key obrigatória na cobrança"})
+		return
+	}
+	jid, err := resolveRecipient(c.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	msg, _, err := buildPixChargeMessage(c, sess.name)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.sendNativeFlowNamed(sess, w, r, jid, msg, "order_details")
 }

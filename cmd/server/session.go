@@ -786,6 +786,8 @@ func (s *Session) handleEvent(rawEvt any) {
 		go s.handleReachoutTimelock(evt)
 	case *events.Message:
 		switch {
+		case isMetaAIEvent(evt):
+			s.handleMetaAIEvent(evt) // conversa com a Meta AI: fora do Chatwoot/webhook
 		case evt.Message.GetPollUpdateMessage() != nil:
 			go s.handleIncomingPollVote(evt) // voto em enquete (decodifica + encaminha)
 		case evt.Message.GetEncEventResponseMessage() != nil:
