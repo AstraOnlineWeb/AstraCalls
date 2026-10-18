@@ -248,7 +248,9 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request, p princi
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "transferring"})
-	case "agent":
+	case "agent", "":
+		// vazio = formato do wacalls: a ponte de voz do Botfy entrega a ligação ao
+		// humano com POST {} (oferta a todos); antes isso dava 400 aqui.
 		c.mu.Lock()
 		c.owner = nil
 		c.mu.Unlock()

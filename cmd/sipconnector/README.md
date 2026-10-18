@@ -61,7 +61,7 @@ Use `X-API-Key: <SIPC_API_KEY>` (chave-mestra) ou, no navegador, o token de widg
 | DELETE | `/api/sessions/{sid}/calls/{id}` | mestra/token | desligar (CANCEL, recusa ou BYE, conforme o estado) |
 | POST | `/api/sessions/{sid}/calls/{id}/webrtc` | mestra/token | `{sdp_offer}` → `{sdp_answer}` (navegador, só PCMU) |
 | GET | `/api/sessions/{sid}/calls/{id}/ws` | mestra/token | WS `pcm16` (PCM16 LE 16 kHz; `events=1` manda eventos em texto) |
-| POST | `/api/sessions/{sid}/calls/{id}/transfer` | mestra/token | `{"target":"sip","extension":"201"}` (REFER) ou `{"target":"agent"}` |
+| POST | `/api/sessions/{sid}/calls/{id}/transfer` | mestra/token | `{"target":"sip","extension":"201"}` (REFER) ou `{"target":"agent"}` (`{}` também = agent, formato do wacalls) |
 
 **Um consumidor de áudio por vez.** Quando a IA passa a ligação ao atendente, o navegador
 abre o `/webrtc` e substitui o WS sem derrubar a chamada. Se o consumidor sai **sem ser
