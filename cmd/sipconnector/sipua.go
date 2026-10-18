@@ -108,9 +108,14 @@ func (u *sipUA) reply(req *sip.Request, tx sip.ServerTransaction, code int, reas
 
 // applyLine (re)aplica os registros de uma linha: o da linha (register_out) e o de
 // cada ramal de agente. Chamado no boot e a cada PUT /api/lines/{id}.
+//
+// Registros que não mudaram seguem rodando: antes TODOS eram derrubados e recriados
+// a cada PUT (ex.: só adicionar um ramal de atendente), e o desregistro em segundo
+// plano do antigo podia chegar ao PABX depois do REGISTER novo — a linha ficava
+// "Não registrado" no PABX enquanto o conector mostrava "Registrado".
 func (u *sipUA) applyLine(l Line) {
-	u.removeLine(l.ID, false)
 	if !l.Enabled {
+		u.removeLine(l.ID, false)
 		return
 	}
 	targets := []regTarget{}
@@ -128,10 +133,33 @@ func (u *sipUA) applyLine(l Line) {
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	// rotas da linha são refeitas (baratas); os registros, só os que mudaram
+	for k, rt := range u.routes {
+		if rt.lineID == l.ID {
+			delete(u.routes, k)
+		}
+	}
 	u.routes[contactUserFor(l.ID, "")] = route{lineID: l.ID}
+	wanted := map[string]bool{}
 	for _, t := range targets {
+		key := l.ID + "|" + t.extension
+		wanted[key] = true
 		u.routes[t.contactUser] = route{lineID: l.ID, extension: t.extension}
-		u.regs[l.ID+"|"+t.extension] = newUACRegistrar(u, t)
+		old, ok := u.regs[key]
+		if ok && old.t == t {
+			continue // mesma config: o registro atual continua valendo
+		}
+		var after <-chan struct{}
+		if ok {
+			after = old.stop() // mesmo Contact: o novo espera o desregistro do antigo
+		}
+		u.regs[key] = newUACRegistrarAfter(u, t, after)
+	}
+	for k, r := range u.regs {
+		if r.t.lineID == l.ID && !wanted[k] {
+			r.stop()
+			delete(u.regs, k)
+		}
 	}
 }
 

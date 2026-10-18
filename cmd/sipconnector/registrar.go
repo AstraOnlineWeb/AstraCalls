@@ -61,12 +61,28 @@ func contactUserFor(lineID, ext string) string {
 }
 
 func newUACRegistrar(ua *sipUA, t regTarget) *uacRegistrar {
+	return newUACRegistrarAfter(ua, t, nil)
+}
+
+// newUACRegistrarAfter só começa a registrar depois de `after` fechar: ao trocar
+// a config de um ramal, o Contact é o mesmo, e o "Expires 0" do registrador antigo
+// chegando DEPOIS do REGISTER novo fazia o PABX apagar o registro recém-feito.
+func newUACRegistrarAfter(ua *sipUA, t regTarget, after <-chan struct{}) *uacRegistrar {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &uacRegistrar{
 		ua: ua, t: t, ctx: ctx, cancel: cancel, state: regRegistering,
 		callID: generateID(24) + "@sipconnector",
 	}
-	go r.loop()
+	go func() {
+		if after != nil {
+			select {
+			case <-after:
+			case <-ctx.Done():
+				return
+			}
+		}
+		r.loop()
+	}()
 	return r
 }
 
@@ -82,14 +98,19 @@ func (r *uacRegistrar) set(state, errMsg string) {
 	r.mu.Unlock()
 }
 
-// stop cancela o laço e desregistra (Expires 0) em segundo plano.
-func (r *uacRegistrar) stop() {
+// stop cancela o laço e desregistra (Expires 0) em segundo plano. O canal fecha
+// quando o desregistro terminou (ou desistiu), para um sucessor com o mesmo
+// Contact só registrar depois.
+func (r *uacRegistrar) stop() <-chan struct{} {
 	r.cancel()
+	done := make(chan struct{})
 	go func() {
-		ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
-		defer done()
+		defer close(done)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		_, _, _ = r.register(ctx, 0)
 	}()
+	return done
 }
 
 func (r *uacRegistrar) loop() {
