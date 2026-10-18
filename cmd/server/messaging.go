@@ -181,13 +181,14 @@ func (s *server) handleSendText(w http.ResponseWriter, r *http.Request) {
 		Participant     string   `json:"participant"`     // em grupo: quem mandou a citada
 		FromMe          bool     `json:"fromMe"`          // a citada é nossa
 		Mentions        []string `json:"mentions"`        // JIDs/números a mencionar (@)
+		MentionAll      bool     `json:"mentionAll"`      // marca todos do grupo (fantasma: sem @ no texto)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Text) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to and text required"})
 		return
 	}
 	msg := &waE2E.Message{Conversation: proto.String(b.Text)}
-	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Text, b.Mentions)))
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Text, withMentionAll(b.Mentions, b.MentionAll))))
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -201,6 +202,7 @@ func (s *server) handleSendImage(w http.ResponseWriter, r *http.Request) {
 		QuotedMessageID, Participant       string
 		FromMe                             bool
 		Mentions                           []string
+		MentionAll                         bool `json:"mentionAll"` // marca todos do grupo (fantasma: sem @ no texto)
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaImage)
@@ -216,7 +218,7 @@ func (s *server) handleSendImage(w http.ResponseWriter, r *http.Request) {
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 	}}
-	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, b.Mentions)))
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, withMentionAll(b.Mentions, b.MentionAll))))
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -233,6 +235,7 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 		QuotedMessageID, Participant string
 		FromMe                       bool
 		Mentions                     []string
+		MentionAll                   bool `json:"mentionAll"` // marca todos do grupo (fantasma: sem @ no texto)
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	// Buscamos os bytes primeiro (em vez de uploadMedia) p/ poder estimar a duração
@@ -274,7 +277,7 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 		am.Waveform = synthWaveform()
 	}
 	msg := &waE2E.Message{AudioMessage: am}
-	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, b.Mentions))
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, "", withMentionAll(b.Mentions, b.MentionAll))))
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -288,6 +291,7 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 		QuotedMessageID, Participant       string
 		FromMe                             bool
 		Mentions                           []string
+		MentionAll                         bool `json:"mentionAll"` // marca todos do grupo (fantasma: sem @ no texto)
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaVideo)
@@ -303,7 +307,7 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 	}}
-	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, b.Mentions)))
+	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, withMentionAll(b.Mentions, b.MentionAll))))
 	s.send(sess, w, r, b.To, msg)
 }
 
@@ -362,6 +366,7 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 		QuotedMessageID, Participant                 string
 		FromMe                                       bool
 		Mentions                                     []string
+		MentionAll                                   bool `json:"mentionAll"` // marca todos do grupo (fantasma: sem @ no texto)
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	up, ok := s.uploadMedia(sess, w, r, b.Base64, b.URL, whatsmeow.MediaDocument)
@@ -386,7 +391,7 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// citação/menção vão no ContextInfo do documento interno (o wrapper de legenda
 	// só embrulha essa mesma mensagem).
-	doc.ContextInfo = sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, b.Mentions))
+	doc.ContextInfo = sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, withMentionAll(b.Mentions, b.MentionAll)))
 	s.send(sess, w, r, b.To, documentWithCaption(doc, b.Caption))
 }
 

@@ -166,3 +166,27 @@ func TestGroupStatusClassified(t *testing.T) {
 		t.Fatalf("%s %q", messageType(m), messageText(m))
 	}
 }
+
+func TestMentionAllHelpers(t *testing.T) {
+	for _, v := range []string{"all", "TODOS", " everyone ", "@todos"} {
+		if !isMentionAll(v) {
+			t.Errorf("isMentionAll(%q) = false", v)
+		}
+	}
+	if isMentionAll("5561999999999") {
+		t.Error("número não é mentionAll")
+	}
+	for txt, want := range map[string]bool{
+		"@todos reunião às 10": true, "bom dia @All": true, "email a@todos.com": false, "todos": false,
+	} {
+		if got := mentionAllRe.MatchString(txt); got != want {
+			t.Errorf("mentionAllRe(%q) = %v, quer %v", txt, got, want)
+		}
+	}
+	if got := withMentionAll([]string{"1"}, true); len(got) != 2 || got[1] != "all" {
+		t.Errorf("withMentionAll = %v", got)
+	}
+	if got := withMentionAll(nil, false); got != nil {
+		t.Errorf("withMentionAll sem flag = %v", got)
+	}
+}

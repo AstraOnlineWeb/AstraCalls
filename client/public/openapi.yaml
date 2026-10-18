@@ -190,6 +190,7 @@ components:
         participant: { type: string, description: "Opcional. Em grupo, JID de quem enviou a mensagem citada." }
         fromMe: { type: boolean, description: "Opcional. true se a mensagem citada foi enviada por você." }
         mentions: { type: array, items: { type: string }, description: "Números ou JIDs a mencionar (@) na legenda." }
+        mentionAll: { type: boolean, description: "GRUPO: marca todos os participantes (marcação fantasma — não precisa de @ na legenda)." }
     CommunityGroups:
       type: object
       properties:
@@ -1365,6 +1366,7 @@ paths:
                 participant: { type: string, description: "Opcional. Em grupo, o JID de quem enviou a mensagem citada (só se a resolução automática não achar)." }
                 fromMe: { type: boolean, description: "Opcional. true se a mensagem citada foi enviada por você." }
                 mentions: { type: array, items: { type: string }, description: "Números ou JIDs a mencionar (@). O texto deve conter os @ correspondentes. Em GRUPO, se omitido, o gateway detecta sozinho os `@<8..15 dígitos>` do texto.", example: ["5561999999999"] }
+                mentionAll: { type: boolean, description: "GRUPO: marca TODOS os participantes sem escrever @ no texto (marcação fantasma — todos recebem a notificação de menção). Equivale a mentions:[\"all\"]. Escrever `@todos`/`@all` no texto (inclusive pelo Chatwoot) também marca todos.", example: true }
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
         "503": { description: Conta não pareada }

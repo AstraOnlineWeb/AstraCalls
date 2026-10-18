@@ -165,15 +165,82 @@ func (s *Session) mentionTargets(ctx context.Context, mentions []string) []strin
 // autoMentions decide as menções de um envio: as explícitas do body ou, quando
 // o destino é um GRUPO e nada foi informado, as detectadas no texto ("@5561...").
 // Fora de grupo não há menção.
+//
+// Marcar TODOS (marcação fantasma): "all"/"todos"/"everyone" em mentions (ou
+// mentionAll:true, que vira "all") — ou "@todos"/"@all"/"@everyone" no texto de
+// um grupo — expande para todos os participantes. O texto não precisa ter os @:
+// sem eles a notificação chega para todos sem poluir a mensagem.
 func (s *Session) autoMentions(ctx context.Context, to string, text string, explicit []string) []string {
-	if len(explicit) > 0 {
-		return explicit
-	}
 	jid, err := resolveRecipient(to)
-	if err != nil || jid.Server != types.GroupServer {
+	isGroup := err == nil && jid.Server == types.GroupServer
+	if len(explicit) == 0 {
+		if !isGroup {
+			return nil
+		}
+		explicit = detectMentions(text)
+		if mentionAllRe.MatchString(text) {
+			explicit = append(explicit, "all")
+		}
+	}
+	var out []string
+	all := false
+	for _, m := range explicit {
+		if isMentionAll(m) {
+			all = true
+			continue
+		}
+		out = append(out, m)
+	}
+	if all && isGroup {
+		out = append(out, s.groupMentionAll(ctx, jid)...)
+	}
+	return out
+}
+
+// mentionAllRe acha "@todos"/"@all"/"@everyone" no texto (o atendente do
+// Chatwoot/AstraChat marca o grupo inteiro assim).
+var mentionAllRe = regexp.MustCompile(`(?i)(^|\s)@(todos|all|everyone)\b`)
+
+func isMentionAll(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "all", "todos", "everyone", "@all", "@todos", "@everyone":
+		return true
+	}
+	return false
+}
+
+// withMentionAll acrescenta o marcador "all" quando o body pede mentionAll.
+func withMentionAll(mentions []string, all bool) []string {
+	if all {
+		return append(append([]string(nil), mentions...), "all")
+	}
+	return mentions
+}
+
+// groupMentionAll devolve os JIDs de todos os participantes do grupo (menos a
+// própria conta). Vão PN e LID de cada um, como em mentionTargets: o aparelho só
+// marca a forma que o grupo usa e ignora a outra.
+func (s *Session) groupMentionAll(ctx context.Context, group types.JID) []string {
+	gi, err := s.client.GetGroupInfo(ctx, group)
+	if err != nil {
+		s.log.Warn("mentionAll: falha ao ler participantes do grupo", "group", group.String(), "err", err)
 		return nil
 	}
-	return detectMentions(text)
+	var own, ownLID string
+	if s.client.Store.ID != nil {
+		own = s.client.Store.ID.User
+	}
+	ownLID = s.client.Store.GetLID().User
+	var out []string
+	for _, p := range gi.Participants {
+		for _, j := range []types.JID{p.JID, p.PhoneNumber, p.LID} {
+			if j.IsEmpty() || j.User == own || j.User == ownLID {
+				continue
+			}
+			out = append(out, j.ToNonAD().String())
+		}
+	}
+	return out
 }
 
 // buildSendContext monta o ContextInfo de uma mensagem de SAÍDA para citação

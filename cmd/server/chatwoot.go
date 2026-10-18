@@ -1033,7 +1033,8 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	// GRUPO: "@5561..." no texto vira menção de verdade (contextInfo.mentionedJid);
 	// o corpo do webhook do Chatwoot não tem como informar isso.
 	if jid.Server == types.GroupServer {
-		if m := sess.mentionTargets(ctx, detectMentions(content)); len(m) > 0 {
+		// "@todos"/"@all" marca o grupo inteiro
+		if m := sess.mentionTargets(ctx, sess.autoMentions(ctx, jid.String(), content, nil)); len(m) > 0 {
 			if quote == nil {
 				quote = &waE2E.ContextInfo{}
 			}
