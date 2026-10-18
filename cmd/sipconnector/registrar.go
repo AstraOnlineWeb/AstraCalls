@@ -103,7 +103,9 @@ func (r *uacRegistrar) loop() {
 		case code == 200:
 			r.set(regRegistered, "")
 			backoff = 15 * time.Second
-			wait := max(time.Duration(expires/2)*time.Second, 60*time.Second)
+			// renova na metade do prazo concedido (piso de 15 s): com piso de 60 s,
+			// um PABX que concede 60 s via o registro vencer antes da renovação.
+			wait := max(time.Duration(expires/2)*time.Second, 15*time.Second)
 			select {
 			case <-r.ctx.Done():
 				return
@@ -150,13 +152,32 @@ func (r *uacRegistrar) register(ctx context.Context, expires int) (int, int, err
 			return 0, 0, err
 		}
 	}
-	eff := expires
-	if h := res.GetHeader("Expires"); h != nil {
-		if n, e := strconv.Atoi(strings.TrimSpace(h.Value())); e == nil && n > 0 {
-			eff = n
+	return res.StatusCode, grantedExpires(res, expires), nil
+}
+
+// grantedExpires é o prazo que o PABX concedeu ao registro. O 3CX manda no
+// `expires` do Contact (ex.: 60) e não no header Expires — sem ler o Contact,
+// valia o pedido (300 s), a renovação saía aos 150 s e o ramal ficava "Não
+// registrado" no PABX a maior parte do tempo.
+func grantedExpires(res *sip.Response, requested int) int {
+	if res == nil {
+		return requested
+	}
+	for _, h := range res.GetHeaders("Contact") {
+		if ch, ok := h.(*sip.ContactHeader); ok && ch.Params != nil {
+			if v, ok := ch.Params.Get("expires"); ok {
+				if n, e := strconv.Atoi(strings.TrimSpace(v)); e == nil && n > 0 {
+					return n
+				}
+			}
 		}
 	}
-	return res.StatusCode, eff, nil
+	if h := res.GetHeader("Expires"); h != nil {
+		if n, e := strconv.Atoi(strings.TrimSpace(h.Value())); e == nil && n > 0 {
+			return n
+		}
+	}
+	return requested
 }
 
 // applyRouting: outbound proxy vira o próximo salto (a identidade continua no

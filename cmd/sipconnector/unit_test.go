@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/emiago/sipgo/sip"
 )
 
 func TestG711RoundTrip(t *testing.T) {
@@ -172,5 +174,32 @@ func TestDialable(t *testing.T) {
 	}
 	if got := dialable("*21#"); got != "*21#" {
 		t.Fatal(got)
+	}
+}
+
+// O 3CX concede o prazo no `expires` do Contact, não no header Expires.
+func TestGrantedExpires(t *testing.T) {
+	parse := func(raw string) *sip.Response {
+		t.Helper()
+		m, err := sip.ParseMessage([]byte(strings.ReplaceAll(raw, "\n", "\r\n")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.(*sip.Response)
+	}
+	base := "SIP/2.0 200 OK\nVia: SIP/2.0/UDP 10.0.0.1:5070;branch=z9hG4bK1\nFrom: <sip:16719@pbx>;tag=a\nTo: <sip:16719@pbx>;tag=b\nCall-ID: x\nCSeq: 2 REGISTER\n"
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{base + "Contact: <sip:inbox20@1.2.3.4:5070>;expires=60\nContent-Length: 0\n\n", 60},
+		{base + "Expires: 120\nContent-Length: 0\n\n", 120},
+		{base + "Contact: <sip:inbox20@1.2.3.4:5070>;expires=90\nExpires: 3600\nContent-Length: 0\n\n", 90},
+		{base + "Content-Length: 0\n\n", 300},
+	}
+	for i, c := range cases {
+		if got := grantedExpires(parse(c.raw), 300); got != c.want {
+			t.Fatalf("caso %d: got %d, want %d", i, got, c.want)
+		}
 	}
 }
