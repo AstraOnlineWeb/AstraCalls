@@ -95,6 +95,15 @@ roteadas por call ID.
   e status no painel.
 - RTP em **faixa fixa de portas** (`WACALLS_RTP_PORT_MIN/MAX`), publicável em `mode=host`.
 
+### 📞 Conector SIP (PABX IP → Botfy) — serviço separado
+- Binário `sipconnector` na mesma imagem: liga **qualquer PABX IP** ao Botfy, sem WhatsApp.
+- Linha por caixa (o PABX registra no conector **ou** o conector registra no PABX) e **um
+  ramal por atendente** (e-mail → ramal).
+- Expõe a **mesma API de chamadas do wacalls** (SSE, accept/reject/DELETE, `/webrtc` para o
+  navegador em PCMU sem transcodificar, `/ws` pcm16 para o agente de voz por IA) e
+  transferência para ramal por **SIP REFER**.
+- Detalhes, variáveis e deploy: [`cmd/sipconnector/README.md`](cmd/sipconnector/README.md).
+
 ### 💬 Mensagens (API estilo WAHA, ~60 endpoints)
 - **Envio:** texto, imagem, áudio/nota de voz (com waveform), vídeo, **nota de vídeo (PTV)**,
   documento, sticker, contato, localização, link com preview, **enquete** (e voto),
