@@ -688,6 +688,15 @@ func (gw *SIPGateway) agentReInvite(c *sipAgentCall, req *sip.Request, tx sip.Se
 func (gw *SIPGateway) handleAck(req *sip.Request, tx sip.ServerTransaction) {
 	if c := gw.agentCallBySIP(req.CallID().Value()); c != nil {
 		_ = c.dlg.ReadAck(req, tx)
+		return
+	}
+	// ACK do 200 de uma chamada SIP->WhatsApp: confirma o diálogo (para o 200
+	// de retransmitir).
+	gw.mu.RLock()
+	sc, ok := gw.activeCalls[req.CallID().Value()]
+	gw.mu.RUnlock()
+	if ok && sc.dlg != nil {
+		_ = sc.dlg.ReadAck(req, tx)
 	}
 }
 

@@ -482,9 +482,15 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.log.Info("incoming call: broadcasting", "callID", c.CallID, "peer", c.PeerJid,
 			"acct", acct, "subs_total", total, "subs_matched", matched, "subs_widget_other_acct", otherAcct)
 		s.mgr.broker.emitIncoming(s.id, c.CallID, peerOut, phone, name, c.MediaType == core.CallMediaTypeVideo)
-		// se um tronco SIP está registrado, toca essa chamada no ramal também.
+		// se um tronco SIP está registrado, toca essa chamada no ramal também. O
+		// caller ID do SIP é o telefone resolvido; o LID cru só como último recurso
+		// (o PBX mostraria um "número" que não dá para retornar).
 		if s.mgr.sipInbound != nil {
-			s.mgr.sipInbound(s, c.CallID, sipUserPart(c.PeerJid))
+			callerID := phone
+			if callerID == "" {
+				callerID = sipUserPart(c.PeerJid)
+			}
+			s.mgr.sipInbound(s, c.CallID, callerID)
 		}
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/emiago/sipgo"
@@ -26,6 +27,9 @@ type SIPGateway struct {
 	registrations  map[string]*sipRegistration // keyed by sip_user (modelo 1: PBX registra em nós)
 	activeCalls    map[string]*sipCall         // keyed by SIP Call-ID (SIP->WhatsApp)
 	inboundDialogs map[string]*inboundDialog   // keyed by SIP Call-ID (WhatsApp->SIP)
+	// WhatsApp->SIP ainda tocando no PBX, por callId do WhatsApp: cancela o INVITE
+	// quando a chamada é atendida por outro lado (painel, ponte de voz).
+	inboundRinging map[string]*inboundRing
 	extRegs        map[string]*sipUACRegistrar // keyed by session id (modelo 2: nós registramos no PBX)
 	agentCalls     map[string]*sipAgentCall    // keyed by id "sip-…" (modo agente: SIP entrante atendido)
 	agentDialogs   map[string]*sipAgentCall    // keyed by SIP Call-ID, vive até o diálogo acabar
@@ -44,6 +48,30 @@ func (r *sipRegistration) expired() bool {
 	return !r.expiresAt.IsZero() && time.Now().After(r.expiresAt)
 }
 
+// inboundRing é o INVITE WhatsApp->SIP ainda sem resposta do PBX.
+type inboundRing struct {
+	cancel  context.CancelFunc
+	claimed bool // atendida por outro lado: o cancelamento não encerra a chamada
+}
+
+// cancelInboundRing para o toque no PBX de uma chamada WhatsApp que outro cliente
+// (painel, ponte de voz) acabou de atender: envia CANCEL ao PBX e solta a ponte
+// RTP do SIP, sem encerrar a chamada no WhatsApp. Devolve se havia toque.
+func (gw *SIPGateway) cancelInboundRing(waCallID string) bool {
+	gw.mu.Lock()
+	r, ok := gw.inboundRinging[waCallID]
+	if ok {
+		r.claimed = true
+		delete(gw.inboundRinging, waCallID)
+	}
+	gw.mu.Unlock()
+	if ok {
+		r.cancel()
+		gw.log.Info("inbound: atendida por outro cliente, cancelando o toque no PBX", "wa_call_id", waCallID)
+	}
+	return ok
+}
+
 // inboundDialog representa uma chamada WhatsApp->SIP (somos o UAC).
 type inboundDialog struct {
 	dialog    *sipgo.DialogClientSession
@@ -55,6 +83,10 @@ type sipCall struct {
 	sipCallID string
 	sessionID string
 	waCallID  string
+	// diálogo SIP->WhatsApp (somos o UAS): mesma To-tag em todas as respostas,
+	// Contact no 2xx, ACK e BYE do jeito que o PBX espera.
+	dlg     *sipgo.DialogServerSession
+	contact sip.ContactHeader
 	fromTag   string
 	toTag     string
 	fromURI   string
@@ -86,6 +118,7 @@ func NewSIPGateway(sessions *SessionManager, log *slog.Logger) (*SIPGateway, err
 		registrations:  make(map[string]*sipRegistration),
 		activeCalls:    make(map[string]*sipCall),
 		inboundDialogs: make(map[string]*inboundDialog),
+		inboundRinging: make(map[string]*inboundRing),
 		extRegs:        make(map[string]*sipUACRegistrar),
 		agentCalls:     make(map[string]*sipAgentCall),
 		agentDialogs:   make(map[string]*sipAgentCall),
@@ -204,6 +237,14 @@ func (gw *SIPGateway) handleRegister(req *sip.Request, tx sip.ServerTransaction)
 	gw.log.Info("SIP REGISTER success", "sip_user", sipUser, "session", sess.id, "contact", contact, "expires", expires)
 
 	resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
+	// RFC 3261 §10.3: o 200 lista o binding registrado no Contact. PBXs como o
+	// 3CX conferem o próprio Contact aqui; sem ele tratam o registro como falho
+	// (tronco "Não registrado" e sem rota de saída) mesmo com o 200.
+	if contactHeader != nil {
+		params := sip.NewParams()
+		params.Add("expires", strconv.Itoa(expires))
+		resp.AppendHeader(&sip.ContactHeader{Address: contactURI, Params: params})
+	}
 	resp.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expires)))
 	_ = tx.Respond(resp)
 }
@@ -263,6 +304,10 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		sdpAnswer := buildSIPSDPAnswer(localIP, localPort, pt, 0)
 		ok200 := sip.NewResponseFromRequest(req, 200, "OK", []byte(sdpAnswer))
 		ok200.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+		if sc.dlg != nil {
+			contact := sc.contact
+			ok200.AppendHeader(&contact)
+		}
 		_ = tx.Respond(ok200)
 		return
 	}
@@ -293,6 +338,11 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		sess = gw.sessionForAgentInvite(toHeader.Address.User, sourceIPOf(req.Source()))
 	}
 	if sess == nil {
+		// modelo 1 com o From = caller ID do ramal (3CX): casa pelo IP do PBX que
+		// está registrado em nós.
+		sess = gw.sessionForRegisteredPBX(sourceIPOf(req.Source()))
+	}
+	if sess == nil {
 		gw.log.Warn("SIP INVITE: sessão não encontrada", "sip_user", sipUser, "source", req.Source())
 		gw.reply(tx, req, 403, "Forbidden - Not Registered")
 		return
@@ -313,9 +363,21 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		"session", sess.id,
 	)
 
-	// Send 100 Trying
-	trying := sip.NewResponseFromRequest(req, 100, "Trying", nil)
-	_ = tx.Respond(trying)
+	// Diálogo UAS do sipgo: uma To-tag só para 180 e 200 (RFC 3261 §8.2.6.2) e
+	// Contact nas respostas (§12.1.1). Sem isso o 3CX não reconhecia o 200 como
+	// do mesmo diálogo, derrubava a chamada no atendimento e dava "ocupado".
+	dlg, err := gw.dialogUA.ReadInvite(req, tx)
+	if err != nil {
+		gw.log.Warn("SIP INVITE: inválido", "err", err)
+		gw.reply(tx, req, 400, "Bad Request")
+		return
+	}
+	contact := sip.ContactHeader{Address: sip.Uri{
+		Scheme: "sip", User: destPhone, Host: getLocalIP(), Port: sipAdvertisePort(),
+	}}
+	fail := func(code int, reason string) { _ = dlg.Respond(code, reason, nil, &contact) }
+
+	_ = dlg.Respond(100, "Trying", nil)
 
 	// Extract remote RTP from SDP body
 	remoteRTP := extractRTPAddress(string(req.Body()))
@@ -324,7 +386,7 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	callID, err := sess.sipStartCall(context.Background(), destPhone, false)
 	if err != nil {
 		gw.log.Error("SIP INVITE: WhatsApp call failed", "err", err)
-		gw.reply(tx, req, 500, "Internal Server Error - "+err.Error())
+		fail(500, "Internal Server Error - "+err.Error())
 		return
 	}
 
@@ -333,6 +395,8 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		sipCallID: sipCallID,
 		sessionID: sess.id,
 		waCallID:  callID,
+		dlg:       dlg,
+		contact:   contact,
 		fromURI:   fromHeader.Address.String(),
 		toURI:     toHeader.Address.String(),
 		remoteRTP: remoteRTP,
@@ -345,21 +409,19 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	gw.activeCalls[sipCallID] = sc
 	gw.mu.Unlock()
 
-	// Send 180 Ringing
-	ringing := sip.NewResponseFromRequest(req, 180, "Ringing", nil)
-	_ = tx.Respond(ringing)
+	_ = dlg.Respond(180, "Ringing", nil, &contact)
 
 	// Local RTP Bridge setup -> CallManager
 	ac, found := sess.reg.get(callID)
 	if !found {
-		gw.reply(tx, req, 500, "Internal Server Error - Call lost")
+		fail(500, "Internal Server Error - Call lost")
 		return
 	}
 
 	rtpBridge, err := NewSIPRTPBridge(callID, remoteRTP, gw.log)
 	if err != nil {
 		gw.log.Error("SIP INVITE: RTP Bridge failed", "err", err)
-		gw.reply(tx, req, 500, "Internal Server Error - "+err.Error())
+		fail(500, "Internal Server Error - "+err.Error())
 		return
 	}
 
@@ -391,28 +453,53 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}()
 
 	// Send 200 OK only when WhatsApp call is connected (Active)
+	var answered atomic.Bool
 	rtpBridge.OnActive = func() {
-		defer settle()
-		ok200 := sip.NewResponseFromRequest(req, 200, "OK", []byte(sdpAnswer))
-		ok200.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
-		_ = tx.Respond(ok200)
+		answered.Store(true)
 		gw.log.Info("SIP INVITE: Call connected on WhatsApp, sending 200 OK", "sip_call_id", sipCallID, "wa_call_id", callID)
+		// o 200 retransmite até o ACK chegar (handleAck → ReadAck): não segura o
+		// callback do WhatsApp.
+		go func() {
+			defer settle()
+			ct := sip.NewHeader("Content-Type", "application/sdp")
+			if err := dlg.Respond(200, "OK", []byte(sdpAnswer), ct, &contact); err != nil {
+				gw.log.Warn("SIP INVITE: 200 OK sem ACK, encerrando", "sip_call_id", sipCallID, "err", err)
+				sess.terminateCallByID(callID)
+			}
+		}()
 	}
 
 	rtpBridge.OnEnded = func(reason string) {
-		defer settle()
-		// Se a chamada WhatsApp falhou/rejeitou antes de conectar, respondemos erro no INVITE.
 		gw.log.Info("SIP INVITE/CALL: WhatsApp call ended", "sip_call_id", sipCallID, "reason", reason)
 
 		gw.mu.Lock()
-		if _, ok := gw.activeCalls[sipCallID]; ok {
-			delete(gw.activeCalls, sipCallID)
-		}
+		_, stillActive := gw.activeCalls[sipCallID]
+		delete(gw.activeCalls, sipCallID)
 		gw.mu.Unlock()
 
-		// tx.Respond é idempotente; se 200 já foi enviado, este 486 é ignorado pelo stack.
-		replyErr := sip.NewResponseFromRequest(req, 486, "Busy Here", nil)
-		_ = tx.Respond(replyErr)
+		if answered.Load() {
+			// atendida: o WhatsApp desligou -> BYE para o PBX (se foi o PBX que
+			// mandou BYE, o diálogo já terminou e o Bye não faz nada). Quem libera o
+			// handler é a goroutine do 200.
+			if stillActive {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					if err := dlg.Bye(ctx); err != nil {
+						gw.log.Warn("SIP BYE para o PBX falhou", "sip_call_id", sipCallID, "err", err)
+					}
+				}()
+			}
+			return
+		}
+		// não atendida: erro final no INVITE. Sem estar mais ativa é porque o PBX
+		// cancelou (CANCEL) -> 487; senão o WhatsApp recusou/ocupado/sem resposta.
+		defer settle()
+		if !stillActive {
+			fail(487, "Request Terminated")
+			return
+		}
+		fail(486, "Busy Here")
 	}
 }
 
@@ -462,6 +549,9 @@ func (gw *SIPGateway) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 	}
 
 	gw.log.Info("SIP BYE: call ended", "sip_call_id", sipCallID, "wa_call_id", sc.waCallID)
+	if sc.dlg != nil && sc.dlg.ReadBye(req, tx) == nil {
+		return // o diálogo respondeu o 200 e encerrou
+	}
 	gw.reply(tx, req, 200, "OK")
 }
 
@@ -568,6 +658,39 @@ func (gw *SIPGateway) sessionForAgentInvite(toUser, sourceIP string) *Session {
 	if !found || sess.sipExtSnapshot().Agent.mode() == sipInboundOriginate {
 		return nil
 	}
+	return sess
+}
+
+// sessionForRegisteredPBX acha a sessão de um PBX registrado em nós (modelo 1)
+// pelo IP de origem do INVITE, comparado com o host do Contact do registro.
+// Só casa quando há exatamente uma sessão para aquele IP (sem ambiguidade).
+func (gw *SIPGateway) sessionForRegisteredPBX(sourceIP string) *Session {
+	if sourceIP == "" {
+		return nil
+	}
+	gw.mu.RLock()
+	var regs []*sipRegistration
+	for _, r := range gw.registrations {
+		if !r.expired() {
+			regs = append(regs, r)
+		}
+	}
+	gw.mu.RUnlock()
+
+	sessionID := ""
+	for _, r := range regs {
+		if !pbxHostMatches(r.contactURI.Host, sourceIP) {
+			continue
+		}
+		if sessionID != "" && sessionID != r.sessionID {
+			return nil // mais de uma sessão atrás do mesmo IP
+		}
+		sessionID = r.sessionID
+	}
+	if sessionID == "" {
+		return nil
+	}
+	sess, _ := gw.sessions.Get(sessionID)
 	return sess
 }
 
@@ -688,7 +811,36 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 			gw.mu.Unlock()
 		}
 
-		if err := d.WaitAnswer(waitCtx, sipgo.AnswerOptions{}); err != nil {
+		ring := &inboundRing{cancel: cancel}
+		gw.mu.Lock()
+		gw.inboundRinging[callID] = ring
+		gw.mu.Unlock()
+
+		err := d.WaitAnswer(waitCtx, sipgo.AnswerOptions{})
+
+		gw.mu.Lock()
+		claimed := ring.claimed
+		if gw.inboundRinging[callID] == ring {
+			delete(gw.inboundRinging, callID)
+		}
+		gw.mu.Unlock()
+
+		if claimed {
+			// outro cliente atendeu: o PBX já recebeu o CANCEL; a chamada segue no
+			// WhatsApp, só sem a perna SIP (a ponte RTP sai do registro dela).
+			if oldB, found := sess.reg.setRTPBridge(callID, nil); found && oldB != nil {
+				oldB.Close()
+			}
+			if err == nil {
+				// corrida: o PBX atendeu junto com o cancelamento — derruba a perna SIP
+				_ = d.Ack(context.Background())
+				byeCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+				_ = d.Bye(byeCtx)
+				c()
+			}
+			return
+		}
+		if err != nil {
 			gw.log.Info("inbound: SIP not answered", "err", err)
 			sess.terminateCallByID(callID)
 			return
@@ -737,11 +889,17 @@ func sipUserPart(jid string) string {
 // ========== Helpers ==========
 
 func (gw *SIPGateway) findSessionBySIPUser(sipUser string) *Session {
-	for _, info := range gw.sessions.infos() {
-		if info.SIPUser == sipUser {
-			if sess, ok := gw.sessions.Get(info.ID); ok {
-				return sess
-			}
+	if sipUser == "" {
+		return nil
+	}
+	gw.sessions.mu.RLock()
+	defer gw.sessions.mu.RUnlock()
+	for _, sess := range gw.sessions.sessions {
+		sess.mu.Lock()
+		match := sess.SIPUser == sipUser
+		sess.mu.Unlock()
+		if match {
+			return sess
 		}
 	}
 	return nil

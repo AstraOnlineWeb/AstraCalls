@@ -922,6 +922,11 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.broker.emitIncomingClaimed(sess.id, id, owner)
+	// atendida aqui (painel, ponte de voz): para de tocar no PBX pelo tronco SIP —
+	// senão o ramal seguia chamando enquanto outro já estava na ligação.
+	if s.sipGW != nil {
+		s.sipGW.cancelInboundRing(id)
+	}
 	if err := ac.cm.AcceptCall(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
