@@ -36,6 +36,25 @@ const (
 	metaAIPersona        = "867051314767696$760019659443059"
 )
 
+// capacidades de resposta que o app anuncia (mesma lista do WhatsApp Web/zapo).
+var metaAICapabilities = []waAICommon.BotCapabilityMetadata_BotCapabilityType{
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_HEADING,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_NESTED_LIST,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_TABLE,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_CODE,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_STRUCTURED_RESPONSE,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_SUB_HEADING,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_LATEX,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_INLINE_REELS,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_LATEX_INLINE,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_UNIFIED_RESPONSE,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_SOURCES_IN_MESSAGE,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_UNIFIED_TEXT_COMPONENT,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_UNIFIED_SOURCES,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_UNIFIED_DOMAIN_CITATIONS,
+	waAICommon.BotCapabilityMetadata_RICH_RESPONSE_UR_INLINE_REELS_ENABLED,
+}
+
 type metaAIChunk struct {
 	text     string
 	editType types.BotEditType
@@ -118,19 +137,8 @@ func metaAIText(m *waE2E.Message) string {
 			return strings.Join(parts, "\n\n")
 		}
 	}
-	if e := m.GetProtocolMessage().GetEditedMessage(); e != nil {
-		return metaAIText(e)
-	}
-	if e := m.GetEditedMessage().GetMessage(); e != nil {
-		return metaAIText(e)
-	}
-	if b := m.GetBotForwardedMessage().GetMessage(); b != nil {
-		return metaAIText(b)
-	}
-	if t := m.GetConversation(); t != "" {
-		return t
-	}
-	if t := m.GetExtendedTextMessage().GetText(); t != "" {
+	// edição, encaminhado de bot, texto simples: o extrator geral das mensagens.
+	if t := messageText(m); t != "" {
 		return t
 	}
 	// formato novo/desconhecido: junta os campos de texto do JSON.
@@ -220,6 +228,8 @@ func (s *Session) askMetaAI(ctx context.Context, prompt, instructions, threadKey
 		}},
 		BotMetadata: &waAICommon.BotMetadata{
 			PersonaID: proto.String(metaAIPersona),
+			// sem a lista de capacidades o bot recusa a pergunta (ack 488).
+			CapabilityMetadata: &waAICommon.BotCapabilityMetadata{Capabilities: metaAICapabilities},
 			BotThreadInfo: &waAICommon.AIThreadInfo{ClientInfo: &waAICommon.AIThreadInfo_AIThreadClientInfo{
 				Type: waAICommon.AIThreadInfo_AIThreadClientInfo_DEFAULT.Enum(),
 			}},

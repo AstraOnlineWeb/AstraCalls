@@ -166,6 +166,15 @@ func unwrapBotForwarded(m *waE2E.Message) *waE2E.Message {
 	return m
 }
 
+// groupStatusInner devolve a mensagem de dentro de um status do grupo
+// (groupStatusMessageV2 / groupStatusMessage), ou nil.
+func groupStatusInner(m *waE2E.Message) *waE2E.Message {
+	if in := m.GetGroupStatusMessageV2().GetMessage(); in != nil {
+		return in
+	}
+	return m.GetGroupStatusMessage().GetMessage()
+}
+
 // richResponseText junta o texto dos submessages de uma AIRichResponseMessage.
 func richResponseText(m *waE2E.Message) string {
 	var parts []string
@@ -221,6 +230,13 @@ func messageText(m *waE2E.Message) string {
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
 	m = unwrapBotForwarded(m)
+	if gs := groupStatusInner(m); gs != nil {
+		// status do grupo (24 h na aba Atualizações): aparece no histórico com rótulo.
+		if t := messageText(gs); t != "" {
+			return "📢 Status do grupo: " + t
+		}
+		return "📢 Status do grupo"
+	}
 	switch {
 	case m.GetConversation() != "":
 		return m.GetConversation()
@@ -295,6 +311,9 @@ func messageType(m *waE2E.Message) string {
 	m, _, _ = unwrapEdit(m)
 	m, _ = unwrapViewOnce(m)
 	m = unwrapDocCaption(m)
+	if groupStatusInner(m) != nil {
+		return "group_status"
+	}
 	switch {
 	case m.GetConversation() != "" || m.GetExtendedTextMessage() != nil:
 		return "text"

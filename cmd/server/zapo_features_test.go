@@ -157,3 +157,12 @@ func TestMetaAIChunkRouting(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestGroupStatusClassified(t *testing.T) {
+	m := &waE2E.Message{GroupStatusMessageV2: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("Promo")},
+	}}}
+	if messageType(m) != "group_status" || messageText(m) != "📢 Status do grupo: Promo" {
+		t.Fatalf("%s %q", messageType(m), messageText(m))
+	}
+}
