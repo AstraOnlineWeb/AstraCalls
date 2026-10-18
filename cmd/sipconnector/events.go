@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Broker de eventos SSE no MESMO formato do wacalls (broker.go), para o Botfy
+// Broker de eventos SSE no MESMO formato do wacalls (broker.go), para o AstraChat
 // (listener, ponte de voz e softphone) não precisar saber que do outro lado é SIP.
 // Diferença deliberada: TODO evento é escopado pela conta da linha — no wacalls
 // call-status/call-ended/call-list iam para todos os assinantes.

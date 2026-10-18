@@ -12,7 +12,7 @@ import (
 )
 
 // Perna WebRTC com o navegador do atendente (o mesmo /webrtc que o softphone do
-// Botfy já usa com o wacalls). A diferença: aqui o ÚNICO codec registrado é PCMU,
+// AstraChat já usa com o wacalls). A diferença: aqui o ÚNICO codec registrado é PCMU,
 // então o áudio do navegador vai para o PABX só reempacotado — sem transcodificar,
 // sem Opus, sem CPU. O DataChannel "h264" que o softphone sempre abre é aceito e
 // ignorado (não há vídeo em ligação de PABX).

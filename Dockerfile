@@ -71,7 +71,7 @@ ENV CGO_ENABLED=1 \
 ARG BUILD_VERSION=dev
 ARG BUILD_REV=dev
 RUN go build -tags mlow -ldflags "-X main.version=${BUILD_VERSION} -X main.commit=${BUILD_REV}" -o /wacalls ./cmd/server
-# Conector SIP (PABX IP -> Botfy): binário separado, Go puro (sem cgo/MLow). Roda
+# Conector SIP (PABX IP -> AstraChat): binário separado, Go puro (sem cgo/MLow). Roda
 # como OUTRO serviço da stack trocando o entrypoint (ver README, "Conector SIP").
 RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${BUILD_VERSION}" -o /sipconnector ./cmd/sipconnector
 

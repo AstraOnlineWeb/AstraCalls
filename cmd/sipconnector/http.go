@@ -13,7 +13,7 @@ func (s *server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 
-	// Só chave-mestra (o Botfy, servidor): configuração e tokens.
+	// Só chave-mestra (o AstraChat, servidor): configuração e tokens.
 	mux.HandleFunc("GET /api/me", s.requireAdmin(s.handleMe))
 	mux.HandleFunc("POST /api/widget-tokens", s.requireAdmin(s.handleWidgetToken))
 	mux.HandleFunc("GET /api/lines", s.requireAdmin(s.handleLineList))
@@ -37,7 +37,7 @@ func (s *server) routes() http.Handler {
 	return withCORS(mux)
 }
 
-// GET /api/me — o Botfy valida a chave ao salvar a integração (como o BCVOZ).
+// GET /api/me — o AstraChat valida a chave ao salvar a integração (como o BCVOZ).
 func (s *server) handleMe(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "service": "sipconnector", "version": version,
@@ -111,7 +111,7 @@ func (s *server) handleLineStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /api/sessions — mesmo formato do wacalls, para o provider_state do Botfy.
+// GET /api/sessions — mesmo formato do wacalls, para o provider_state do AstraChat.
 func (s *server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	out := []map[string]any{}
 	for _, l := range s.store.all() {
@@ -249,7 +249,7 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request, p princi
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "transferring"})
 	case "agent", "":
-		// vazio = formato do wacalls: a ponte de voz do Botfy entrega a ligação ao
+		// vazio = formato do wacalls: a ponte de voz do AstraChat entrega a ligação ao
 		// humano com POST {} (oferta a todos); antes isso dava 400 aqui.
 		c.mu.Lock()
 		c.owner = nil

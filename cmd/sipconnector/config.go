@@ -14,7 +14,7 @@ import (
 type config struct {
 	HTTPAddr         string        // API HTTP (eventos, chamadas, linhas)
 	SIPAddr          string        // escuta SIP (UDP + TCP)
-	APIKey           string        // chave-mestra (Botfy fala com ela)
+	APIKey           string        // chave-mestra (AstraChat fala com ela)
 	PublicIP         string        // IP anunciado no SDP/Contact/ICE
 	SIPAdvertisePort int           // porta SIP anunciada no Contact
 	RTPMin, RTPMax   int           // faixa de portas RTP do lado do PABX

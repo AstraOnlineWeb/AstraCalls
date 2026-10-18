@@ -12,7 +12,7 @@ import (
 )
 
 // Perna WebSocket "pcm16" — mesmo contrato do ws_bridge.go do wacalls, consumido
-// pela ponte de voz do Botfy (bridge.mjs):
+// pela ponte de voz do AstraChat (bridge.mjs):
 //   - binário = PCM16 LE mono 16 kHz nos dois sentidos;
 //   - texto (só com ?events=1) = eventos JSON de ciclo de vida (call-status, call-ended).
 type wsLeg struct {

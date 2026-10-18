@@ -144,7 +144,7 @@ func TestLineNormalize(t *testing.T) {
 	if l.Port != 5060 || l.Transport != "udp" || len(l.Agents) != 1 || l.Agents[0].Email != "luiz@mtech.net.br" {
 		t.Fatalf("%+v", l)
 	}
-	// senha vazia no PUT mantém a anterior (o Botfy não recebe a senha de volta)
+	// senha vazia no PUT mantém a anterior (o AstraChat não recebe a senha de volta)
 	novo := Line{ID: "inbox16", AccountID: 1, Host: "pbx.local", User: "100",
 		Agents: []Agent{{Email: "luiz@mtech.net.br", Extension: "201"}}}
 	if err := novo.normalize(&l); err != nil {

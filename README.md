@@ -95,8 +95,8 @@ roteadas por call ID.
   e status no painel.
 - RTP em **faixa fixa de portas** (`WACALLS_RTP_PORT_MIN/MAX`), publicável em `mode=host`.
 
-### 📞 Conector SIP (PABX IP → Botfy) — serviço separado
-- Binário `sipconnector` na mesma imagem: liga **qualquer PABX IP** ao Botfy, sem WhatsApp.
+### 📞 Conector SIP (PABX IP → AstraChat) — serviço separado
+- Binário `sipconnector` na mesma imagem: liga **qualquer PABX IP** ao AstraChat, sem WhatsApp.
 - Linha por caixa (o PABX registra no conector **ou** o conector registra no PABX) e **um
   ramal por atendente** (e-mail → ramal).
 - Expõe a **mesma API de chamadas do wacalls** (SSE, accept/reject/DELETE, `/webrtc` para o

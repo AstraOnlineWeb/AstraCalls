@@ -1,8 +1,8 @@
-// Conector SIP do AstraCalls: liga um PABX IP qualquer ao Botfy.
+// Conector SIP do AstraCalls: liga um PABX IP qualquer ao AstraChat.
 //
 // Serviço SEPARADO do wacalls (não toca no núcleo do WhatsApp). Fala SIP/RTP com o
 // PABX — nos dois modelos: o PABX registra aqui (tronco) ou o conector registra
-// como ramal no PABX, inclusive um ramal por atendente — e expõe para o Botfy a
+// como ramal no PABX, inclusive um ramal por atendente — e expõe para o AstraChat a
 // MESMA API de chamadas do wacalls: SSE /api/events, accept/reject/DELETE,
 // /webrtc (navegador do atendente) e /ws pcm16 (agente de voz por IA).
 package main

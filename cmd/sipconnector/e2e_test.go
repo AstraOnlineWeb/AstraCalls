@@ -207,7 +207,7 @@ func TestEndToEndWithFakePBX(t *testing.T) {
 
 	line := Line{ID: "inbox16", AccountID: 1, InboxID: 16, Enabled: true, Mode: modeRegisterOut,
 		Host: "127.0.0.1", Port: pbx.port, User: "100", Password: "x",
-		Agents: []Agent{{Email: "agente@botfy", Extension: "201", Password: "y"}}}
+		Agents: []Agent{{Email: "agente@astrachat", Extension: "201", Password: "y"}}}
 	if err := line.normalize(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestEndToEndWithFakePBX(t *testing.T) {
 		pbx.mu.Unlock()
 
 		ev := awaitEvent(t, sub, "incoming")
-		if ev["phone"] != "5561999990000" || ev["agentEmail"] != "agente@botfy" || ev["sessionId"] != "inbox16" {
+		if ev["phone"] != "5561999990000" || ev["agentEmail"] != "agente@astrachat" || ev["sessionId"] != "inbox16" {
 			t.Fatalf("incoming: %+v", ev)
 		}
 		select {
@@ -289,7 +289,7 @@ func TestEndToEndWithFakePBX(t *testing.T) {
 	})
 
 	t.Run("saída pelo ramal do agente e desligar do nosso lado", func(t *testing.T) {
-		c, err := s.sip.dial(line, line.agentByEmail("agente@botfy"), "5561988887777", "tester")
+		c, err := s.sip.dial(line, line.agentByEmail("agente@astrachat"), "5561988887777", "tester")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -507,7 +507,7 @@ func TestAuthIDSeparadoDoRamal(t *testing.T) {
 
 	line := Line{ID: "inbox3cx", AccountID: 1, Enabled: true, Mode: modeRegisterOut, Host: "127.0.0.1",
 		Port: pbx.port, User: "800", AuthUser: "Xk7pQ2mZ", Password: "s3nha",
-		Agents: []Agent{{Email: "ana@botfy", Extension: "201", AuthUser: "Ab12Cd34", Password: "outra"}}}
+		Agents: []Agent{{Email: "ana@astrachat", Extension: "201", AuthUser: "Ab12Cd34", Password: "outra"}}}
 	if err := line.normalize(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +523,7 @@ func TestAuthIDSeparadoDoRamal(t *testing.T) {
 		}
 	}
 
-	c, err := s.sip.dial(line, line.agentByEmail("ana@botfy"), "5511999990000", "tester")
+	c, err := s.sip.dial(line, line.agentByEmail("ana@astrachat"), "5511999990000", "tester")
 	if err != nil {
 		t.Fatal(err)
 	}

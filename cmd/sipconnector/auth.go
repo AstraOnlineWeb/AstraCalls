@@ -13,7 +13,7 @@ import (
 )
 
 // Duas credenciais, como no wacalls:
-//   - chave-mestra (SIPC_API_KEY): o Botfy (servidor) e a ponte de voz;
+//   - chave-mestra (SIPC_API_KEY): o AstraChat (servidor) e a ponte de voz;
 //   - token de widget efêmero, escopado a UMA conta: vai para o navegador do
 //     atendente. Só enxerga eventos e chamadas da própria conta.
 type principal struct {

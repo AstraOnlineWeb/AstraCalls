@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-// Linha SIP = uma caixa do Botfy ligada a um PABX. O Botfy é a fonte da verdade
+// Linha SIP = uma caixa do AstraChat ligada a um PABX. O AstraChat é a fonte da verdade
 // (empurra a config com PUT /api/lines/{id} a cada salvamento); aqui só guardamos
-// para sobreviver a um restart sem depender de o Botfy reenviar.
+// para sobreviver a um restart sem depender de o AstraChat reenviar.
 const (
 	modeRegisterIn  = "register_in"  // o PABX registra no conector (tronco)
 	modeRegisterOut = "register_out" // o conector registra como ramal no PABX
@@ -52,7 +52,7 @@ type Line struct {
 var lineIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // normalize preenche padrões e valida. Senha vazia no PUT mantém a anterior (o
-// Botfy nunca recebe a senha de volta, então não tem como reenviá-la).
+// AstraChat nunca recebe a senha de volta, então não tem como reenviá-la).
 func (l *Line) normalize(prev *Line) error {
 	if !lineIDPattern.MatchString(l.ID) {
 		return errors.New("id inválido (use letras, números, _ ou -)")

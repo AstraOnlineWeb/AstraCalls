@@ -1,13 +1,13 @@
-# Conector SIP (PABX IP → Botfy)
+# Conector SIP (PABX IP → AstraChat)
 
 Serviço **separado** do `wacalls` que liga um PABX IP qualquer (Asterisk, FreePBX,
-Issabel, 3CX, tronco hospedado…) ao Botfy, **sem WhatsApp**. Ele fala SIP/RTP com o
-PABX e entrega ao Botfy a **mesma API de chamadas do wacalls**. Por isso o CallDock, o
-listener, o histórico e o Chatbot por voz do Botfy funcionam com a linha SIP sem
+Issabel, 3CX, tronco hospedado…) ao AstraChat, **sem WhatsApp**. Ele fala SIP/RTP com o
+PABX e entrega ao AstraChat a **mesma API de chamadas do wacalls**. Por isso o CallDock, o
+listener, o histórico e o Chatbot por voz do AstraChat funcionam com a linha SIP sem
 precisar saber que do outro lado é um PABX.
 
 ```
-PABX IP ◄─ SIP/RTP (G.711) ─► sipconnector ◄─ API do wacalls ─► Botfy
+PABX IP ◄─ SIP/RTP (G.711) ─► sipconnector ◄─ API do wacalls ─► AstraChat
                                • linha da caixa (tronco ou ramal)
                                • 1 ramal por atendente (e-mail → ramal)
                                • navegador: WebRTC PCMU (sem transcodificar)
@@ -16,7 +16,7 @@ PABX IP ◄─ SIP/RTP (G.711) ─► sipconnector ◄─ API do wacalls ─► 
 
 ## Linhas
 
-Uma **linha** corresponde a uma caixa do Botfy. É o Botfy que a cria e atualiza, ao salvar
+Uma **linha** corresponde a uma caixa do AstraChat. É o AstraChat que a cria e atualiza, ao salvar
 a aba "Ligações SIP (PABX)", com `PUT /api/lines/{id}`.
 
 | modo | quem registra | uso |
@@ -50,7 +50,7 @@ Use `X-API-Key: <SIPC_API_KEY>` (chave-mestra) ou, no navegador, o token de widg
 
 | Método | Rota | Quem | O que faz |
 |---|---|---|---|
-| GET | `/api/me` | mestra | valida a chave (o Botfy chama ao salvar) |
+| GET | `/api/me` | mestra | valida a chave (o AstraChat chama ao salvar) |
 | POST | `/api/widget-tokens` | mestra | `{accountId, ttlSeconds?}` → token efêmero **preso à conta** |
 | GET/PUT/DELETE | `/api/lines/{id}` | mestra | config da linha (senhas nunca voltam; vazio no PUT mantém) |
 | GET | `/api/lines/{id}/status` | mestra | estado do registro da linha e de cada ramal |
