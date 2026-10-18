@@ -132,7 +132,7 @@ func (s *Session) mentionTargets(ctx context.Context, mentions []string) []strin
 	}
 	for _, m := range mentions {
 		m = strings.TrimSpace(m)
-		if m == "" {
+		if m == "" || isMentionAll(m) {
 			continue
 		}
 		if strings.Contains(m, "@") {
@@ -192,9 +192,28 @@ func (s *Session) autoMentions(ctx context.Context, to string, text string, expl
 		out = append(out, m)
 	}
 	if all && isGroup {
+		// o marcador "all" segue na lista: buildSendContext liga o
+		// nonJidMentions (o "@todos" nativo do WhatsApp)
+		out = append(out, "all")
 		out = append(out, s.groupMentionAll(ctx, jid)...)
 	}
 	return out
+}
+
+// hasMentionAll diz se a lista de menções pede "marcar todos".
+func hasMentionAll(mentions []string) bool {
+	for _, m := range mentions {
+		if isMentionAll(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionAllText troca "@todos"/"@everyone" por "@all", o token que o app
+// reconhece (e mostra traduzido) junto com nonJidMentions.
+func mentionAllText(text string) string {
+	return mentionAllRe.ReplaceAllString(text, "${1}@all")
 }
 
 // mentionAllRe acha "@todos"/"@all"/"@everyone" no texto (o atendente do
@@ -218,8 +237,8 @@ func withMentionAll(mentions []string, all bool) []string {
 }
 
 // groupMentionAll devolve os JIDs de todos os participantes do grupo (menos a
-// própria conta). Vão PN e LID de cada um, como em mentionTargets: o aparelho só
-// marca a forma que o grupo usa e ignora a outra.
+// própria conta) no endereçamento do grupo (LID ou PN). É o fallback para
+// aparelhos sem o "@todos" nativo; a marcação em si vem do nonJidMentions.
 func (s *Session) groupMentionAll(ctx context.Context, group types.JID) []string {
 	gi, err := s.client.GetGroupInfo(ctx, group)
 	if err != nil {
@@ -233,12 +252,17 @@ func (s *Session) groupMentionAll(ctx context.Context, group types.JID) []string
 	ownLID = s.client.Store.GetLID().User
 	var out []string
 	for _, p := range gi.Participants {
-		for _, j := range []types.JID{p.JID, p.PhoneNumber, p.LID} {
-			if j.IsEmpty() || j.User == own || j.User == ownLID {
-				continue
-			}
-			out = append(out, j.ToNonAD().String())
+		j := p.PhoneNumber
+		if gi.AddressingMode == types.AddressingModeLID || j.IsEmpty() {
+			j = p.LID
 		}
+		if j.IsEmpty() {
+			j = p.JID
+		}
+		if j.IsEmpty() || j.User == own || j.User == ownLID {
+			continue
+		}
+		out = append(out, j.ToNonAD().String())
 	}
 	return out
 }
@@ -282,6 +306,12 @@ func (s *Session) buildSendContext(ctx context.Context, quotedID, participant st
 			ci.MentionedJID = jids
 		}
 	}
+	if hasMentionAll(mentions) {
+		if ci == nil {
+			ci = &waE2E.ContextInfo{}
+		}
+		ci.NonJIDMentions = proto.Uint32(ci.GetNonJIDMentions() | 1)
+	}
 	return ci
 }
 
@@ -291,6 +321,9 @@ func (s *Session) buildSendContext(ctx context.Context, quotedID, participant st
 func applyContextInfo(msg *waE2E.Message, ci *waE2E.ContextInfo) {
 	if ci == nil || msg == nil {
 		return
+	}
+	if ci.GetNonJIDMentions()&1 != 0 {
+		rewriteMentionAllText(msg)
 	}
 	switch {
 	case msg.ExtendedTextMessage != nil:
@@ -312,6 +345,26 @@ func applyContextInfo(msg *waE2E.Message, ci *waE2E.ContextInfo) {
 		msg.LocationMessage.ContextInfo = ci
 	case msg.ContactMessage != nil:
 		msg.ContactMessage.ContextInfo = ci
+	}
+}
+
+// rewriteMentionAllText aplica mentionAllText ao texto/legenda da mensagem.
+func rewriteMentionAllText(msg *waE2E.Message) {
+	fix := func(p *string) *string {
+		if p == nil {
+			return nil
+		}
+		return proto.String(mentionAllText(*p))
+	}
+	switch {
+	case msg.ExtendedTextMessage != nil:
+		msg.ExtendedTextMessage.Text = fix(msg.ExtendedTextMessage.Text)
+	case msg.Conversation != nil:
+		msg.Conversation = fix(msg.Conversation)
+	case msg.ImageMessage != nil:
+		msg.ImageMessage.Caption = fix(msg.ImageMessage.Caption)
+	case msg.VideoMessage != nil:
+		msg.VideoMessage.Caption = fix(msg.VideoMessage.Caption)
 	}
 }
 

@@ -190,3 +190,16 @@ func TestMentionAllHelpers(t *testing.T) {
 		t.Errorf("withMentionAll sem flag = %v", got)
 	}
 }
+
+func TestMentionAllText(t *testing.T) {
+	for in, want := range map[string]string{
+		"@todos reunião": "@all reunião", "oi @Everyone": "oi @all", "@all ok": "@all ok", "a@todos.com": "a@todos.com",
+	} {
+		if got := mentionAllText(in); got != want {
+			t.Errorf("mentionAllText(%q) = %q, quer %q", in, got, want)
+		}
+	}
+	if !hasMentionAll([]string{"1", "all"}) || hasMentionAll([]string{"1"}) {
+		t.Error("hasMentionAll")
+	}
+}

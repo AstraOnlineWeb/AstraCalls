@@ -1034,11 +1034,19 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	// o corpo do webhook do Chatwoot não tem como informar isso.
 	if jid.Server == types.GroupServer {
 		// "@todos"/"@all" marca o grupo inteiro
-		if m := sess.mentionTargets(ctx, sess.autoMentions(ctx, jid.String(), content, nil)); len(m) > 0 {
+		ms := sess.autoMentions(ctx, jid.String(), content, nil)
+		if m := sess.mentionTargets(ctx, ms); len(m) > 0 {
 			if quote == nil {
 				quote = &waE2E.ContextInfo{}
 			}
 			quote.MentionedJID = m
+		}
+		if hasMentionAll(ms) {
+			if quote == nil {
+				quote = &waE2E.ContextInfo{}
+			}
+			quote.NonJIDMentions = proto.Uint32(quote.GetNonJIDMentions() | 1)
+			content = mentionAllText(content)
 		}
 	}
 
