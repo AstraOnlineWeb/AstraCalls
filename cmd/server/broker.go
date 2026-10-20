@@ -195,6 +195,12 @@ func (b *Broker) emitTransferClaimed(sessionID, id, owner string) {
 	b.broadcastForSession(sessionID, map[string]any{"type": "call-transfer-claimed", "sessionId": sessionID, "id": id, "owner": owner})
 }
 
+// emitWebRTCFailed avisa os painéis que o áudio do navegador não conectou numa
+// chamada que continua de pé (o painel pode tentar /webrtc de novo).
+func (b *Broker) emitWebRTCFailed(sessionID, id, reason string) {
+	b.broadcastForSession(sessionID, map[string]any{"type": "call-webrtc-failed", "sessionId": sessionID, "id": id, "reason": reason})
+}
+
 func (b *Broker) emitAuthState(sessionID string, a AuthSnapshot) {
 	ev := map[string]any{
 		"type": "auth-state", "sessionId": sessionID,

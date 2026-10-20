@@ -1762,6 +1762,7 @@ paths:
         - `call-transfer-offer` `{sessionId, id, peer, from, offeredAt}` — chamada transferida
           aguardando pickup (só o alvo recebe, se houver).
         - `call-transfer-claimed` `{sessionId, id, owner}`.
+        - `call-webrtc-failed` `{sessionId, id, reason}` — chamada SIP (modo agente): o WebRTC do navegador não conectou (ICE). A ligação NÃO cai: volta para a espera com música; o painel pode repetir `POST /calls/{id}/webrtc`.
 
         Escopo por conta: com `accountId` (ou `X-Client-Id`/`clientId` no padrão
         `astrachat_accN`, de onde a conta N é derivada) só chegam os eventos de chamada das

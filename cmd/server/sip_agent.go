@@ -390,6 +390,7 @@ func (s *server) sipAgentAccept(c *sipAgentCall, w http.ResponseWriter, r *http.
 		return
 	}
 	s.broker.emitIncomingClaimed(c.sessionID, c.id, owner)
+	s.log.Info("SIP agent: accept", "id", c.id, "owner", owner)
 	if err := c.answer(); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
@@ -599,6 +600,7 @@ func (s *server) sipAgentPickup(c *sipAgentCall, w http.ResponseWriter, r *http.
 		return
 	}
 	s.broker.emitTransferClaimed(c.sessionID, c.id, owner)
+	s.log.Info("SIP agent: pickup", "id", c.id, "owner", owner)
 	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": c.id}})
 }
 
@@ -632,7 +634,11 @@ func (s *server) sipAgentWebRTC(c *sipAgentCall, w http.ResponseWriter, r *http.
 		}
 		_ = c.rtp.WritePCM(media.Downsample48to16(pcm48))
 	}
-	br.OnTerminalICE = func() { go c.end("agent_hangup", 486) }
+	owner := clientID(r)
+	br.OnICEState = func(st string) {
+		s.log.Info("SIP agent: ICE do navegador", "id", c.id, "owner", owner, "state", st)
+	}
+	br.OnTerminalICE = func() { go s.sipAgentBrowserGone(c, br) }
 
 	c.mu.Lock()
 	if c.ended {
@@ -661,7 +667,40 @@ func (s *server) sipAgentWebRTC(c *sipAgentCall, w http.ResponseWriter, r *http.
 		c.setHold(false, false)
 	}
 	_ = c.answer() // atender pelo navegador direto também vale
+	s.log.Info("SIP agent: webrtc do navegador", "id", c.id, "owner", owner, "wasHeld", held)
 	writeJSON(w, http.StatusOK, map[string]string{"sdp_answer": answer})
+}
+
+// sipAgentBrowserGone trata o fim do WebRTC do navegador. Se o ICE NUNCA
+// conectou (rede/NAT do operador, offer ruim), o operador não chegou a ouvir
+// nada: a ligação NÃO cai — volta para a espera com música e o painel recebe
+// call-webrtc-failed para tentar de novo. Se já estava conectado, é o operador
+// saindo (aba fechada/queda) e a ligação encerra como antes.
+func (s *server) sipAgentBrowserGone(c *sipAgentCall, br *Bridge) {
+	c.mu.Lock()
+	current := c.browser == br
+	var oc media.Codec
+	if current {
+		oc = c.browserOpus
+		c.browser, c.browserOpus, c.browserBuf = nil, nil, nil
+	}
+	ended := c.ended
+	c.mu.Unlock()
+	if !current || ended {
+		return
+	}
+	br.DisableTerminate()
+	br.Close()
+	if oc != nil {
+		oc.Close()
+	}
+	if !br.WasConnected() {
+		s.log.Warn("SIP agent: WebRTC do navegador falhou antes de conectar; ligação volta para espera", "id", c.id)
+		c.setHold(true, true)
+		s.broker.emitWebRTCFailed(c.sessionID, c.id, "ice_failed")
+		return
+	}
+	c.end("agent_hangup", 486)
 }
 
 // ===== re-INVITE / ACK / OPTIONS =====

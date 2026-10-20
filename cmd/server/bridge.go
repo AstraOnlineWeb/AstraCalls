@@ -76,7 +76,14 @@ type Bridge struct {
 	// renegociação ou transferência): fechar a ponte antiga não deve encerrar a
 	// chamada, pois a nova ponte assume o mesmo leg.
 	terminateDisabled atomic.Bool
+	// OnICEState (opcional) recebe cada mudança de estado do ICE (log/diagnóstico).
+	OnICEState func(state string)
+	// connected marca que o ICE chegou a conectar ao menos uma vez.
+	connected atomic.Bool
 }
+
+// WasConnected diz se o ICE desta ponte chegou a conectar.
+func (b *Bridge) WasConnected() bool { return b.connected.Load() }
 
 // DisableTerminate impede que o fechamento desta ponte dispare OnTerminalICE.
 func (b *Bridge) DisableTerminate() { b.terminateDisabled.Store(true) }
@@ -135,6 +142,12 @@ func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
 
 	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
 		log.Debug("browser ice state", "state", s.String())
+		if s == webrtc.ICEConnectionStateConnected {
+			br.connected.Store(true)
+		}
+		if br.OnICEState != nil {
+			br.OnICEState(s.String())
+		}
 		if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed {
 			if br.OnTerminalICE != nil && !br.terminateDisabled.Load() {
 				br.OnTerminalICE()
