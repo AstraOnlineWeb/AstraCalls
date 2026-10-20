@@ -36,6 +36,7 @@ type SIPGateway struct {
 }
 
 type sipRegistration struct {
+	sourceIP   string // IP de onde veio o REGISTER (INVITE desse IP dispensa nova senha)
 	sipUser    string
 	sessionID  string
 	contact    string
@@ -85,8 +86,8 @@ type sipCall struct {
 	waCallID  string
 	// diálogo SIP->WhatsApp (somos o UAS): mesma To-tag em todas as respostas,
 	// Contact no 2xx, ACK e BYE do jeito que o PBX espera.
-	dlg     *sipgo.DialogServerSession
-	contact sip.ContactHeader
+	dlg       *sipgo.DialogServerSession
+	contact   sip.ContactHeader
 	fromTag   string
 	toTag     string
 	fromURI   string
@@ -225,6 +226,7 @@ func (gw *SIPGateway) handleRegister(req *sip.Request, tx sip.ServerTransaction)
 
 	gw.mu.Lock()
 	gw.registrations[sipUser] = &sipRegistration{
+		sourceIP:   sourceIPOf(req.Source()),
 		sipUser:    sipUser,
 		sessionID:  sess.id,
 		contact:    contact,
@@ -326,11 +328,17 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	if ok {
 		if s, found := gw.sessions.Get(reg.sessionID); found {
+			// o From é só um nome: quem não liga do IP do registro precisa
+			// provar a senha SIP da sessão (Digest), senão qualquer um que
+			// soubesse o usuário discaria pelo WhatsApp do cliente.
+			if !gw.inviteFromRegistration(reg, req) && !gw.challengeInvite(s, req, tx) {
+				return
+			}
 			sess = s
 		}
 	}
 	if sess == nil {
-		sess = gw.sessionForExtInvite(sourceIPOf(req.Source()))
+		sess = gw.sessionForExtInvite(req)
 	}
 	if sess == nil {
 		// modelo 1 + modo agente: o PBX registrado em nós liga PARA o usuário SIP
@@ -510,8 +518,13 @@ func (gw *SIPGateway) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 
 	// BYE de uma chamada do modo agente: o chamador desligou.
 	if c := gw.agentCallBySIP(sipCallID); c != nil {
+		if !byeMatchesDialog(req, dialogTag(c.dlg.InviteRequest.From()), serverDialogTag(c.dlg)) {
+			gw.reply(tx, req, 481, "Call/Transaction Does Not Exist")
+			return
+		}
 		if err := c.dlg.ReadBye(req, tx); err != nil {
 			gw.reply(tx, req, 481, "Call/Transaction Does Not Exist")
+			return
 		}
 		c.end("remote_hangup", 0)
 		return
@@ -519,11 +532,17 @@ func (gw *SIPGateway) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 
 	gw.mu.Lock()
 	inb, isInbound := gw.inboundDialogs[sipCallID]
-	if isInbound {
+	if isInbound && inb.dialog != nil && inb.dialog.InviteRequest != nil && inb.dialog.InviteResponse != nil &&
+		!byeMatchesDialog(req, dialogTag(inb.dialog.InviteRequest.From()), dialogTag(inb.dialog.InviteResponse.To())) {
+		isInbound = false // mesmo Call-ID, outro diálogo: não desliga
+		inb = nil
+	} else if isInbound {
 		delete(gw.inboundDialogs, sipCallID)
 	}
 	sc, ok := gw.activeCalls[sipCallID]
-	if ok {
+	if ok && sc.dlg != nil && !byeMatchesDialog(req, dialogTag(sc.dlg.InviteRequest.From()), serverDialogTag(sc.dlg)) {
+		ok = false
+	} else if ok {
 		delete(gw.activeCalls, sipCallID)
 	}
 	gw.mu.Unlock()
@@ -626,19 +645,79 @@ func (gw *SIPGateway) extRegStatus(sessionID string) (state, lastErr string) {
 	return r.snapshot()
 }
 
+// inviteFromRegistration diz se o INVITE veio do mesmo IP do REGISTER desse
+// usuário (o comportamento de sempre: o PBX registrado liga sem nova senha).
+func (gw *SIPGateway) inviteFromRegistration(reg *sipRegistration, req *sip.Request) bool {
+	src := sourceIPOf(req.Source())
+	if src == "" {
+		return false
+	}
+	return src == reg.sourceIP || pbxHostMatches(reg.contactURI.Host, src)
+}
+
+// challengeInvite exige Digest (senha SIP da sessão) no INVITE. Devolve true
+// quando a credencial confere; senão responde 401 com o desafio (o PBX/softphone
+// reenvia autenticado) e devolve false.
+func (gw *SIPGateway) challengeInvite(sess *Session, req *sip.Request, tx sip.ServerTransaction) bool {
+	if auth := req.GetHeader("Authorization"); auth != nil {
+		if validateDigestAuth(auth.Value(), "INVITE", sess.SIPPass) {
+			return true
+		}
+		gw.log.Warn("SIP INVITE: digest inválido", "session", sess.id, "source", req.Source())
+	} else {
+		gw.log.Info("SIP INVITE de IP diferente do registro: pedindo senha", "session", sess.id, "source", req.Source())
+	}
+	resp := sip.NewResponseFromRequest(req, 401, "Unauthorized", nil)
+	resp.AppendHeader(sip.NewHeader("WWW-Authenticate",
+		fmt.Sprintf(`Digest realm="astracalls", nonce="%s", algorithm=MD5, qop="auth"`, generateNonce())))
+	_ = tx.Respond(resp)
+	return false
+}
+
 // sessionForExtInvite acha a sessão dona quando um INVITE chega de um PBX externo
 // no qual estamos registrados (modelo 2), casando o IP de origem com o host do PBX.
-func (gw *SIPGateway) sessionForExtInvite(sourceIP string) *Session {
+// Com várias sessões no mesmo PBX, escolhe pelo ramal chamado (usuário do
+// Request-URI/To = usuário que registramos); sem como decidir, não escolhe — antes
+// pegava uma qualquer e a ligação podia cair no cliente errado.
+func (gw *SIPGateway) sessionForExtInvite(req *sip.Request) *Session {
+	sourceIP := sourceIPOf(req.Source())
+	users := map[string]bool{}
+	if u := req.Recipient.User; u != "" {
+		users[u] = true
+	}
+	if to := req.To(); to != nil && to.Address.User != "" {
+		users[to.Address.User] = true
+	}
 	gw.mu.RLock()
 	defer gw.mu.RUnlock()
+	var cands []*Session
 	for sid, r := range gw.extRegs {
 		if pbxHostMatches(r.host(), sourceIP) {
 			if sess, ok := gw.sessions.Get(sid); ok {
-				return sess
+				cands = append(cands, sess)
 			}
 		}
 	}
-	return nil
+	if len(cands) <= 1 {
+		if len(cands) == 1 {
+			return cands[0]
+		}
+		return nil
+	}
+	var match *Session
+	for _, sess := range cands {
+		if users[sess.sipExtSnapshot().User] {
+			if match != nil {
+				gw.log.Warn("SIP INVITE: ramal ambíguo entre sessões do mesmo PBX", "source", sourceIP)
+				return nil
+			}
+			match = sess
+		}
+	}
+	if match == nil {
+		gw.log.Warn("SIP INVITE: várias sessões no mesmo PBX e nenhuma com o ramal chamado", "source", sourceIP, "ramal", req.Recipient.User)
+	}
+	return match
 }
 
 // sessionForAgentInvite acha a sessão (modelo 1) cujo usuário SIP é o destino do
@@ -733,6 +812,7 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 	//           configurado (sip_ext_dest) naquele PBX.
 	var targetURI sip.Uri
 	var targetLabel string
+	var nextHop string
 
 	gw.mu.RLock()
 	var reg *sipRegistration
@@ -755,10 +835,10 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		targetURI = sip.Uri{Scheme: "sip", User: cfg.Dest, Host: cfg.Host, Port: port}
 		targetLabel = cfg.Dest + "@" + cfg.Host
 		// Outbound proxy: roteia o INVITE pro proxy (next hop), mantendo o ramal/domínio.
+		// O Request-URI/To continuam ramal@PBX; o proxy é só o próximo salto do
+		// transporte (antes o host do proxy ia no Request-URI e alguns PBX recusavam).
 		if px := strings.TrimSpace(cfg.Proxy); px != "" {
-			ph, pp := sipHostPortParts(px, port)
-			targetURI.Host = ph
-			targetURI.Port = pp
+			nextHop = sipHostPort(px, port)
 			targetLabel = cfg.Dest + "@" + cfg.Host + " via " + px
 		}
 	} else {
@@ -784,7 +864,19 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 	fromHDR.Params.Add("tag", generateRandomString(12))
 	ct := sip.NewHeader("Content-Type", "application/sdp")
 
-	d, err := gw.dialogUA.Invite(context.Background(), targetURI, []byte(sdpOffer), fromHDR, ct)
+	invite := sip.NewRequest(sip.INVITE, targetURI)
+	invite.SetBody([]byte(sdpOffer))
+	if targetURI.UriParams != nil {
+		if tr, _ := targetURI.UriParams.Get("transport"); tr != "" {
+			invite.SetTransport(tr)
+		}
+	}
+	invite.AppendHeader(fromHDR)
+	invite.AppendHeader(ct)
+	if nextHop != "" {
+		invite.SetDestination(nextHop)
+	}
+	d, err := gw.dialogUA.WriteInvite(context.Background(), invite)
 	if err != nil {
 		gw.log.Error("inbound: INVITE failed", "err", err)
 		sess.terminateCallByID(callID)
@@ -968,4 +1060,39 @@ a=rtpmap:0 PCMU/8000
 a=ptime:20
 a=sendrecv
 `, localIP, localIP, rtpPort)
+}
+
+// dialogTag devolve a tag de um cabeçalho From/To (vazio se não houver).
+func dialogTag(h interface{ Value() string }) string {
+	switch v := h.(type) {
+	case *sip.FromHeader:
+		if v != nil {
+			t, _ := v.Params.Get("tag")
+			return t
+		}
+	case *sip.ToHeader:
+		if v != nil {
+			t, _ := v.Params.Get("tag")
+			return t
+		}
+	}
+	return ""
+}
+
+// byeMatchesDialog confere se o BYE é deste diálogo pelas tags (em qualquer
+// direção). Sem tag conhecida, aceita como antes (compatibilidade).
+func byeMatchesDialog(req *sip.Request, tagA, tagB string) bool {
+	if tagA == "" || tagB == "" {
+		return true
+	}
+	from, to := dialogTag(req.From()), dialogTag(req.To())
+	return (from == tagA && to == tagB) || (from == tagB && to == tagA)
+}
+
+// serverDialogTag é a nossa To-tag num diálogo em que somos UAS ("" antes do 2xx).
+func serverDialogTag(d *sipgo.DialogServerSession) string {
+	if d == nil || d.InviteResponse == nil {
+		return ""
+	}
+	return dialogTag(d.InviteResponse.To())
 }

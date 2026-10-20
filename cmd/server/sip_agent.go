@@ -708,6 +708,9 @@ func (s *server) sipAgentBrowserGone(c *sipAgentCall, br *Bridge) {
 // agentReInvite responde um re-INVITE (hold, refresh de sessão) do diálogo com o
 // mesmo SDP e atualiza o destino RTP.
 func (gw *SIPGateway) agentReInvite(c *sipAgentCall, req *sip.Request, tx sip.ServerTransaction) {
+	// registra o CSeq do re-INVITE no diálogo: o ACK que vem depois traz esse
+	// CSeq e o ReadAck do sipgo o recusava (diálogo parado no CSeq do INVITE).
+	_ = c.dlg.ReadRequest(req, tx)
 	if addr := parseSDPOffer(string(req.Body())).addr; addr != "" {
 		if ua, err := net.ResolveUDPAddr("udp", addr); err == nil {
 			c.rtp.mu.Lock()
