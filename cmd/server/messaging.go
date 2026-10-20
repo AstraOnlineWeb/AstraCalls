@@ -245,7 +245,12 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	up, err := sess.client.Upload(r.Context(), data, whatsmeow.MediaAudio)
+	var up whatsmeow.UploadResponse
+	if b.PTT {
+		up, err = sess.uploadVoiceNote(r.Context(), data) // nota de voz: caminho ptt, igual ao celular
+	} else {
+		up, err = sess.client.Upload(r.Context(), data, whatsmeow.MediaAudio)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -258,6 +263,7 @@ func (s *server) handleSendAudio(w http.ResponseWriter, r *http.Request) {
 		Mimetype: proto.String(mime), PTT: proto.Bool(b.PTT),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		MediaKeyTimestamp: proto.Int64(time.Now().Unix()),
 	}
 	// Duração: usa a informada; senão (nota de voz) estima pelo OGG/Opus.
 	secs := uint32(0)

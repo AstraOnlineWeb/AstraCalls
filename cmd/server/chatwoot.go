@@ -1238,14 +1238,15 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 		if terr != nil {
 			ogg = data // fallback: envia o original
 		}
-		up, e := s.client.Upload(ctx, ogg, whatsmeow.MediaAudio)
+		up, e := s.uploadVoiceNote(ctx, ogg)
 		if e != nil {
 			return "", e
 		}
 		am := &waE2E.AudioMessage{
 			Mimetype: proto.String("audio/ogg; codecs=opus"), PTT: proto.Bool(true),
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
-			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+			MediaKeyTimestamp: proto.Int64(time.Now().Unix()),
+			FileEncSHA256:     up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 			ContextInfo: quote,
 		}
 		if terr == nil {
