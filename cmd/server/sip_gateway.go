@@ -813,6 +813,8 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 	var targetURI sip.Uri
 	var targetLabel string
 	var nextHop string
+	// credenciais do ramal (modelo 2): o PBX costuma desafiar o INVITE (401/407)
+	var authUser, authPass string
 
 	gw.mu.RLock()
 	var reg *sipRegistration
@@ -834,6 +836,7 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		}
 		targetURI = sip.Uri{Scheme: "sip", User: cfg.Dest, Host: cfg.Host, Port: port}
 		targetLabel = cfg.Dest + "@" + cfg.Host
+		authUser, authPass = cfg.User, cfg.Pass
 		// Outbound proxy: roteia o INVITE pro proxy (next hop), mantendo o ramal/domínio.
 		// O Request-URI/To continuam ramal@PBX; o proxy é só o próximo salto do
 		// transporte (antes o host do proxy ia no Request-URI e alguns PBX recusavam).
@@ -916,7 +919,7 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		gw.inboundRinging[callID] = ring
 		gw.mu.Unlock()
 
-		err := d.WaitAnswer(waitCtx, sipgo.AnswerOptions{})
+		err := d.WaitAnswer(waitCtx, sipgo.AnswerOptions{Username: authUser, Password: authPass})
 
 		gw.mu.Lock()
 		claimed := ring.claimed
