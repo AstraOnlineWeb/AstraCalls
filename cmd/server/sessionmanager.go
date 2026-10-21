@@ -190,7 +190,7 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 			User: row.SIPExtUser, Pass: row.SIPExtPass, Dest: row.SIPExtDest, Proxy: row.SIPExtProxy,
 			Agent: agent,
 		})
-		s.setWebhook(row.Webhook, row.WebhookSecret, splitEvents(row.WebhookEvents))
+		s.setWebhook(row.Webhook, row.WebhookSecret, splitEvents(row.WebhookEvents), row.WebhookIgnoreGroups)
 		s.setRecording(row.Recording)
 		s.setProxy(row.Proxy)
 		if row.Chatwoot != "" {

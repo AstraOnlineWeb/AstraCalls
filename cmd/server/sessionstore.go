@@ -8,18 +8,19 @@ import (
 )
 
 type sessionRow struct {
-	ID            string
-	Name          string
-	JID           string
-	LastJID       string
-	Webhook       string
-	WebhookSecret string
-	WebhookEvents string // CSV dos tipos de evento; vazio = todos
-	Chatwoot      string
-	Recording     bool
-	Proxy         string
-	SIPUser       string
-	SIPPass       string
+	ID                  string
+	Name                string
+	JID                 string
+	LastJID             string
+	Webhook             string
+	WebhookSecret       string
+	WebhookEvents       string // CSV dos tipos de evento; vazio = todos
+	WebhookIgnoreGroups bool   // não entrega eventos de grupo no webhook
+	Chatwoot            string
+	Recording           bool
+	Proxy               string
+	SIPUser             string
+	SIPPass             string
 	// Modelo 2 (UAC): esta sessão se REGISTRA num PBX externo.
 	SIPExtEnabled bool
 	SIPExtHost    string
@@ -53,6 +54,7 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS webhook TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS webhook_secret TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS webhook_events TEXT`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS webhook_ignore_groups BOOLEAN NOT NULL DEFAULT false`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chatwoot TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_user TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_pass TEXT`)
@@ -150,7 +152,7 @@ func newSessionID() string {
 }
 
 func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(last_jid, ''), COALESCE(webhook, ''), COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, ''), COALESCE(sip_user, ''), COALESCE(sip_pass, ''), COALESCE(sip_ext_enabled, false), COALESCE(sip_ext_host, ''), COALESCE(sip_ext_port, 5060), COALESCE(sip_ext_user, ''), COALESCE(sip_ext_pass, ''), COALESCE(sip_ext_dest, ''), COALESCE(sip_ext_proxy, ''), COALESCE(sip_ext_opts, '') FROM sessions ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(last_jid, ''), COALESCE(webhook, ''), COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''), COALESCE(webhook_ignore_groups, false), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, ''), COALESCE(sip_user, ''), COALESCE(sip_pass, ''), COALESCE(sip_ext_enabled, false), COALESCE(sip_ext_host, ''), COALESCE(sip_ext_port, 5060), COALESCE(sip_ext_user, ''), COALESCE(sip_ext_pass, ''), COALESCE(sip_ext_dest, ''), COALESCE(sip_ext_proxy, ''), COALESCE(sip_ext_opts, '') FROM sessions ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +160,7 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	var out []sessionRow
 	for rows.Next() {
 		var r sessionRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.LastJID, &r.Webhook, &r.WebhookSecret, &r.WebhookEvents, &r.Chatwoot, &r.Recording, &r.Proxy, &r.SIPUser, &r.SIPPass, &r.SIPExtEnabled, &r.SIPExtHost, &r.SIPExtPort, &r.SIPExtUser, &r.SIPExtPass, &r.SIPExtDest, &r.SIPExtProxy, &r.SIPExtOpts); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.LastJID, &r.Webhook, &r.WebhookSecret, &r.WebhookEvents, &r.WebhookIgnoreGroups, &r.Chatwoot, &r.Recording, &r.Proxy, &r.SIPUser, &r.SIPPass, &r.SIPExtEnabled, &r.SIPExtHost, &r.SIPExtPort, &r.SIPExtUser, &r.SIPExtPass, &r.SIPExtDest, &r.SIPExtProxy, &r.SIPExtOpts); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -206,8 +208,8 @@ func (s *sessionStore) setJID(ctx context.Context, id, jid string) error {
 	return err
 }
 
-func (s *sessionStore) setWebhook(ctx context.Context, id, url, secret, events string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET webhook = $1, webhook_secret = $2, webhook_events = $3 WHERE id = $4`, url, secret, events, id)
+func (s *sessionStore) setWebhook(ctx context.Context, id, url, secret, events string, ignoreGroups bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET webhook = $1, webhook_secret = $2, webhook_events = $3, webhook_ignore_groups = $4 WHERE id = $5`, url, secret, events, ignoreGroups, id)
 	return err
 }
 

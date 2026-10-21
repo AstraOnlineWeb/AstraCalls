@@ -268,6 +268,7 @@ components:
         webhook: { type: string, description: "URL configurada (\"\" = nenhuma)" }
         hasSecret: { type: boolean, description: "true se há secret (o valor nunca é devolvido)" }
         events: { type: array, items: { type: string }, description: "Filtro de eventos (vazio = todos)" }
+        ignoreGroups: { type: boolean, description: "true = eventos de grupo não são entregues" }
     ChatwootConfig:
       type: object
       description: "Configuração da integração Chatwoot. `account_token` NUNCA é devolvido (vem vazio)."
@@ -1513,8 +1514,9 @@ paths:
               required: [url]
               properties:
                 url: { type: string, example: "https://meu-sistema/webhook/wacalls", description: "Vazio = remove o webhook (igual ao DELETE)" }
-                secret: { type: string, description: "Opcional. Assina cada entrega com HMAC-SHA256 no header X-Webhook-Signature: sha256=<hex>." }
+                secret: { type: string, description: "Opcional. Assina cada entrega com HMAC-SHA256 no header X-Webhook-Signature: sha256=<hex>. Ausente = mantém o atual; \"\" = remove." }
                 events: { type: array, items: { type: string }, description: "Opcional. Só entrega estes tipos de evento (vazio = todos).", example: ["message", "receipt"] }
+                ignoreGroups: { type: boolean, description: "Opcional. true = não entrega NENHUM evento de grupo (mensagem, receipt, reação, group_participants… de chat @g.us). Ausente = mantém o atual.", example: true }
       responses:
         "200":
           description: Salvo

@@ -451,25 +451,37 @@ func (s *server) handleSetWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		URL    string   `json:"url"`
-		Secret string   `json:"secret"` // opcional: assina o payload (X-Webhook-Signature: sha256=…)
+		Secret *string  `json:"secret"` // opcional: assina o payload (X-Webhook-Signature: sha256=…); ausente = mantém o atual
 		Events []string `json:"events"` // opcional: só entrega estes tipos; vazio = todos
+		// IgnoreGroups: não entrega eventos de grupo; ausente = mantém o atual.
+		IgnoreGroups *bool `json:"ignoreGroups"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url required"})
 		return
 	}
 	url := strings.TrimSpace(b.URL)
-	secret := strings.TrimSpace(b.Secret)
+	secret := sess.getWebhookSecret()
+	if b.Secret != nil {
+		secret = strings.TrimSpace(*b.Secret)
+	}
+	ignoreGroups := sess.getWebhookIgnoreGroups()
+	if b.IgnoreGroups != nil {
+		ignoreGroups = *b.IgnoreGroups
+	}
+	if url == "" {
+		secret, ignoreGroups = "", false
+	}
 	events := make([]string, 0, len(b.Events))
 	for _, e := range b.Events {
 		if e = strings.TrimSpace(e); e != "" {
 			events = append(events, e)
 		}
 	}
-	sess.setWebhook(url, secret, events)
-	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, url, secret, strings.Join(events, ","))
+	sess.setWebhook(url, secret, events, ignoreGroups)
+	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, url, secret, strings.Join(events, ","), ignoreGroups)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"webhook": url, "hasSecret": secret != "", "events": events,
+		"webhook": url, "hasSecret": secret != "", "events": events, "ignoreGroups": ignoreGroups,
 	})
 }
 
@@ -481,6 +493,7 @@ func (s *server) handleGetWebhook(w http.ResponseWriter, r *http.Request) {
 	// não devolve o secret em claro; só indica se está configurado.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"webhook": sess.getWebhook(), "hasSecret": sess.getWebhookSecret() != "", "events": sess.getWebhookEvents(),
+		"ignoreGroups": sess.getWebhookIgnoreGroups(),
 	})
 }
 
@@ -489,7 +502,7 @@ func (s *server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	sess.setWebhook("", "", nil)
-	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, "", "", "")
+	sess.setWebhook("", "", nil, false)
+	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, "", "", "", false)
 	w.WriteHeader(http.StatusNoContent)
 }

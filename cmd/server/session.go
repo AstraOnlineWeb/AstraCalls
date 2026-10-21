@@ -48,15 +48,16 @@ type Session struct {
 	waContainer *sqlstore.Container
 	waDB        *sql.DB
 
-	mu            sync.Mutex
-	auth          AuthSnapshot
-	webhook       string
-	webhookSecret string   // segredo p/ assinar o payload (X-Webhook-Signature); vazio = sem assinatura
-	webhookEvents []string // filtro: só entrega estes tipos de evento; vazio = todos
-	chatwoot      ChatwootConfig
-	recording     bool   // grava as chamadas desta sessão (opt-in)
-	proxy         string // proxy de saída da conexão WhatsApp (http/https/socks5)
-	lastJID       string // último número (JID) que esteve conectado; mantido após desconectar
+	mu              sync.Mutex
+	auth            AuthSnapshot
+	webhook         string
+	webhookSecret   string   // segredo p/ assinar o payload (X-Webhook-Signature); vazio = sem assinatura
+	webhookEvents   []string // filtro: só entrega estes tipos de evento; vazio = todos
+	webhookNoGroups bool     // não entrega eventos de grupo (@g.us) no webhook
+	chatwoot        ChatwootConfig
+	recording       bool   // grava as chamadas desta sessão (opt-in)
+	proxy           string // proxy de saída da conexão WhatsApp (http/https/socks5)
+	lastJID         string // último número (JID) que esteve conectado; mantido após desconectar
 
 	// Credenciais SIP desta sessão (modelo Wavoip: o PBX do cliente se registra
 	// no AstraCalls usando estes dados). Definidas na criação da sessão.
@@ -266,12 +267,19 @@ func (s *Session) resolveCanonical(ctx context.Context, jid types.JID) (types.JI
 	return lid, pn, true
 }
 
-func (s *Session) setWebhook(url, secret string, events []string) {
+func (s *Session) setWebhook(url, secret string, events []string, ignoreGroups bool) {
 	s.mu.Lock()
 	s.webhook = url
 	s.webhookSecret = secret
 	s.webhookEvents = events
+	s.webhookNoGroups = ignoreGroups
 	s.mu.Unlock()
+}
+
+func (s *Session) getWebhookIgnoreGroups() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.webhookNoGroups
 }
 
 func (s *Session) getWebhook() string {

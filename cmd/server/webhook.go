@@ -20,6 +20,9 @@ func (s *Session) dispatchWebhook(event string, data any) {
 	if !s.webhookWants(event) {
 		return // filtrado: a sessão não assina este tipo de evento
 	}
+	if s.getWebhookIgnoreGroups() && isGroupWebhookEvent(event, data) {
+		return // sessão configurada p/ ignorar grupos no webhook
+	}
 	body, err := json.Marshal(map[string]any{
 		"session":   s.id,
 		"event":     event,
@@ -32,6 +35,27 @@ func (s *Session) dispatchWebhook(event string, data any) {
 	// Entrega confiável (retry/backoff + circuit breaker + DLQ) + assinatura HMAC
 	// opcional (X-Webhook-Signature) quando há secret configurado na sessão.
 	whDeliver.deliver(s.id, url, event, body, s.getWebhookSecret())
+}
+
+// isGroupWebhookEvent diz se o evento é de um GRUPO: group_participants sempre;
+// nos demais, pelo isGroup do payload ou por chat/group/from em @g.us.
+func isGroupWebhookEvent(event string, data any) bool {
+	if event == "group_participants" {
+		return true
+	}
+	m, ok := data.(map[string]any)
+	if !ok {
+		return false
+	}
+	if g, _ := m["isGroup"].(bool); g {
+		return true
+	}
+	for _, k := range []string{"chat", "group", "from"} {
+		if v, _ := m[k].(string); strings.HasSuffix(v, "@g.us") {
+			return true
+		}
+	}
+	return false
 }
 
 // summarizeMessage extrai os campos úteis de uma mensagem recebida e inclui o

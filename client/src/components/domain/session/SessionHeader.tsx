@@ -8,6 +8,7 @@ import { ChatwootDialog } from "./ChatwootDialog";
 import { FormsDialog } from "./FormsDialog";
 import { ProxyDialog } from "./ProxyDialog";
 import { SIPDialog } from "./SIPDialog";
+import { WebhookDialog } from "./WebhookDialog";
 import { logoutSession, pairSession, setRecording } from "@/services/sessions";
 import { phoneFromJid } from "@/utils/format";
 import type { SessionInfo, SessionState } from "@/types/session";
@@ -114,6 +115,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         )}
         {session.paired && <ProxyDialog sid={session.id} />}
         {session.paired && <SIPDialog session={session} />}
+        <WebhookDialog sid={session.id} />
         {session.paired && <ChatwootDialog sid={session.id} />}
         {session.paired && <FormsDialog sid={session.id} />}
         {session.paired ? (
