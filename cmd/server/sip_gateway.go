@@ -850,6 +850,14 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		gw.log.Error("inbound: RTP bridge failed", "err", err)
 		return
 	}
+	// Áudio do PBX -> WhatsApp. Sem isto o RTP do ramal chegava e era descartado:
+	// quem ligou no WhatsApp não ouvia nada (o outro sentido já ia pelo OnPeerAudio).
+	if ac, ok := sess.reg.get(callID); ok {
+		rtpBridge.SetHandlers(func(pcm []float32) {
+			ac.spies.feed(spySideAgent, pcm)
+			ac.cm.FeedCapturedPCM(pcm)
+		}, nil)
+	}
 	sess.setRTPBridge(callID, rtpBridge)
 
 	localIP := getLocalIP()
