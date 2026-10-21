@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,7 +24,7 @@ var (
 
 // Entrega confiável de webhook de sessão. Melhora o POST simples com:
 //   - RETRY com backoff escalonado (0 -> 5s -> 30s), até whMaxAttempts.
-//   - CIRCUIT BREAKER por sessão: após whOpenThreshold falhas consecutivas o
+//   - CIRCUIT BREAKER por webhook (sessão + id do webhook): após whOpenThreshold falhas consecutivas o
 //     circuito ABRE por whCooldown (não bate no endpoint morto); após
 //     whHardDisable falhas, desabilita até religar manualmente.
 //   - DLQ (dead-letter queue) por sessão: os eventos que falharam em todas as
@@ -45,6 +46,7 @@ var whBackoff = []time.Duration{0, 5 * time.Second, 30 * time.Second}
 
 type whDLQItem struct {
 	ID        string          `json:"id"`
+	WebhookID string          `json:"webhookId"`
 	Event     string          `json:"event"`
 	URL       string          `json:"url"`
 	Body      json.RawMessage `json:"body"`
@@ -87,45 +89,56 @@ var whDeliver = &webhookDeliverer{
 	log:      slog.Default(),
 }
 
+// whTarget é o destino de uma entrega: um webhook de uma sessão. O circuito é
+// por webhook (um endpoint fora do ar não trava os outros da mesma sessão); a
+// DLQ continua por sessão, com o webhookId em cada item.
+type whTarget struct {
+	session, hook, url, secret string
+}
+
+func (t whTarget) key() string { return whKey(t.session, t.hook) }
+
+func whKey(sessionID, hookID string) string { return sessionID + "#" + hookID }
+
 func whNewID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
-// deliver entrega (assíncrono) um evento já serializado à URL da sessão, com
-// retry/circuit breaker/DLQ. sessionID escopa o circuito e a DLQ.
-func (d *webhookDeliverer) deliver(sessionID, url, event string, body []byte, secret string) {
+// deliver entrega (assíncrono) um evento já serializado ao webhook, com
+// retry/circuit breaker/DLQ.
+func (d *webhookDeliverer) deliver(t whTarget, event string, body []byte) {
 	d.mu.Lock()
-	c := d.circuits[sessionID]
+	c := d.circuits[t.key()]
 	if c == nil {
 		c = &whCircuit{}
-		d.circuits[sessionID] = c
+		d.circuits[t.key()] = c
 	}
 	if c.disabled {
 		d.mu.Unlock()
-		d.pushDLQ(sessionID, url, event, body, "webhook disabled: "+c.disabledReason, 0, secret)
+		d.pushDLQ(t, event, body, "webhook disabled: "+c.disabledReason, 0)
 		return
 	}
 	if time.Now().Before(c.openUntil) {
 		d.mu.Unlock()
-		d.pushDLQ(sessionID, url, event, body, "webhook circuit is OPEN", 0, secret)
+		d.pushDLQ(t, event, body, "webhook circuit is OPEN", 0)
 		return
 	}
 	d.mu.Unlock()
 
-	go d.attempt(sessionID, url, event, body, secret)
+	go d.attempt(t, event, body)
 }
 
-func (d *webhookDeliverer) attempt(sessionID, url, event string, body []byte, secret string) {
+func (d *webhookDeliverer) attempt(t whTarget, event string, body []byte) {
 	var lastErr string
 	for i := 0; i < whMaxAttempts; i++ {
 		if delay := whBackoff[i]; delay > 0 {
 			time.Sleep(delay)
 		}
-		code, err := d.post(url, body, secret)
+		code, err := d.post(t.url, body, t.secret)
 		if err == nil && code >= 200 && code < 300 {
-			d.onSuccess(sessionID)
+			d.onSuccess(t)
 			return
 		}
 		if err != nil {
@@ -134,7 +147,7 @@ func (d *webhookDeliverer) attempt(sessionID, url, event string, body []byte, se
 			lastErr = http.StatusText(code)
 		}
 	}
-	d.onFailure(sessionID, url, event, body, lastErr, secret)
+	d.onFailure(t, event, body, lastErr)
 }
 
 func (d *webhookDeliverer) post(url string, body []byte, secret string) (int, error) {
@@ -154,21 +167,21 @@ func (d *webhookDeliverer) post(url string, body []byte, secret string) (int, er
 	return resp.StatusCode, nil
 }
 
-func (d *webhookDeliverer) onSuccess(sessionID string) {
+func (d *webhookDeliverer) onSuccess(t whTarget) {
 	d.mu.Lock()
-	if c := d.circuits[sessionID]; c != nil {
+	if c := d.circuits[t.key()]; c != nil {
 		c.consecFails = 0
 		c.openUntil = time.Time{}
 	}
 	d.mu.Unlock()
 }
 
-func (d *webhookDeliverer) onFailure(sessionID, url, event string, body []byte, lastErr, secret string) {
+func (d *webhookDeliverer) onFailure(t whTarget, event string, body []byte, lastErr string) {
 	d.mu.Lock()
-	c := d.circuits[sessionID]
+	c := d.circuits[t.key()]
 	if c == nil {
 		c = &whCircuit{}
-		d.circuits[sessionID] = c
+		d.circuits[t.key()] = c
 	}
 	c.consecFails++
 	fails := c.consecFails
@@ -181,24 +194,24 @@ func (d *webhookDeliverer) onFailure(sessionID, url, event string, body []byte, 
 	}
 	d.mu.Unlock()
 	if d.log != nil {
-		d.log.Warn("webhook: entrega falhou (foi pra DLQ)", "session", sessionID, "event", event, "consecFails", fails, "err", lastErr)
+		d.log.Warn("webhook: entrega falhou (foi pra DLQ)", "session", t.session, "webhook", t.hook, "event", event, "consecFails", fails, "err", lastErr)
 	}
-	d.pushDLQ(sessionID, url, event, body, lastErr, whMaxAttempts, secret)
+	d.pushDLQ(t, event, body, lastErr, whMaxAttempts)
 }
 
-func (d *webhookDeliverer) pushDLQ(sessionID, url, event string, body []byte, lastErr string, attempts int, secret string) {
+func (d *webhookDeliverer) pushDLQ(t whTarget, event string, body []byte, lastErr string, attempts int) {
 	item := whDLQItem{
-		ID: whNewID(), Event: event, URL: url,
+		ID: whNewID(), WebhookID: t.hook, Event: event, URL: t.url,
 		Body: append(json.RawMessage(nil), body...), LastError: lastErr,
-		Attempts: attempts, CreatedAt: time.Now().UnixMilli(), secret: secret,
+		Attempts: attempts, CreatedAt: time.Now().UnixMilli(), secret: t.secret,
 	}
 	d.mu.Lock()
-	q := d.dlq[sessionID]
+	q := d.dlq[t.session]
 	q = append([]whDLQItem{item}, q...) // newest-first
 	if len(q) > whDLQCapacity {
 		q = q[:whDLQCapacity] // evita o mais antigo (cauda)
 	}
-	d.dlq[sessionID] = q
+	d.dlq[t.session] = q
 	d.mu.Unlock()
 }
 
@@ -223,18 +236,9 @@ func (d *webhookDeliverer) dlqList(sessionID string) []whDLQItem {
 }
 
 // dlqReplay reenvia um item da DLQ (remove-o da fila e re-entrega). Erro se o
-// circuito estiver aberto/desabilitado ou o id não existir.
+// circuito do webhook estiver aberto/desabilitado ou o id não existir.
 func (d *webhookDeliverer) dlqReplay(sessionID, id string) error {
 	d.mu.Lock()
-	c := d.circuits[sessionID]
-	if c != nil && c.disabled {
-		d.mu.Unlock()
-		return errWebhookDisabled
-	}
-	if c != nil && time.Now().Before(c.openUntil) {
-		d.mu.Unlock()
-		return errWebhookOpen
-	}
 	q := d.dlq[sessionID]
 	idx := -1
 	for i := range q {
@@ -248,30 +252,34 @@ func (d *webhookDeliverer) dlqReplay(sessionID, id string) error {
 		return errDLQNotFound
 	}
 	item := q[idx]
+	if c := d.circuits[whKey(sessionID, item.WebhookID)]; c != nil {
+		if c.disabled {
+			d.mu.Unlock()
+			return errWebhookDisabled
+		}
+		if time.Now().Before(c.openUntil) {
+			d.mu.Unlock()
+			return errWebhookOpen
+		}
+	}
 	d.dlq[sessionID] = append(q[:idx:idx], q[idx+1:]...)
 	d.mu.Unlock()
-	d.deliver(sessionID, item.URL, item.Event, item.Body, item.secret)
+	d.deliver(whTarget{session: sessionID, hook: item.WebhookID, url: item.URL, secret: item.secret}, item.Event, item.Body)
 	return nil
 }
 
-// status devolve o estado do circuito da sessão.
-func (d *webhookDeliverer) status(sessionID string) map[string]any {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	c := d.circuits[sessionID]
-	st := map[string]any{"dlqSize": len(d.dlq[sessionID])}
+// circuitState devolve o estado de um circuito (chamar com d.mu travado).
+func (d *webhookDeliverer) circuitState(key string) map[string]any {
+	c := d.circuits[key]
+	st := map[string]any{"state": "closed", "consecutiveFailures": 0}
 	if c == nil {
-		st["state"] = "closed"
-		st["consecutiveFailures"] = 0
 		return st
 	}
-	state := "closed"
 	if c.disabled {
-		state = "disabled"
+		st["state"] = "disabled"
 	} else if time.Now().Before(c.openUntil) {
-		state = "open"
+		st["state"] = "open"
 	}
-	st["state"] = state
 	st["consecutiveFailures"] = c.consecFails
 	if c.disabledReason != "" {
 		st["disabledReason"] = c.disabledReason
@@ -282,15 +290,58 @@ func (d *webhookDeliverer) status(sessionID string) map[string]any {
 	return st
 }
 
-// reenable religa um webhook desabilitado/aberto (zera o circuito).
-func (d *webhookDeliverer) reenable(sessionID string) {
+var whStateRank = map[string]int{"closed": 0, "open": 1, "disabled": 2}
+
+// status devolve o estado dos circuitos da sessão. Os campos do topo (state,
+// consecutiveFailures, ...) são os do PIOR webhook — compatível com o formato
+// antigo (1 webhook por sessão); "webhooks" traz o estado de cada um.
+func (d *webhookDeliverer) status(sessionID string, hookIDs []string) map[string]any {
 	d.mu.Lock()
-	if c := d.circuits[sessionID]; c != nil {
-		c.disabled = false
-		c.disabledReason = ""
-		c.consecFails = 0
-		c.openUntil = time.Time{}
+	defer d.mu.Unlock()
+	st := map[string]any{"state": "closed", "consecutiveFailures": 0}
+	per := make([]map[string]any, 0, len(hookIDs))
+	for _, h := range hookIDs {
+		cs := d.circuitState(whKey(sessionID, h))
+		if whStateRank[cs["state"].(string)] > whStateRank[st["state"].(string)] ||
+			(cs["state"] == st["state"] && cs["consecutiveFailures"].(int) > st["consecutiveFailures"].(int)) {
+			for k, v := range cs {
+				st[k] = v
+			}
+		}
+		cs["id"] = h
+		per = append(per, cs)
 	}
+	st["webhooks"] = per
+	st["dlqSize"] = len(d.dlq[sessionID])
+	return st
+}
+
+// hookState devolve o estado do circuito de um webhook.
+func (d *webhookDeliverer) hookState(sessionID, hookID string) map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.circuitState(whKey(sessionID, hookID))
+}
+
+// reenable religa webhooks desabilitados/abertos (zera o circuito). hookID
+// vazio = todos os webhooks da sessão.
+func (d *webhookDeliverer) reenable(sessionID, hookID string) {
+	d.mu.Lock()
+	for k, c := range d.circuits {
+		if (hookID == "" && strings.HasPrefix(k, sessionID+"#")) || k == whKey(sessionID, hookID) {
+			c.disabled = false
+			c.disabledReason = ""
+			c.consecFails = 0
+			c.openUntil = time.Time{}
+		}
+	}
+	d.mu.Unlock()
+}
+
+// forget descarta o circuito de um webhook removido.
+func (d *webhookDeliverer) forget(sessionID, hookID string) {
+	d.mu.Lock()
+	delete(d.circuits, whKey(sessionID, hookID))
 	d.mu.Unlock()
 }
 
@@ -302,7 +353,7 @@ func (s *server) handleWebhookStatus(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	writeJSON(w, http.StatusOK, whDeliver.status(sess.id))
+	writeJSON(w, http.StatusOK, whDeliver.status(sess.id, sess.webhookIDs()))
 }
 
 // GET /api/sessions/{sid}/webhooks/dlq
@@ -331,12 +382,12 @@ func (s *server) handleWebhookDLQReplay(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "replayed"})
 }
 
-// POST /api/sessions/{sid}/webhooks/reenable
+// POST /api/sessions/{sid}/webhooks/reenable[?webhookId=…] (sem id = todos)
 func (s *server) handleWebhookReenable(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {
 		return
 	}
-	whDeliver.reenable(sess.id)
+	whDeliver.reenable(sess.id, r.URL.Query().Get("webhookId"))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

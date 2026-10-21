@@ -269,6 +269,28 @@ components:
         hasSecret: { type: boolean, description: "true se há secret (o valor nunca é devolvido)" }
         events: { type: array, items: { type: string }, description: "Filtro de eventos (vazio = todos)" }
         ignoreGroups: { type: boolean, description: "true = eventos de grupo não são entregues" }
+    WebhookInput:
+      type: object
+      properties:
+        name: { type: string, example: "n8n" }
+        url: { type: string, example: "https://meu-sistema/webhook/astracalls" }
+        secret: { type: string, description: "Assina cada entrega (X-Webhook-Signature: sha256=<hex>). Ausente = mantém; \"\" = remove." }
+        events: { type: array, items: { type: string }, description: "Só entrega estes tipos (vazio = todos)", example: ["message"] }
+        ignoreGroups: { type: boolean, description: "true = não entrega eventos de grupo" }
+    WebhookItem:
+      type: object
+      properties:
+        id: { type: string, example: "default" }
+        name: { type: string }
+        url: { type: string }
+        hasSecret: { type: boolean, description: "o secret nunca é devolvido" }
+        events: { type: array, items: { type: string } }
+        ignoreGroups: { type: boolean }
+        status:
+          type: object
+          properties:
+            state: { type: string, enum: [closed, open, disabled] }
+            consecutiveFailures: { type: integer }
     ChatwootConfig:
       type: object
       description: "Configuração da integração Chatwoot. `account_token` NUNCA é devolvido (vem vazio)."
@@ -1484,7 +1506,8 @@ paths:
   /api/sessions/{sid}/webhook:
     get:
       tags: [Webhook]
-      summary: Consulta a URL de webhook da sessão
+      summary: Consulta o webhook principal ("default") da sessão
+      description: Rota de 1 webhook (compatível). Para vários webhooks use `/webhooks`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
@@ -1496,8 +1519,10 @@ paths:
               schema: { $ref: "#/components/schemas/WebhookConfig" }
     post:
       tags: [Webhook]
-      summary: Define a URL de webhook (recebe os eventos da sessão)
+      summary: Define o webhook principal ("default") da sessão
       description: |
+        Rota de 1 webhook (compatível): mexe só no webhook `default`; os demais criados em
+        `/webhooks` não são afetados.
         Eventos enviados (POST JSON) no formato `{ session, event, timestamp, data }`.
         `event` pode ser `message` (mensagem recebida, com `data.text`, `data.type`, `data.raw`...),
         `receipt` (confirmações de entrega/leitura) ou `group_participants` (entrada/saída/promoção
@@ -4706,10 +4731,90 @@ paths:
   # ─────────────────────────────────────────────────────────────────
   # Webhook — status/DLQ/replay/reenable
   # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/webhooks:
+    get:
+      tags: [Webhook]
+      summary: Lista os webhooks da sessão
+      description: |
+        Uma sessão pode ter vários webhooks (até `max`), cada um com URL, secret, filtro de eventos,
+        "ignorar grupos" e circuito de entrega próprios. Todos recebem o mesmo payload
+        `{ session, event, timestamp, data }`. O webhook `default` é o mesmo da rota `/webhook`.
+      parameters: [ { $ref: "#/components/parameters/Sid" } ]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhooks: { type: array, items: { $ref: "#/components/schemas/WebhookItem" } }
+                  max: { type: integer, example: 10 }
+    post:
+      tags: [Webhook]
+      summary: Adiciona um webhook à sessão
+      description: O primeiro webhook da sessão recebe o id `default`.
+      parameters: [ { $ref: "#/components/parameters/Sid" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [ { $ref: "#/components/schemas/WebhookInput" } ]
+              required: [url]
+      responses:
+        "201": { description: Criado, content: { application/json: { schema: { $ref: "#/components/schemas/WebhookItem" } } } }
+        "400": { description: URL inválida }
+        "409": { description: Limite de webhooks atingido }
+  /api/sessions/{sid}/webhooks/{wid}:
+    put:
+      tags: [Webhook]
+      summary: Altera um webhook
+      description: Campos ausentes mantêm o valor atual. `secret` "" remove o secret.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: wid, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookInput" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/WebhookItem" } } } }
+        "404": { description: Webhook não encontrado }
+    delete:
+      tags: [Webhook]
+      summary: Remove um webhook
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: wid, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removido }
+        "404": { description: Webhook não encontrado }
+  /api/sessions/{sid}/webhooks/{wid}/test:
+    post:
+      tags: [Webhook]
+      summary: Envia um evento de teste
+      description: "Faz um POST com `event: test` na hora (sem retry/DLQ) e devolve o status HTTP que o endpoint respondeu."
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: wid, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Resultado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  status: { type: integer, example: 200 }
+                  error: { type: string }
   /api/sessions/{sid}/webhooks/status:
     get:
       tags: [Webhook]
-      summary: Estado do circuito de entrega do webhook (circuit breaker + DLQ)
+      summary: Estado do circuito de entrega dos webhooks (circuit breaker + DLQ)
+      description: O circuito é POR webhook. Os campos do topo trazem o pior estado; `webhooks` traz cada um.
       parameters: [ { $ref: "#/components/parameters/Sid" } ]
       responses:
         "200":
@@ -4724,6 +4829,14 @@ paths:
                   dlqSize: { type: integer }
                   disabledReason: { type: string, description: "Só quando disabled" }
                   openUntil: { type: integer, format: int64, description: "epoch ms (só com o circuito aberto)" }
+                  webhooks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        state: { type: string, enum: [closed, open, disabled] }
+                        consecutiveFailures: { type: integer }
   /api/sessions/{sid}/webhooks/dlq:
     get:
       tags: [Webhook]
@@ -4767,8 +4880,10 @@ paths:
   /api/sessions/{sid}/webhooks/reenable:
     post:
       tags: [Webhook]
-      summary: Religa um webhook desabilitado/aberto (zera o circuito)
-      parameters: [ { $ref: "#/components/parameters/Sid" } ]
+      summary: Religa webhooks desabilitados/abertos (zera o circuito)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: webhookId, in: query, required: false, schema: { type: string }, description: "Só este webhook (ausente = todos da sessão)" }
       responses:
         "200":
           description: OK

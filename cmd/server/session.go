@@ -48,16 +48,14 @@ type Session struct {
 	waContainer *sqlstore.Container
 	waDB        *sql.DB
 
-	mu              sync.Mutex
-	auth            AuthSnapshot
-	webhook         string
-	webhookSecret   string   // segredo p/ assinar o payload (X-Webhook-Signature); vazio = sem assinatura
-	webhookEvents   []string // filtro: só entrega estes tipos de evento; vazio = todos
-	webhookNoGroups bool     // não entrega eventos de grupo (@g.us) no webhook
-	chatwoot        ChatwootConfig
-	recording       bool   // grava as chamadas desta sessão (opt-in)
-	proxy           string // proxy de saída da conexão WhatsApp (http/https/socks5)
-	lastJID         string // último número (JID) que esteve conectado; mantido após desconectar
+	mu        sync.Mutex
+	auth      AuthSnapshot
+	webhooks  []WebhookTarget // webhooks da sessão (o "default" é o da rota antiga /webhook)
+	webhookMu sync.Mutex      // serializa alterar+persistir a lista de webhooks
+	chatwoot  ChatwootConfig
+	recording bool   // grava as chamadas desta sessão (opt-in)
+	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)
+	lastJID   string // último número (JID) que esteve conectado; mantido após desconectar
 
 	// Credenciais SIP desta sessão (modelo Wavoip: o PBX do cliente se registra
 	// no AstraCalls usando estes dados). Definidas na criação da sessão.
@@ -265,56 +263,6 @@ func (s *Session) resolveCanonical(ctx context.Context, jid types.JID) (types.JI
 	ci := canonInfo{lid: lid, pn: pn, ok: true}
 	s.canonCache.Store(jid.User, ci)
 	return lid, pn, true
-}
-
-func (s *Session) setWebhook(url, secret string, events []string, ignoreGroups bool) {
-	s.mu.Lock()
-	s.webhook = url
-	s.webhookSecret = secret
-	s.webhookEvents = events
-	s.webhookNoGroups = ignoreGroups
-	s.mu.Unlock()
-}
-
-func (s *Session) getWebhookIgnoreGroups() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.webhookNoGroups
-}
-
-func (s *Session) getWebhook() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.webhook
-}
-
-func (s *Session) getWebhookSecret() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.webhookSecret
-}
-
-func (s *Session) getWebhookEvents() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.webhookEvents
-}
-
-// webhookWants diz se o evento deve ser entregue conforme o filtro da sessão.
-// Filtro vazio = entrega tudo (comportamento antigo).
-func (s *Session) webhookWants(event string) bool {
-	s.mu.Lock()
-	ev := s.webhookEvents
-	s.mu.Unlock()
-	if len(ev) == 0 {
-		return true
-	}
-	for _, e := range ev {
-		if e == event {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Session) setChatwoot(c ChatwootConfig) {

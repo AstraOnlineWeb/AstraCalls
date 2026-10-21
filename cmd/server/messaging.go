@@ -444,6 +444,9 @@ func splitEvents(csv string) []string {
 	return out
 }
 
+// Rotas legadas de 1 webhook por sessão: operam só no webhook "default" da
+// lista (ver webhooks.go). Os demais webhooks da sessão não são afetados.
+
 func (s *server) handleSetWebhook(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {
@@ -461,28 +464,41 @@ func (s *server) handleSetWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	url := strings.TrimSpace(b.URL)
-	secret := sess.getWebhookSecret()
-	if b.Secret != nil {
-		secret = strings.TrimSpace(*b.Secret)
-	}
-	ignoreGroups := sess.getWebhookIgnoreGroups()
-	if b.IgnoreGroups != nil {
-		ignoreGroups = *b.IgnoreGroups
-	}
-	if url == "" {
-		secret, ignoreGroups = "", false
-	}
-	events := make([]string, 0, len(b.Events))
-	for _, e := range b.Events {
-		if e = strings.TrimSpace(e); e != "" {
-			events = append(events, e)
+	var def WebhookTarget
+	err := sess.updateWebhooks(r.Context(), func(list []WebhookTarget) ([]WebhookTarget, error) {
+		idx := -1
+		for i := range list {
+			if list[i].ID == webhookDefaultID {
+				idx = i
+			}
 		}
-	}
-	sess.setWebhook(url, secret, events, ignoreGroups)
-	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, url, secret, strings.Join(events, ","), ignoreGroups)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"webhook": url, "hasSecret": secret != "", "events": events, "ignoreGroups": ignoreGroups,
+		if url == "" { // vazio = remove (igual ao DELETE)
+			if idx >= 0 {
+				list = append(list[:idx:idx], list[idx+1:]...)
+			}
+			return list, nil
+		}
+		if idx < 0 {
+			list = append([]WebhookTarget{{ID: webhookDefaultID}}, list...)
+			idx = 0
+		}
+		t := &list[idx]
+		t.URL = url
+		t.Events = cleanEvents(b.Events)
+		if b.Secret != nil {
+			t.Secret = strings.TrimSpace(*b.Secret)
+		}
+		if b.IgnoreGroups != nil {
+			t.IgnoreGroups = *b.IgnoreGroups
+		}
+		def = *t
+		return list, nil
 	})
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, legacyWebhookView(def))
 }
 
 func (s *server) handleGetWebhook(w http.ResponseWriter, r *http.Request) {
@@ -490,11 +506,19 @@ func (s *server) handleGetWebhook(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	// não devolve o secret em claro; só indica se está configurado.
-	writeJSON(w, http.StatusOK, map[string]any{
-		"webhook": sess.getWebhook(), "hasSecret": sess.getWebhookSecret() != "", "events": sess.getWebhookEvents(),
-		"ignoreGroups": sess.getWebhookIgnoreGroups(),
-	})
+	def, _ := sess.webhookByID(webhookDefaultID)
+	writeJSON(w, http.StatusOK, legacyWebhookView(def))
+}
+
+// legacyWebhookView é o formato antigo da rota /webhook (não devolve o secret).
+func legacyWebhookView(t WebhookTarget) map[string]any {
+	ev := t.Events
+	if ev == nil {
+		ev = []string{}
+	}
+	return map[string]any{
+		"webhook": t.URL, "hasSecret": t.Secret != "", "events": ev, "ignoreGroups": t.IgnoreGroups,
+	}
 }
 
 func (s *server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
@@ -502,7 +526,14 @@ func (s *server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	sess.setWebhook("", "", nil, false)
-	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, "", "", "", false)
+	_ = sess.updateWebhooks(r.Context(), func(list []WebhookTarget) ([]WebhookTarget, error) {
+		for i := range list {
+			if list[i].ID == webhookDefaultID {
+				return append(list[:i:i], list[i+1:]...), nil
+			}
+		}
+		return list, nil
+	})
+	whDeliver.forget(sess.id, webhookDefaultID)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -10,31 +10,35 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-// dispatchWebhook envia um evento para a URL de webhook da sessão (se houver),
-// de forma assíncrona. Formato: {session, event, timestamp, data}.
+// dispatchWebhook envia um evento para os webhooks da sessão (se houver), de
+// forma assíncrona. Formato: {session, event, timestamp, data}. Cada webhook
+// aplica o próprio filtro (eventos / ignorar grupos).
 func (s *Session) dispatchWebhook(event string, data any) {
-	url := s.getWebhook()
-	if url == "" {
+	hooks := s.getWebhooks()
+	if len(hooks) == 0 {
 		return
 	}
-	if !s.webhookWants(event) {
-		return // filtrado: a sessão não assina este tipo de evento
+	var body []byte
+	for _, h := range hooks {
+		if h.URL == "" || !h.wants(event, data) {
+			continue
+		}
+		if body == nil {
+			b, err := json.Marshal(map[string]any{
+				"session":   s.id,
+				"event":     event,
+				"timestamp": time.Now().UnixMilli(),
+				"data":      data,
+			})
+			if err != nil {
+				return
+			}
+			body = b
+		}
+		// Entrega confiável (retry/backoff + circuit breaker + DLQ) + assinatura HMAC
+		// opcional (X-Webhook-Signature) quando o webhook tem secret.
+		whDeliver.deliver(whTarget{session: s.id, hook: h.ID, url: h.URL, secret: h.Secret}, event, body)
 	}
-	if s.getWebhookIgnoreGroups() && isGroupWebhookEvent(event, data) {
-		return // sessão configurada p/ ignorar grupos no webhook
-	}
-	body, err := json.Marshal(map[string]any{
-		"session":   s.id,
-		"event":     event,
-		"timestamp": time.Now().UnixMilli(),
-		"data":      data,
-	})
-	if err != nil {
-		return
-	}
-	// Entrega confiável (retry/backoff + circuit breaker + DLQ) + assinatura HMAC
-	// opcional (X-Webhook-Signature) quando há secret configurado na sessão.
-	whDeliver.deliver(s.id, url, event, body, s.getWebhookSecret())
 }
 
 // isGroupWebhookEvent diz se o evento é de um GRUPO: group_participants sempre;

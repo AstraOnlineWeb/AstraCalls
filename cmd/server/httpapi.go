@@ -257,6 +257,12 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{sid}/webhooks/dlq", s.handleWebhookDLQ)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhooks/dlq/{id}/replay", s.handleWebhookDLQReplay)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhooks/reenable", s.handleWebhookReenable)
+	// Vários webhooks por sessão (o "default" é o mesmo da rota /webhook acima).
+	mux.HandleFunc("GET /api/sessions/{sid}/webhooks", s.handleListWebhooks)
+	mux.HandleFunc("POST /api/sessions/{sid}/webhooks", s.handleCreateWebhook)
+	mux.HandleFunc("PUT /api/sessions/{sid}/webhooks/{wid}", s.handleUpdateWebhook)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/webhooks/{wid}", s.handleDeleteWebhookByID)
+	mux.HandleFunc("POST /api/sessions/{sid}/webhooks/{wid}/test", s.handleTestWebhook)
 
 	if s.staticDir != "" {
 		if _, err := os.Stat(s.staticDir); err == nil {
