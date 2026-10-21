@@ -88,6 +88,9 @@ type SIPRTPBridge struct {
 	// esvazia. Necessário quando a fonte (agente/TTS) manda em rajadas.
 	paced    bool
 	outQueue []int16
+	// maxQueue: teto da fila ritmada em amostras (0 = sipPacedMaxSamples). Ponte
+	// ao vivo usa um teto curto para o atraso não acumular.
+	maxQueue int
 
 	// held: em espera (transferência) — o pacer ignora a fila e toca a música
 	// de espera (moh, 8 kHz) ou silêncio; o áudio novo do agente é descartado.
@@ -287,6 +290,18 @@ func (b *SIPRTPBridge) StartPacer() {
 	go b.pacerLoop()
 }
 
+// StartLivePacer liga o envio ritmado para uma ponte AO VIVO (WhatsApp <-> PBX):
+// o áudio do WhatsApp chega em rajadas irregulares (frames de 60 ms, com buracos
+// de centenas de ms); mandado direto virava pacotes de 10–180 ms fora do ptime
+// 20 e o PBX tocava com ruído/"ring" de fundo. A fila fica curta (sipLiveMaxSamples)
+// para não acumular atraso.
+func (b *SIPRTPBridge) StartLivePacer() {
+	b.mu.Lock()
+	b.maxQueue = sipLiveMaxSamples
+	b.mu.Unlock()
+	b.StartPacer()
+}
+
 // ClearOutput descarta o áudio ainda não enviado (barge-in do agente).
 func (b *SIPRTPBridge) ClearOutput() {
 	b.mu.Lock()
@@ -315,6 +330,10 @@ func (b *SIPRTPBridge) SetHold(held, moh bool) {
 
 // limite da fila de saída ritmada: 60 s de áudio a 8 kHz.
 const sipPacedMaxSamples = 8000 * 60
+
+// limite da fila ritmada numa ponte ao vivo: 300 ms (absorve o jitter do relay
+// sem deixar o atraso crescer).
+const sipLiveMaxSamples = 8000 * 3 / 10
 
 func (b *SIPRTPBridge) pacerLoop() {
 	const frame = 160 // 20 ms a 8 kHz
@@ -357,7 +376,11 @@ func (b *SIPRTPBridge) WritePCM(pcm []float32) error {
 			return nil
 		}
 		b.outQueue = append(b.outQueue, samples...)
-		if over := len(b.outQueue) - sipPacedMaxSamples; over > 0 {
+		limit := b.maxQueue
+		if limit <= 0 {
+			limit = sipPacedMaxSamples
+		}
+		if over := len(b.outQueue) - limit; over > 0 {
 			b.outQueue = b.outQueue[over:]
 		}
 		b.mu.Unlock()

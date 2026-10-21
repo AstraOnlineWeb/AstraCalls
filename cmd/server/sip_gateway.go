@@ -437,6 +437,7 @@ func (gw *SIPGateway) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		ac.spies.feed(spySideAgent, pcm)
 		ac.cm.FeedCapturedPCM(pcm)
 	}, nil)
+	rtpBridge.StartLivePacer()
 	sess.setRTPBridge(callID, rtpBridge)
 
 	// SDP answer com o codec G.711 que o PBX ofertou (PCMU se não der pra ler a oferta).
@@ -861,6 +862,7 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 			ac.cm.FeedCapturedPCM(pcm)
 		}, nil)
 	}
+	rtpBridge.StartLivePacer()
 	sess.setRTPBridge(callID, rtpBridge)
 
 	localIP := getLocalIP()
