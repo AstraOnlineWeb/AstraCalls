@@ -4,13 +4,13 @@ name: Docker (multi-arch)
 #
 # Estratégia (build NATIVO por arquitetura — sem QEMU):
 #   - linux/amd64  -> runner x86 padrao do GitHub (ubuntu-latest)
-#   - linux/arm64  -> runner ARM efemero do Ubicloud (ubicloud-standard-8-arm)
+#   - linux/arm64  -> runner ARM nativo do GitHub (ubuntu-24.04-arm, gratis p/ repo publico)
 # Cada job faz push da imagem por DIGEST; o job final "merge" monta o
 # manifest list (a tag que o cliente usa aponta para as duas arquiteturas).
 #
 # Pre-requisitos (configurar UMA vez):
-#   - Conectar este repositorio ao Ubicloud (runners de GitHub Actions), para
-#     que o label "ubicloud-standard-4-arm" resolva numa VM ARM efemera.
+#   - (antes era Ubicloud "ubicloud-standard-8-arm"; trocado porque o job ficava
+#     na fila sem runner. Pra voltar, basta trocar o label do arm64 abaixo.)
 #   - Secrets do repositorio: DOCKERHUB_USERNAME e DOCKERHUB_TOKEN.
 
 on:
@@ -40,7 +40,7 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
           - platform: linux/arm64
-            runner: ubicloud-standard-8-arm
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout (com submodulos)
         uses: actions/checkout@v4
