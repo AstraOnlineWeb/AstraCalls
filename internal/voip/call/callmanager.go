@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
+
 	callvideo "wacalls/internal/voip/call/video"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
@@ -11,6 +13,7 @@ import (
 	"wacalls/internal/voip/transport"
 	"wacalls/internal/voip/wanode"
 
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -261,7 +264,7 @@ func (m *CallManager) RejectCall(ctx context.Context, callID string, reason core
 	m.emitState()
 	m.mu.Unlock()
 
-	go func() { _, _ = m.sock.Query(ctx, node) }()
+	go m.sendEndStanza(ctx, node)
 	m.cleanupMedia()
 	return nil
 }
@@ -279,12 +282,24 @@ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) er
 	m.emitState()
 	m.mu.Unlock()
 
-	go func() { _, _ = m.sock.Query(ctx, node) }()
+	go m.sendEndStanza(ctx, node)
 	if m.OnEnded != nil {
 		m.OnEnded(ended)
 	}
 	m.cleanupMedia()
 	return nil
+}
+
+// sendEndStanza envia reject/terminate com 1 nova tentativa: socket em
+// reconexão perdia o stanza e o outro lado seguia tocando/em chamada.
+func (m *CallManager) sendEndStanza(ctx context.Context, node waBinary.Node) {
+	if _, err := m.sock.Query(ctx, node); err == nil || ctx.Err() != nil {
+		return
+	}
+	time.Sleep(500 * time.Millisecond)
+	if _, err := m.sock.Query(ctx, node); err != nil {
+		m.log.Warn("falha ao enviar fim de chamada (2 tentativas)", "tag", node.Tag, "err", err)
+	}
 }
 
 func (m *CallManager) ownCredJid() string {

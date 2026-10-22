@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -619,6 +621,17 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 		return
 	}
 	cm := s.createCall(callID, s.getRecording())
+	// O whatsmeow engole panic do handler de evento (logger Noop): sem isto a
+	// chamada ficaria no registro sem timer de toque (chamada fantasma ocupando
+	// vaga de WACALLS_MAX_CALLS).
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("panic ao tratar oferta de chamada; descartando", "call_id", callID,
+				"panic", r, "stack", string(debug.Stack()))
+			s.removeCall(callID)
+			s.mgr.broker.endCall(callID, "error")
+		}
+	}()
 	// telefone real do chamador: o offer traz caller_pn em CallCreatorAlt quando o
 	// creator é LID; ou o próprio CallCreator já é PN. Evita "desconhecido" sem
 	// depender do mapa local de LID (bug 01/10).
@@ -719,6 +732,12 @@ func (s *Session) handleEvent(rawEvt any) {
 		// pushname pode não ter chegado ainda (SendPresence -> ErrNoPushName);
 		// nesse caso o reenvio ocorre no evento PushNameSetting abaixo.
 		go s.keepPresenceActive(ctx)
+	case *events.AppStateSyncComplete:
+		// Pareamento novo: o pushname real só chega no full sync do
+		// critical_block, que não emite PushNameSetting.
+		if evt.Name == appstate.WAPatchCriticalBlock {
+			go s.keepPresenceActive(ctx)
+		}
 	case *events.PushNameSetting:
 		// O pushname chegou (às vezes depois do Connected): reenvia a presença,
 		// pois SendPresence falha enquanto o nome não está no store.
