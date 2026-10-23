@@ -30,9 +30,10 @@ const (
 
 // messageCapping é o estado devolvido pelo WhatsApp (campos já normalizados).
 type messageCapping struct {
-	TotalQuota         int    `json:"total_quota"`
+	TotalQuota         int    `json:"total_quota"` // -1 = sem limite aplicado à conta
 	UsedQuota          int    `json:"used_quota"`
-	Remaining          int    `json:"remaining"`
+	Remaining          int    `json:"remaining"` // -1 quando unlimited
+	Unlimited          bool   `json:"unlimited"`
 	Status             string `json:"capping_status"` // NONE | FIRST_WARNING | SECOND_WARNING | CAPPED
 	OTEStatus          string `json:"ote_status,omitempty"`
 	MVStatus           string `json:"mv_status,omitempty"`
@@ -65,7 +66,9 @@ func parseMessageCapping(data json.RawMessage) (*messageCapping, error) {
 	if c.Status == "" {
 		c.Status = "NONE"
 	}
-	if c.Remaining = c.TotalQuota - c.UsedQuota; c.Remaining < 0 {
+	if c.TotalQuota < 0 {
+		c.Unlimited, c.Remaining = true, -1
+	} else if c.Remaining = c.TotalQuota - c.UsedQuota; c.Remaining < 0 {
 		c.Remaining = 0
 	}
 	c.CycleStartAt = epochMillis(anyInt(m["cycle_start_timestamp"]))

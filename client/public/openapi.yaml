@@ -1177,9 +1177,10 @@ paths:
                     type: object
                     nullable: true
                     properties:
-                      total_quota: { type: integer, example: 50 }
+                      total_quota: { type: integer, example: 50, description: "-1 = sem limite aplicado à conta" }
                       used_quota: { type: integer, example: 12 }
-                      remaining: { type: integer, example: 38 }
+                      remaining: { type: integer, example: 38, description: "-1 quando unlimited" }
+                      unlimited: { type: boolean, description: "true quando o WhatsApp não aplica cota a este número" }
                       capping_status: { type: string, enum: [NONE, FIRST_WARNING, SECOND_WARNING, CAPPED] }
                       ote_status: { type: string }
                       mv_status: { type: string }

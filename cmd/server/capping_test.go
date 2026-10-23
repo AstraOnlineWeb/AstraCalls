@@ -24,6 +24,12 @@ func TestParseMessageCapping(t *testing.T) {
 		t.Fatalf("extras: %+v", c)
 	}
 
+	// resposta real das contas de teste: cota -1 = sem limite aplicado
+	c, err = parseMessageCapping(json.RawMessage(`{"xwa2_message_capping_info":{"total_quota":-1,"used_quota":0,"capping_status":"NONE"}}`))
+	if err != nil || !c.Unlimited || c.Remaining != -1 {
+		t.Fatalf("sem limite: %+v %v", c, err)
+	}
+
 	c, err = parseMessageCapping(json.RawMessage(`{"xwa2_message_capping_info":{}}`))
 	if err != nil || c.Status != "NONE" || c.Remaining != 0 {
 		t.Fatalf("vazio: %+v %v", c, err)
