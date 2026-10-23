@@ -214,10 +214,7 @@ func (s *Session) importConversation(cfg ChatwootConfig, conv *waHistorySync.Con
 	if name == "" {
 		name = phone
 	}
-	avatar := ""
-	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), jid, nil); perr == nil && pp != nil {
-		avatar = pp.URL
-	}
+	avatar := s.cachedAvatar(jid)
 	contactID, sourceID, err := cfg.ensureContact(chatID, phone, name, avatar)
 	if err != nil {
 		s.log.Error("chatwoot: histórico — ensure contact falhou", "err", err)

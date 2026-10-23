@@ -72,6 +72,9 @@ catálogo, Meta AI e "marcar todos" nos grupos.
 - **Ticket vazio com o próprio número no Chatwoot:** mensagens internas do celular da
   conta (resposta a pedido de reenvio, chaves, sync após parear) abriam conversa sem
   conteúdo. Agora são ignoradas e nenhuma conversa é aberta sem algo a postar.
+- **Menos consultas ao WhatsApp:** a foto de perfil do contato/grupo passa a ficar em
+  cache por 6 h (inclusive "sem foto"/"foto escondida"), em vez de ser consultada a cada
+  mensagem recebida.
 
 ## v1.1.2 — 2026-10-15
 

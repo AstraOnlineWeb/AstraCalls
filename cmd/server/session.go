@@ -54,6 +54,7 @@ type Session struct {
 	auth      AuthSnapshot
 	webhooks  []WebhookTarget // webhooks da sessão (o "default" é o da rota antiga /webhook)
 	webhookMu sync.Mutex      // serializa alterar+persistir a lista de webhooks
+	avatars   avatarCache     // foto de perfil p/ o Chatwoot (ver avatarcache.go)
 	chatwoot  ChatwootConfig
 	recording bool   // grava as chamadas desta sessão (opt-in)
 	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)

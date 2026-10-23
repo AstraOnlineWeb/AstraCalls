@@ -320,10 +320,7 @@ func (s *Session) chatwootMirrorOwn(cfg ChatwootConfig, evt *events.Message) {
 	if name == "" {
 		name = chat.User
 	}
-	avatar := ""
-	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), chat, nil); perr == nil && pp != nil {
-		avatar = pp.URL
-	}
+	avatar := s.cachedAvatar(chat)
 	j := deliverContent(evt, mirrorDeviceTitle, true)
 	j.ChatID = chatID
 	j.Phone = phone
@@ -345,10 +342,7 @@ func (s *Session) chatwootPushDirect(cfg ChatwootConfig, evt *events.Message) {
 			name = chat.User
 		}
 	}
-	avatar := ""
-	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), evt.Info.Chat, nil); perr == nil && pp != nil {
-		avatar = pp.URL
-	}
+	avatar := s.cachedAvatar(evt.Info.Chat)
 	j := deliverContent(evt, "", false)
 	j.ChatID = chatID
 	j.Phone = phone
@@ -443,9 +437,7 @@ func (s *Session) groupJobTarget(group types.JID) (chatID, name, avatar string) 
 	if gi, err := s.client.GetGroupInfo(context.Background(), group); err == nil && gi.Name != "" {
 		name = gi.Name
 	}
-	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), group, nil); perr == nil && pp != nil {
-		avatar = pp.URL
-	}
+	avatar = s.cachedAvatar(group)
 	return
 }
 

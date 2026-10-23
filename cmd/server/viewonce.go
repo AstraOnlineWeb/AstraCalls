@@ -62,9 +62,7 @@ func (s *Session) viewOnceConversation(cfg ChatwootConfig, info *types.MessageIn
 		if name == "" {
 			name = phone
 		}
-		if pp, perr := s.client.GetProfilePictureInfo(context.Background(), info.Chat, nil); perr == nil && pp != nil {
-			avatar = pp.URL
-		}
+		avatar = s.cachedAvatar(info.Chat)
 	case types.GroupServer:
 		if !cfg.Groups {
 			return 0, "", false
@@ -74,9 +72,7 @@ func (s *Session) viewOnceConversation(cfg ChatwootConfig, info *types.MessageIn
 		if gi, err := s.client.GetGroupInfo(context.Background(), info.Chat); err == nil && gi.Name != "" {
 			name = gi.Name
 		}
-		if pp, perr := s.client.GetProfilePictureInfo(context.Background(), info.Chat, nil); perr == nil && pp != nil {
-			avatar = pp.URL
-		}
+		avatar = s.cachedAvatar(info.Chat)
 		author := info.PushName
 		if author == "" {
 			author = s.realPhone(info.Sender)
