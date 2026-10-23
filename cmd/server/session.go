@@ -94,6 +94,12 @@ type Session struct {
 	restrictionUpdatedAt time.Time
 	restrictionAlerted   bool // evita repetir o alerta no Chatwoot enquanto ativa
 
+	// Limite de conversas novas (message capping, ver capping.go). Protegido por s.mu.
+	capping        *messageCapping
+	cappingAt      time.Time
+	cappingErr     string
+	cappingAlerted string // último status alertado no Chatwoot ("" = nenhum)
+
 	// sentIDs guarda os IDs de mensagens que ESTE cliente enviou, com a origem
 	// (API ou agente do Chatwoot), para decidir o que fazer quando voltarem como
 	// evento from_me. msgID -> selfSent.
@@ -337,6 +343,7 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 	}
 	client.AddEventHandler(s.handleEvent)
 	go s.runPresenceKeepalive()
+	go s.runCappingRefresh()
 	return s
 }
 
@@ -733,6 +740,7 @@ func (s *Session) handleEvent(rawEvt any) {
 		// pushname pode não ter chegado ainda (SendPresence -> ErrNoPushName);
 		// nesse caso o reenvio ocorre no evento PushNameSetting abaixo.
 		go s.keepPresenceActive(ctx)
+		s.refreshMessageCappingSoon(15 * time.Second)
 	case *events.AppStateSyncComplete:
 		// Pareamento novo: o pushname real só chega no full sync do
 		// critical_block, que não emite PushNameSetting.
@@ -760,6 +768,7 @@ func (s *Session) handleEvent(rawEvt any) {
 		// Restrição/time-lock (shadow-ban 463): o WhatsApp limita o alcance do número
 		// (mensagem/chamada "somem" em silêncio). Único sinal programático da restrição.
 		go s.handleReachoutTimelock(evt)
+		s.refreshMessageCappingSoon(2 * time.Second)
 	case *events.Message:
 		switch {
 		case isMetaAIEvent(evt):

@@ -51,6 +51,19 @@ catálogo, Meta AI e "marcar todos" nos grupos.
 - **Marcar todos:** `mentionAll: true` (ou `mentions: ["all"]`) marca o grupo inteiro sem
   listar nomes; `@todos`/`@everyone` no texto (API ou Chatwoot) também funciona.
 
+### 🛡️ Prevenção de bloqueio
+
+- **Limite de conversas novas (message capping):** `GET /sessions/{sid}/capping` mostra a
+  cota de conversas novas do ciclo, quanto já foi usado, quando renova e o status
+  (`NONE`, `FIRST_WARNING`, `SECOND_WARNING`, `CAPPED`). Também aparece no
+  `restriction-status`. Mudança de status dispara o webhook `message_capping` e, em aviso
+  ou travado, um alerta no Chatwoot.
+- **Aparelho vinculado discreto:** o dispositivo deixa de aparecer como "whatsmeow" em
+  Dispositivos conectados e passa a se apresentar como WhatsApp Web (Chrome/Windows).
+  Configurável por `WACALLS_DEVICE_NAME` e `WACALLS_DEVICE_BROWSER`; vale para pareamentos novos.
+- **Menos consultas ao WhatsApp:** a foto de perfil do contato/grupo fica em cache por
+  6 h (inclusive "sem foto"/"foto escondida"), em vez de ser consultada a cada mensagem.
+
 ### 🐞 Correções
 
 - **SIP — sem áudio do PABX:** na chamada WhatsApp → ramal o áudio do PABX era descartado
@@ -72,12 +85,6 @@ catálogo, Meta AI e "marcar todos" nos grupos.
 - **Ticket vazio com o próprio número no Chatwoot:** mensagens internas do celular da
   conta (resposta a pedido de reenvio, chaves, sync após parear) abriam conversa sem
   conteúdo. Agora são ignoradas e nenhuma conversa é aberta sem algo a postar.
-- **Menos consultas ao WhatsApp:** a foto de perfil do contato/grupo passa a ficar em
-  cache por 6 h (inclusive "sem foto"/"foto escondida"), em vez de ser consultada a cada
-  mensagem recebida.
-- **Aparelho vinculado discreto:** o dispositivo deixa de aparecer como "whatsmeow" em
-  Dispositivos conectados e passa a se apresentar como WhatsApp Web (Chrome/Windows).
-  Configurável por `WACALLS_DEVICE_NAME` e `WACALLS_DEVICE_BROWSER`; vale para pareamentos novos.
 
 ## v1.1.2 — 2026-10-15
 

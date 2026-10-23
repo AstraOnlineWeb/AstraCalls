@@ -1143,6 +1143,51 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SIPAgentConfig" }
         "400": { description: "inboundMode inválido ou agentRingTimeoutSeconds fora de 0..600" }
+  /api/sessions/{sid}/capping:
+    get:
+      tags: [Sessões]
+      summary: Limite de conversas novas (message capping) do número
+      description: >
+        Cota de conversas NOVAS (contatos que ainda não falaram com o número) que o
+        WhatsApp libera por ciclo, quanto já foi usado e o status: `NONE`,
+        `FIRST_WARNING`, `SECOND_WARNING` ou `CAPPED` (esgotado — mensagens para
+        contatos novos deixam de ser entregues até o fim do ciclo). O valor fica em
+        cache por 30 min; `?refresh=1` consulta o WhatsApp na hora. Mudanças de status
+        disparam o webhook `message_capping` e, em aviso/travado, um alerta no Chatwoot.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+        - name: refresh
+          in: query
+          required: false
+          schema: { type: string, enum: ["1", "true"] }
+          description: Força nova consulta ao WhatsApp
+      responses:
+        "200":
+          description: OK (`capping` null quando ainda não foi possível consultar; `error` traz o motivo)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session: { type: string }
+                  updated_at: { type: integer, description: "epoch ms da última consulta" }
+                  error: { type: string }
+                  capping:
+                    type: object
+                    nullable: true
+                    properties:
+                      total_quota: { type: integer, example: 50 }
+                      used_quota: { type: integer, example: 12 }
+                      remaining: { type: integer, example: 38 }
+                      capping_status: { type: string, enum: [NONE, FIRST_WARNING, SECOND_WARNING, CAPPED] }
+                      ote_status: { type: string }
+                      mv_status: { type: string }
+                      cycle_start_at: { type: integer, description: "epoch ms" }
+                      cycle_end_at: { type: integer, description: "epoch ms" }
+                      seconds_to_cycle_end: { type: integer }
+                      subscription_status: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/sessions/{sid}/restriction-status:
     get:
       tags: [Sessões]

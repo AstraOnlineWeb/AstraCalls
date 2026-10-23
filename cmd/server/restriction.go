@@ -80,7 +80,7 @@ func (s *server) handleRestrictionStatus(w http.ResponseWriter, r *http.Request)
 	}
 	sess.mu.Unlock()
 
-	out := map[string]any{"session": sess.id, "restriction": rest}
+	out := map[string]any{"session": sess.id, "restriction": rest, "message_capping": sess.cappingSnapshot()}
 	if peer := strings.TrimSpace(r.URL.Query().Get("peer")); peer != "" {
 		out["peer"] = sess.peerTokenStatus(r.Context(), peer)
 	}
