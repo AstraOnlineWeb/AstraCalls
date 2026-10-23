@@ -157,7 +157,8 @@ func (s *Session) onMessageCapping(c *messageCapping) {
 	}
 	s.mu.Unlock()
 
-	if prev == c.Status {
+	// 1ª consulta após subir com status normal não é mudança: não avisa.
+	if prev == c.Status || (prev == "" && c.Status == "NONE") {
 		return
 	}
 	s.log.Info("limite de conversas novas (message capping)", "status", c.Status,
