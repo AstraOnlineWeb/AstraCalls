@@ -2,6 +2,74 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.1.3 — 2026-10-23
+
+A versão da **telefonia SIP** e dos **webhooks múltiplos**: o PABX passa a falar com o
+WhatsApp nos dois sentidos com áudio limpo, a chamada SIP pode ser atendida pelo agente de
+voz (IA) e transferida para um atendente, e cada sessão aceita vários webhooks com filtros
+próprios, configuráveis pelo painel. Também traz a cobrança Pix nativa, status de grupo,
+catálogo, Meta AI e "marcar todos" nos grupos.
+
+### 🔗 Webhooks
+
+- **Vários webhooks por sessão** (até 10), cada um com URL, secret, filtro de eventos e
+  "ignorar grupos" próprios. Rotas `GET/POST /webhooks`, `PUT/DELETE /webhooks/{wid}` e
+  `POST /webhooks/{wid}/test` (envia um evento `test` e devolve o HTTP recebido).
+- **Ignorar grupos** (`ignoreGroups`): não entrega nenhum evento de conversa de grupo
+  (mensagens, confirmações, reações, participantes).
+- **Entrega independente:** um webhook fora do ar não trava os outros (circuito por
+  webhook); a fila de falhas (DLQ) informa o `webhookId` e o reativar aceita `?webhookId=`.
+- **Painel:** botão **Webhook** em toda sessão, com lista, adicionar, editar, remover,
+  testar e reativar.
+- A rota antiga `/webhook` continua igual e opera no webhook principal (`default`).
+
+### ☎️ Telefonia SIP (PABX ↔ WhatsApp)
+
+- **Modo agente:** a ligação que chega no ramal SIP vira uma chamada recebida comum
+  (evento `incoming` com `source: "sip"`), atendida pelo agente de voz via WS pcm16, com
+  DTMF e barge-in (`{"type":"clear"}`). Configuração por sessão em `/sip-agent`
+  (`originate`, `agent` ou `auto`) e seletor no painel.
+- **Transferência para atendente:** `/transfer`, `/pickup`, `/hold` e `/resume` valem para
+  chamadas SIP. A IA solta a ligação, o cliente ouve música de espera e o atendente assume
+  por WebRTC ou WS. Se o WebRTC do atendente não conectar, a chamada volta para a espera
+  em vez de cair.
+- **Conector SIP (`sipconnector`):** serviço separado na mesma imagem que liga qualquer
+  PABX IP ao AstraChat com a mesma API de chamadas — linhas por caixa, ramal por
+  atendente, entrada e saída, WebRTC PCMU, IA pelo WS, transferência por REFER e ID de
+  autenticação separado do ramal (3CX).
+- Registro estável no PABX: CSeq crescente, keep-alive, renovação no prazo concedido e
+  binding listado no 200 do REGISTER (3CX).
+
+### 💸 Mensagens e grupos
+
+- **Cobrança Pix nativa:** `/messages/pix` com `style: "charge"` envia o cartão de cobrança
+  do WhatsApp com itens, total e botão Pagar.
+- **Status do grupo:** `POST /groups/{gid}/status` (texto com cor ou imagem).
+- **Catálogo:** `POST /messages/catalog` e botão `cta_catalog` no carrossel e no interativo.
+- **Meta AI:** `POST /meta-ai` pergunta à Meta AI pela conta conectada, com resposta
+  opcional no chat. Depende de a conta ter a Meta AI liberada no celular.
+- **Marcar todos:** `mentionAll: true` (ou `mentions: ["all"]`) marca o grupo inteiro sem
+  listar nomes; `@todos`/`@everyone` no texto (API ou Chatwoot) também funciona.
+
+### 🐞 Correções
+
+- **SIP — sem áudio do PABX:** na chamada WhatsApp → ramal o áudio do PABX era descartado
+  e o cliente do WhatsApp não ouvia o atendente.
+- **SIP — "ring" ao fundo no ramal:** o áudio para o PABX saía em rajadas irregulares;
+  agora sai ritmado em 20 ms nas duas direções.
+- **SIP — autenticação:** o INVITE para o ramal no PABX responde ao desafio 401/407;
+  INVITE de IP diferente do REGISTER exige senha; sessão certa com vários ramais no mesmo
+  PABX; BYE conferido pelo diálogo; proxy de saída como próximo salto.
+- **SIP — chamada de saída do PABX** usa diálogo correto (To-tag, Contact, ACK, BYE), caller
+  ID com o telefone em vez do LID, e o PABX para de tocar quando outro cliente atende.
+- **Nota de voz no iPhone:** áudio enviado pela API/Chatwoot parava de tocar no iPhone;
+  agora sobe como nota de voz (ptt), igual ao celular.
+- **Chamada fantasma:** erro interno ao receber uma ligação não deixa mais a chamada presa
+  ocupando vaga do limite.
+- **Encerrar/recusar chamada** com nova tentativa quando a conexão está reconectando (o
+  outro lado ficava tocando).
+- **Presença após parear:** reenviada com o nome real assim que a sincronização termina.
+
 ## v1.1.2 — 2026-10-15
 
 A versão dos **formulários nativos do WhatsApp Business**, das **comunidades** e da
