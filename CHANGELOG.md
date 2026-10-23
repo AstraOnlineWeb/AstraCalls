@@ -8,7 +8,9 @@ A versão da **telefonia SIP** e dos **webhooks múltiplos**: o PABX passa a fal
 WhatsApp nos dois sentidos com áudio limpo, a chamada SIP pode ser atendida pelo agente de
 voz (IA) e transferida para um atendente, e cada sessão aceita vários webhooks com filtros
 próprios, configuráveis pelo painel. Também traz a cobrança Pix nativa, status de grupo,
-catálogo, Meta AI e "marcar todos" nos grupos.
+catálogo, Meta AI e "marcar todos" nos grupos, além de **prevenção de bloqueio**: consulta
+do limite de conversas novas do WhatsApp, aparelho vinculado discreto e menos consultas ao
+WhatsApp.
 
 ### 🔗 Webhooks
 
