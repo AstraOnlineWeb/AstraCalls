@@ -54,6 +54,7 @@ func main() {
 	// a flag -max-calls-per-session ainda sobrescreve se passada.
 	maxCalls := flag.Int("max-calls-per-session", envInt("WACALLS_MAX_CALLS", 8), "max concurrent calls per session (0 = unlimited)")
 	flag.Parse()
+	configureDeviceIdentity()
 
 	level := slog.LevelInfo
 	if *debug {

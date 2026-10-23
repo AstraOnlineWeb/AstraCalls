@@ -275,6 +275,8 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_DEFAULT_TRANSPORT` | `auto` | Transporte de áudio do navegador: `auto` (WebRTC → fallback WS), `webrtc`, `websocket` |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` |
 | `WACALLS_RING_TIMEOUT_SECONDS` | — | Expira chamada recebida que nunca é encerrada |
+| `WACALLS_DEVICE_NAME` | `Windows` | Nome do aparelho em "Dispositivos conectados" (vale para pareamentos novos) |
+| `WACALLS_DEVICE_BROWSER` | `chrome` | Ícone/plataforma do aparelho: `chrome`, `edge`, `firefox`, `safari` ou `desktop` |
 | `WACALLS_RECORDING_DIR` | `$TMPDIR/wacalls-recordings` | Onde ficam os MP3s (retenção ~48h) |
 | `WACALLS_PUBLIC_BASE_URL` | — | Base pública p/ URLs de gravação, formulários e widget (ex.: `https://call.seudominio.com`) |
 | `WACALLS_WIDGET_KEY` | — | Chave-mestra para emitir tokens de widget (`POST /api/widget-tokens`) |

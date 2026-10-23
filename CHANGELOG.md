@@ -75,6 +75,9 @@ catálogo, Meta AI e "marcar todos" nos grupos.
 - **Menos consultas ao WhatsApp:** a foto de perfil do contato/grupo passa a ficar em
   cache por 6 h (inclusive "sem foto"/"foto escondida"), em vez de ser consultada a cada
   mensagem recebida.
+- **Aparelho vinculado discreto:** o dispositivo deixa de aparecer como "whatsmeow" em
+  Dispositivos conectados e passa a se apresentar como WhatsApp Web (Chrome/Windows).
+  Configurável por `WACALLS_DEVICE_NAME` e `WACALLS_DEVICE_BROWSER`; vale para pareamentos novos.
 
 ## v1.1.2 — 2026-10-15
 
