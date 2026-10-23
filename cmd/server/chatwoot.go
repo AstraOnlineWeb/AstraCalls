@@ -271,6 +271,12 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	if !cfg.valid() {
 		return
 	}
+	// Mensagem interna do protocolo (o celular da própria conta responde a
+	// pedido de reenvio, compartilha chaves, avisa sync de histórico): não é
+	// conversa. A edição também vem como ProtocolMessage e segue normal.
+	if pm := evt.Message.GetProtocolMessage(); pm != nil && pm.GetType() != waE2E.ProtocolMessage_MESSAGE_EDIT {
+		return
+	}
 	if evt.Info.IsFromMe {
 		if !s.shouldMirrorOwn(evt.Info.ID, cfg) {
 			return
@@ -575,6 +581,11 @@ func (s *Session) chatwootSend(cfg ChatwootConfig, j cwJob) {
 // unidade retryável: qualquer passo que fale com o Chatwoot pode falhar aqui e o
 // job volta pra fila. Só re-baixa mídia do WhatsApp quando o job carrega uma.
 func (s *Session) execChatwootJob(cfg ChatwootConfig, j cwJob) error {
+	// Nada a postar (mensagem de protocolo, tipo sem texto): não abre contato
+	// nem conversa — senão o Chatwoot ganha um ticket vazio.
+	if strings.TrimSpace(j.Text) == "" && !j.hasMedia() && formatReferralNote(j.Referral) == "" {
+		return nil
+	}
 	contactID, sourceID, err := cfg.ensureContact(j.ChatID, j.Phone, j.Name, j.Avatar, j.AltID)
 	if err != nil {
 		return fmt.Errorf("ensure contact: %w", err)

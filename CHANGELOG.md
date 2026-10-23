@@ -69,6 +69,9 @@ catálogo, Meta AI e "marcar todos" nos grupos.
 - **Encerrar/recusar chamada** com nova tentativa quando a conexão está reconectando (o
   outro lado ficava tocando).
 - **Presença após parear:** reenviada com o nome real assim que a sincronização termina.
+- **Ticket vazio com o próprio número no Chatwoot:** mensagens internas do celular da
+  conta (resposta a pedido de reenvio, chaves, sync após parear) abriam conversa sem
+  conteúdo. Agora são ignoradas e nenhuma conversa é aberta sem algo a postar.
 
 ## v1.1.2 — 2026-10-15
 
