@@ -2,6 +2,23 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.1.4 — 2026-10-24
+
+Versão de **segurança**: atualiza o Go, o gateway SIP e as bibliotecas de rede para fechar
+todas as vulnerabilidades conhecidas nos pacotes do AstraCalls. Recomendada para todos,
+principalmente para quem usa a telefonia SIP com a porta exposta na internet.
+
+### 🔒 Segurança
+
+- **Go 1.26.10** (antes 1.26.4): corrige 20 vulnerabilidades da biblioteca padrão
+  alcançáveis pelo AstraCalls — HTTP/1 e HTTP/2 (`net/http`), TLS e certificados
+  (`crypto/tls`, `crypto/x509`), cabeçalhos MIME, `net/url`, `encoding/xml` e `encoding/asn1`.
+- **Gateway SIP (sipgo 1.4.3):** corrige duas falhas que permitiam derrubar o serviço com
+  pacotes SIP malformados (`Content-Length` e frames WebSocket sem validação).
+- **golang.org/x/net 0.60** e **golang.org/x/crypto 0.57**: correções de HTTP/2 e criptografia.
+- **Painel:** dependências de build atualizadas (vite, postcss, nanoid).
+- Resultado: `govulncheck` e `npm audit` sem nenhuma vulnerabilidade.
+
 ## v1.1.3 — 2026-10-23
 
 A versão da **telefonia SIP** e dos **webhooks múltiplos**: o PABX passa a falar com o
