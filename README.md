@@ -371,44 +371,30 @@ Automatize o WhatsApp no **n8n sem escrever código**: o node oficial [`n8n-node
 ## 🤖 MCP para agentes de IA
 
 O AstraCalls traz um **servidor MCP** (Model Context Protocol) embutido: Claude, ChatGPT, Cursor,
-VS Code, n8n e outros agentes de IA usam o WhatsApp direto, sem instalar nada. É só a URL e a API Key.
+VS Code, n8n e outros agentes de IA usam o WhatsApp direto, sem instalar nada.
 
-- **Endereço:** `https://SEU-ASTRACALLS/api/mcp` (transporte *Streamable HTTP*).
-- **Autenticação:** a API Key (`WACALLS_API_KEY`) em `Authorization: Bearer <chave>`, `X-API-Key` ou
-  `?apiKey=<chave>` na URL (para clientes que só aceitam a URL).
-- **44 ferramentas:** enviar texto, mídia, documento, localização, contato, enquete, botões e lista;
-  reagir, editar, apagar, marcar como lida e "digitando…"; **ler conversas e buscar mensagens**;
-  ligar, encerrar, toque fantasma e disparo de ligações; contatos, grupos e comunidades; limite de
-  conversas novas e restrição; e `api_request` para qualquer outra rota.
-- Com mais de um número, o agente escolhe a sessão por **nome, telefone ou ID** (`list_sessions`).
+**Chaves por sessão (recomendado):** no painel, botão **MCP** da sessão → **Nova chave**. A chave fica
+presa àquele número, pode ser **somente leitura** e é revogada a qualquer momento. Ela não permite
+parear, desconectar nem mexer em webhooks, Chatwoot, SIP ou proxy. O painel mostra, uma única vez, a
+URL e as configurações prontas para copiar. Pela API:
+`GET/POST /api/sessions/{sid}/mcp-keys` e `DELETE /api/sessions/{sid}/mcp-keys/{id}`.
 
-**Claude Code:**
+| Cliente | Como conectar |
+|---|---|
+| claude.ai, ChatGPT (conector personalizado) | URL `https://SEU-ASTRACALLS/mcp/<chave>` |
+| Claude Code | `claude mcp add --transport http astracalls https://SEU-ASTRACALLS/mcp --header "Authorization: Bearer <chave>"` |
+| Claude Desktop, Cursor, VS Code | `mcpServers` → `{"type":"http","url":"https://SEU-ASTRACALLS/mcp","headers":{"Authorization":"Bearer <chave>"}}` |
+| n8n | Ferramenta **MCP Client** do agente de IA, endereço `/mcp` e autenticação *Bearer* |
 
-```bash
-claude mcp add --transport http astracalls https://SEU-ASTRACALLS/api/mcp \
-  --header "Authorization: Bearer SUA_API_KEY"
-```
+**Acesso de administrador:** `https://SEU-ASTRACALLS/api/mcp` com a API Key da instância
+(`WACALLS_API_KEY`) enxerga todas as sessões; o agente escolhe o número por nome, telefone ou ID.
 
-**Claude Desktop, Cursor, VS Code e afins** (`mcpServers` no arquivo de configuração do cliente):
+**44 ferramentas:** enviar texto, mídia, documento, localização, contato, enquete, botões e lista;
+reagir, editar, apagar, marcar como lida e "digitando…"; **ler conversas e buscar mensagens**; ligar,
+encerrar, toque fantasma e disparo de ligações; contatos, grupos e comunidades; limite de conversas
+novas e restrição; e `api_request` para as demais rotas da sessão.
 
-```json
-{
-  "mcpServers": {
-    "astracalls": {
-      "type": "http",
-      "url": "https://SEU-ASTRACALLS/api/mcp",
-      "headers": { "Authorization": "Bearer SUA_API_KEY" }
-    }
-  }
-}
-```
-
-**claude.ai / ChatGPT (conector personalizado):** use a URL `https://SEU-ASTRACALLS/api/mcp?apiKey=SUA_API_KEY`.
-
-**n8n:** no agente de IA, adicione a ferramenta **MCP Client** com o endpoint acima e autenticação
-*Bearer* com a API Key.
-
-> A API Key dá acesso total à conta: use HTTPS e não compartilhe a URL com a chave.
+> Quem tem a chave usa o número: trate-a como senha e revogue as que não usa mais.
 
 ---
 

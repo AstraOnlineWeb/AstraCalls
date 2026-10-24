@@ -30,6 +30,19 @@ const (
 
 var mcpProtocols = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
 
+// mcpInstructionsFor ajusta as instruções ao escopo da chave.
+func mcpInstructionsFor(sc mcpScope) string {
+	if !sc.scoped() {
+		return mcpInstructions
+	}
+	txt := strings.Replace(mcpInstructions, "- Se houver mais de uma sessão (número de WhatsApp), chame list_sessions e passe \"session\" (ID, nome ou telefone). Com uma sessão só, pode omitir.\n",
+		"- Esta conexão usa um único número de WhatsApp (veja list_sessions); não é preciso escolher sessão.\n", 1)
+	if sc.ReadOnly {
+		txt += "\n- Chave somente leitura: dá para consultar, mas não enviar nem alterar nada."
+	}
+	return txt
+}
+
 const mcpInstructions = `AstraCalls: WhatsApp (mensagens, ligações de voz e vídeo, grupos, comunidades e contatos).
 - Telefones sempre com DDI + DDD, só dígitos (ex.: 5561999998888). Grupos usam o ID terminado em @g.us.
 - Se houver mais de uma sessão (número de WhatsApp), chame list_sessions e passe "session" (ID, nome ou telefone). Com uma sessão só, pode omitir.
@@ -840,12 +853,12 @@ func targetBody(a mcpArgs) (map[string]any, error) {
 
 var argSession = pStr("Sessão (número de WhatsApp) que executa: ID, nome ou telefone. Opcional se houver só uma; veja list_sessions.")
 
-func (t mcpTool) schema() map[string]any {
+func (t mcpTool) schema(sc mcpScope) map[string]any {
 	props := map[string]any{}
 	for k, v := range t.Props {
 		props[k] = v
 	}
-	if !t.NoSession {
+	if !t.NoSession && !sc.scoped() {
 		props["session"] = argSession
 	}
 	s := map[string]any{"type": "object", "properties": props}
@@ -855,12 +868,16 @@ func (t mcpTool) schema() map[string]any {
 	return s
 }
 
-func (t mcpTool) descriptor() map[string]any {
+func (t mcpTool) descriptor(sc mcpScope) map[string]any {
+	desc := t.Description
+	if sc.scoped() && t.Name == "api_request" {
+		desc = "Chama outra rota da API REST do AstraCalls desta sessão (/api/sessions/{id}/...). Use só quando nenhuma outra ferramenta servir."
+	}
 	return map[string]any{
 		"name":        t.Name,
 		"title":       t.Title,
-		"description": t.Description,
-		"inputSchema": t.schema(),
+		"description": desc,
+		"inputSchema": t.schema(sc),
 		"annotations": map[string]any{
 			"title":           t.Title,
 			"readOnlyHint":    t.ReadOnly,
@@ -868,6 +885,11 @@ func (t mcpTool) descriptor() map[string]any {
 			"openWorldHint":   true,
 		},
 	}
+}
+
+// allowed diz se a ferramenta está liberada para o escopo da conexão.
+func (t mcpTool) allowed(sc mcpScope) bool {
+	return !sc.ReadOnly || t.ReadOnly
 }
 
 func mcpFindTool(name string) (mcpTool, bool) {
@@ -900,9 +922,15 @@ type mcpResponse struct {
 	Error   *mcpError       `json:"error,omitempty"`
 }
 
-// handleMCP: POST /api/mcp (JSON-RPC). GET devolve 405: não abrimos stream SSE
-// de notificações do servidor (permitido pela especificação).
+// handleMCP: POST /api/mcp com a chave-mestra (acesso a todas as sessões). As
+// chaves por sessão usam /mcp (ver mcpkeys.go).
 func (s *server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	s.serveMCP(w, r, mcpScope{})
+}
+
+// serveMCP trata o JSON-RPC. GET devolve 405: não abrimos stream SSE de
+// notificações do servidor (permitido pela especificação).
+func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sc mcpScope) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "use POST (MCP Streamable HTTP)"})
@@ -922,7 +950,7 @@ func (s *server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		var out []mcpResponse
 		for _, req := range reqs {
-			if resp, ok := s.mcpDispatch(r, req); ok {
+			if resp, ok := s.mcpDispatch(r, req, sc); ok {
 				out = append(out, resp)
 			}
 		}
@@ -938,7 +966,7 @@ func (s *server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, mcpResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &mcpError{-32700, "JSON inválido"}})
 		return
 	}
-	resp, ok := s.mcpDispatch(r, req)
+	resp, ok := s.mcpDispatch(r, req, sc)
 	if !ok {
 		w.WriteHeader(http.StatusAccepted) // notificação: sem resposta
 		return
@@ -947,7 +975,7 @@ func (s *server) handleMCP(w http.ResponseWriter, r *http.Request) {
 }
 
 // mcpDispatch trata uma mensagem; ok=false para notificações (sem id).
-func (s *server) mcpDispatch(r *http.Request, req mcpRequest) (mcpResponse, bool) {
+func (s *server) mcpDispatch(r *http.Request, req mcpRequest, sc mcpScope) (mcpResponse, bool) {
 	if len(req.ID) == 0 || string(req.ID) == "null" {
 		return mcpResponse{}, false
 	}
@@ -968,14 +996,16 @@ func (s *server) mcpDispatch(r *http.Request, req mcpRequest) (mcpResponse, bool
 			"protocolVersion": pv,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "astracalls", "title": "AstraCalls", "version": version},
-			"instructions":    mcpInstructions,
+			"instructions":    mcpInstructionsFor(sc),
 		}
 	case "ping":
 		resp.Result = map[string]any{}
 	case "tools/list":
 		tools := make([]map[string]any, 0, len(mcpTools))
 		for _, t := range mcpTools {
-			tools = append(tools, t.descriptor())
+			if t.allowed(sc) {
+				tools = append(tools, t.descriptor(sc))
+			}
 		}
 		resp.Result = map[string]any{"tools": tools}
 	case "tools/call":
@@ -988,11 +1018,11 @@ func (s *server) mcpDispatch(r *http.Request, req mcpRequest) (mcpResponse, bool
 			break
 		}
 		t, ok := mcpFindTool(p.Name)
-		if !ok {
-			resp.Error = &mcpError{-32602, "ferramenta desconhecida: " + p.Name}
+		if !ok || !t.allowed(sc) {
+			resp.Error = &mcpError{-32602, "ferramenta desconhecida ou não liberada para esta chave: " + p.Name}
 			break
 		}
-		resp.Result = s.mcpRunTool(r, t, mcpArgs(p.Arguments))
+		resp.Result = s.mcpRunTool(r, t, mcpArgs(p.Arguments), sc)
 	case "resources/list":
 		resp.Result = map[string]any{"resources": []any{}}
 	case "prompts/list":
@@ -1007,18 +1037,38 @@ func mcpText(text string, isErr bool) map[string]any {
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": text}}, "isError": isErr}
 }
 
-func (s *server) mcpRunTool(r *http.Request, t mcpTool, a mcpArgs) map[string]any {
+func (s *server) mcpRunTool(r *http.Request, t mcpTool, a mcpArgs, sc mcpScope) map[string]any {
 	if a == nil {
 		a = mcpArgs{}
 	}
 	if t.Name == "list_sessions" {
-		return mcpText(mcpJSON(s.mcpSessionList()), false)
+		list := s.mcpSessionList()
+		if sc.scoped() {
+			own := []mcpSession{}
+			for _, l := range list {
+				if l.ID == sc.SessionID {
+					own = append(own, l)
+				}
+			}
+			list = own
+		}
+		return mcpText(mcpJSON(list), false)
 	}
 	call, err := t.Build(a)
 	if err != nil {
 		return mcpText(err.Error(), true)
 	}
-	if !t.NoSession {
+	if sc.scoped() {
+		if _, ok := s.sessions.Get(sc.SessionID); !ok {
+			return mcpText("a sessão desta chave não existe mais", true)
+		}
+		if t.NoSession && !mcpScopedPathAllowed(sc.SessionID, call.Path) {
+			return mcpText("com esta chave só é possível chamar rotas desta sessão (/api/sessions/"+sc.SessionID+"/...), exceto as de administração da conta", true)
+		}
+		if !t.NoSession {
+			call.Path = "/api/sessions/" + seg(sc.SessionID) + call.Path
+		}
+	} else if !t.NoSession {
 		sess, err := s.mcpResolveSession(a.str("session"))
 		if err != nil {
 			return mcpText(err.Error(), true)

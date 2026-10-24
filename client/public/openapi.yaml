@@ -1809,6 +1809,100 @@ paths:
                     items: { $ref: "#/components/schemas/CallRecord" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/sessions/{sid}/mcp-keys:
+    get:
+      tags: [Sessões]
+      summary: Lista as chaves MCP da sessão
+      description: Chaves que conectam agentes de IA a este número pelo MCP (`/mcp`). A chave em si nunca é devolvida, só o prefixo.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        prefix: { type: string, example: acmcp_3f9a1c }
+                        readOnly: { type: boolean }
+                        createdAt: { type: string, format: date-time }
+                        lastUsedAt: { type: string, format: date-time }
+                  max: { type: integer, example: 20 }
+                  endpoint: { type: string, example: "https://astracalls.exemplo.com/mcp" }
+    post:
+      tags: [Sessões]
+      summary: Cria uma chave MCP presa à sessão
+      description: >
+        Devolve a chave (`secret`) UMA única vez, junto com `endpoint` (usar com
+        `Authorization: Bearer <secret>`) e `url` (endereço completo com a chave, para
+        clientes que só aceitam URL). `readOnly` libera só as ferramentas de consulta. A
+        chave não alcança rotas de administração da conta (parear, desconectar, webhooks,
+        Chatwoot, SIP, proxy).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, example: Claude do comercial }
+                readOnly: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key: { type: object }
+                  secret: { type: string, example: acmcp_3f9a1c... }
+                  endpoint: { type: string }
+                  url: { type: string }
+        "409":
+          description: Limite de 20 chaves por sessão
+  /api/sessions/{sid}/mcp-keys/{kid}:
+    delete:
+      tags: [Sessões]
+      summary: Revoga uma chave MCP
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: kid, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Revogada
+        "404":
+          description: Chave não encontrada
+  /mcp:
+    post:
+      tags: [Eventos & Histórico]
+      summary: Servidor MCP com chave da sessão
+      description: >
+        Mesmo protocolo de `/api/mcp`, autenticado por uma chave MCP de sessão em
+        `Authorization: Bearer <chave>`. O agente só enxerga e usa a sessão da chave.
+        Também aceita a chave no caminho: `POST /mcp/{chave}`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Resposta JSON-RPC
+        "202":
+          description: Notificação aceita
+        "401":
+          description: Chave MCP ausente, inválida ou revogada
   /api/mcp:
     post:
       tags: [Eventos & Histórico]

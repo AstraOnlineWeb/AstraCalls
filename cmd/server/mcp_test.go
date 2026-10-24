@@ -170,7 +170,7 @@ func TestMCPInvokeDispatchesToMux(t *testing.T) {
 		t.Fatalf("despacho: %d %s / %s", code, body, got)
 	}
 	tl, _ := mcpFindTool("api_request")
-	res := s.mcpRunTool(req, tl, mcpArgs{"method": "GET", "path": "/api/x"})
+	res := s.mcpRunTool(req, tl, mcpArgs{"method": "GET", "path": "/api/x"}, mcpScope{})
 	if res["isError"] != true || !strings.Contains(mcpJSON(res), "HTTP 404") {
 		t.Fatalf("erro HTTP deveria virar isError: %+v", res)
 	}
@@ -188,5 +188,79 @@ func TestWithAuthAcceptsBearer(t *testing.T) {
 		if rec.Code != want {
 			t.Errorf("%s: %d, queria %d", hdr, rec.Code, want)
 		}
+	}
+}
+
+func TestMCPScopedKeys(t *testing.T) {
+	key, hash := newMCPKey()
+	if !strings.HasPrefix(key, mcpKeyPrefix) || len(key) != len(mcpKeyPrefix)+64 || mcpKeyHash(key) != hash {
+		t.Fatalf("chave: %s", key)
+	}
+	k2, _ := newMCPKey()
+	if k2 == key {
+		t.Fatal("chaves repetidas")
+	}
+
+	sc := mcpScope{SessionID: "S1", ReadOnly: true}
+	var nRO, nAll int
+	for _, tl := range mcpTools {
+		nAll++
+		if tl.allowed(sc) {
+			nRO++
+			if !tl.ReadOnly {
+				t.Errorf("%s liberada em chave somente leitura", tl.Name)
+			}
+		}
+		props := tl.schema(mcpScope{SessionID: "S1"})["properties"].(map[string]any)
+		if _, ok := props["session"]; ok {
+			t.Errorf("%s: chave de sessão não deveria expor o parâmetro session", tl.Name)
+		}
+	}
+	if nRO == 0 || nRO == nAll {
+		t.Fatalf("filtro somente leitura: %d de %d", nRO, nAll)
+	}
+	if !strings.Contains(mcpInstructionsFor(mcpScope{SessionID: "S1"}), "único número") {
+		t.Fatal("instruções do escopo não trocaram o texto de sessões")
+	}
+
+	for p, want := range map[string]bool{
+		"/api/sessions/S1/profile":       true,
+		"/api/sessions/S1/messages/text": true,
+		"/api/sessions/S1":               false, // DELETE da sessão
+		"/api/sessions/S1/":              false,
+		"/api/sessions/S2/profile":       false, // outra sessão
+		"/api/sessions/S1/logout":        false,
+		"/api/sessions/S1/webhooks/abc":  false,
+		"/api/sessions/S1/mcp-keys":      false,
+		"/api/sessions/S1/../S2/profile": false,
+		"/api/sessions/S1//profile":      false,
+		"/api/sessions":                  false,
+	} {
+		if got := mcpScopedPathAllowed("S1", p); got != want {
+			t.Errorf("%s: %v, queria %v", p, got, want)
+		}
+	}
+}
+
+func TestMCPScopedEndpointRejectsBadKey(t *testing.T) {
+	s := &server{}
+	for _, hdr := range []string{"", "Bearer qualquer", "Bearer acmcp_falsa"} {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		if hdr != "" {
+			req.Header.Set("Authorization", hdr)
+		}
+		rec := httptest.NewRecorder()
+		s.handleMCPScoped(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%q: %d", hdr, rec.Code)
+		}
+	}
+	t.Setenv("WACALLS_API_KEY", "mestra")
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	req.Header.Set("Authorization", "Bearer mestra")
+	rec := httptest.NewRecorder()
+	s.handleMCPScoped(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chave-mestra em /mcp: %d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -130,6 +130,20 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	}
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS chatwoot_outbox_due ON chatwoot_outbox (dead, next_at)`)
 
+	// Chaves MCP por sessão (ver mcpkeys.go); só o hash da chave fica salvo.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS mcp_keys (
+		id           TEXT PRIMARY KEY,
+		session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+		name         TEXT NOT NULL DEFAULT '',
+		key_hash     TEXT NOT NULL UNIQUE,
+		prefix       TEXT NOT NULL,
+		read_only    BOOLEAN NOT NULL DEFAULT false,
+		created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_used_at TIMESTAMPTZ
+	)`); err != nil {
+		return nil, err
+	}
+
 	return &sessionStore{db: db}, nil
 }
 

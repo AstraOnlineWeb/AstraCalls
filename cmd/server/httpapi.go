@@ -253,8 +253,14 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
-	// MCP (Model Context Protocol) para agentes de IA: ver mcp.go.
+	// MCP (Model Context Protocol) para agentes de IA: ver mcp.go. /api/mcp usa a
+	// chave-mestra; /mcp e /mcp/{key} usam as chaves por sessão (mcpkeys.go).
 	mux.HandleFunc("/api/mcp", s.handleMCP)
+	mux.HandleFunc("/mcp", s.handleMCPScoped)
+	mux.HandleFunc("/mcp/{key}", s.handleMCPScoped)
+	mux.HandleFunc("GET /api/sessions/{sid}/mcp-keys", s.handleListMCPKeys)
+	mux.HandleFunc("POST /api/sessions/{sid}/mcp-keys", s.handleCreateMCPKey)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/mcp-keys/{kid}", s.handleDeleteMCPKey)
 
 	// Confiabilidade de entrega do webhook de sessão (circuit breaker + DLQ).
 	mux.HandleFunc("GET /api/sessions/{sid}/webhooks/status", s.handleWebhookStatus)
