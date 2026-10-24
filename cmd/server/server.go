@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -14,6 +15,7 @@ type server struct {
 	log       *slog.Logger
 	staticDir string
 	sipGW     *SIPGateway
+	apiMux    *http.ServeMux // usado pelo MCP para despachar as ferramentas em processo
 }
 
 // newServer monta o provedor de banco (Postgres, 1 banco por sessão no estilo

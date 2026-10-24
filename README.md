@@ -368,6 +368,48 @@ Automatize o WhatsApp no **n8n sem escrever código**: o node oficial [`n8n-node
 - **Pronto para responder:** o gatilho entrega `de`, `nome`, `texto` e `responderPara` prontos para usar no envio, e ignora as mensagens da própria conta (sem loop).
 - **Agentes de IA:** o node pode ser usado como ferramenta pelos agentes de IA do n8n.
 
+## 🤖 MCP para agentes de IA
+
+O AstraCalls traz um **servidor MCP** (Model Context Protocol) embutido: Claude, ChatGPT, Cursor,
+VS Code, n8n e outros agentes de IA usam o WhatsApp direto, sem instalar nada. É só a URL e a API Key.
+
+- **Endereço:** `https://SEU-ASTRACALLS/api/mcp` (transporte *Streamable HTTP*).
+- **Autenticação:** a API Key (`WACALLS_API_KEY`) em `Authorization: Bearer <chave>`, `X-API-Key` ou
+  `?apiKey=<chave>` na URL (para clientes que só aceitam a URL).
+- **44 ferramentas:** enviar texto, mídia, documento, localização, contato, enquete, botões e lista;
+  reagir, editar, apagar, marcar como lida e "digitando…"; **ler conversas e buscar mensagens**;
+  ligar, encerrar, toque fantasma e disparo de ligações; contatos, grupos e comunidades; limite de
+  conversas novas e restrição; e `api_request` para qualquer outra rota.
+- Com mais de um número, o agente escolhe a sessão por **nome, telefone ou ID** (`list_sessions`).
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http astracalls https://SEU-ASTRACALLS/api/mcp \
+  --header "Authorization: Bearer SUA_API_KEY"
+```
+
+**Claude Desktop, Cursor, VS Code e afins** (`mcpServers` no arquivo de configuração do cliente):
+
+```json
+{
+  "mcpServers": {
+    "astracalls": {
+      "type": "http",
+      "url": "https://SEU-ASTRACALLS/api/mcp",
+      "headers": { "Authorization": "Bearer SUA_API_KEY" }
+    }
+  }
+}
+```
+
+**claude.ai / ChatGPT (conector personalizado):** use a URL `https://SEU-ASTRACALLS/api/mcp?apiKey=SUA_API_KEY`.
+
+**n8n:** no agente de IA, adicione a ferramenta **MCP Client** com o endpoint acima e autenticação
+*Bearer* com a API Key.
+
+> A API Key dá acesso total à conta: use HTTPS e não compartilhe a URL com a chave.
+
 ---
 
 ## 🧪 Testes

@@ -253,6 +253,9 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
+	// MCP (Model Context Protocol) para agentes de IA: ver mcp.go.
+	mux.HandleFunc("/api/mcp", s.handleMCP)
+
 	// Confiabilidade de entrega do webhook de sessão (circuit breaker + DLQ).
 	mux.HandleFunc("GET /api/sessions/{sid}/webhooks/status", s.handleWebhookStatus)
 	mux.HandleFunc("GET /api/sessions/{sid}/webhooks/dlq", s.handleWebhookDLQ)
@@ -270,6 +273,7 @@ func (s *server) routes() http.Handler {
 			mux.Handle("/", s.staticFileHandler())
 		}
 	}
+	s.apiMux = mux
 	var handler http.Handler = mux
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
 		handler = withAuth(handler, key, os.Getenv("WACALLS_WIDGET_KEY"))
@@ -280,7 +284,7 @@ func (s *server) routes() http.Handler {
 func withCORS(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Client-Id, X-API-Key")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Client-Id, X-API-Key, Authorization, Mcp-Session-Id, Mcp-Protocol-Version")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -290,7 +294,8 @@ func withCORS(h http.Handler) http.Handler {
 	})
 }
 
-// withAuth protege as rotas /api/* com uma API key (header X-API-Key ou ?apiKey=).
+// withAuth protege as rotas /api/* com uma API key (header X-API-Key,
+// Authorization: Bearer ou ?apiKey=).
 // Exceções: o webhook do Chatwoot (chamado externamente pelo próprio Chatwoot)
 // e os arquivos estáticos do painel (precisam carregar a tela de login).
 //
@@ -306,6 +311,9 @@ func withAuth(h http.Handler, key, widgetKey string) http.Handler {
 		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook")
 		if guarded {
 			got := r.Header.Get("X-API-Key")
+			if got == "" {
+				got, _ = strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			}
 			if got == "" {
 				got = r.URL.Query().Get("apiKey")
 			}

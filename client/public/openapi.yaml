@@ -1809,6 +1809,43 @@ paths:
                     items: { $ref: "#/components/schemas/CallRecord" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/mcp:
+    post:
+      tags: [Eventos & Histórico]
+      summary: Servidor MCP (Model Context Protocol) para agentes de IA
+      description: |
+        Endpoint MCP no transporte *Streamable HTTP*, sem estado: cada POST leva uma
+        mensagem JSON-RPC 2.0 (`initialize`, `tools/list`, `tools/call`, `ping`) e recebe a
+        resposta em JSON; notificações recebem 202. Exige a API Key (`Authorization: Bearer`,
+        `X-API-Key` ou `?apiKey=`); a chave de widget não libera. São 44 ferramentas (mensagens,
+        leitura de conversas, ligações, contatos, grupos, comunidades, limite de envio e
+        `api_request` para as demais rotas). Configure no cliente MCP só a URL e a chave.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                jsonrpc: { type: string, example: "2.0" }
+                id: { oneOf: [{ type: integer }, { type: string }] }
+                method: { type: string, example: tools/call }
+                params: { type: object }
+            example:
+              jsonrpc: "2.0"
+              id: 1
+              method: tools/call
+              params: { name: send_text, arguments: { to: "5561999998888", text: "Olá!" } }
+      responses:
+        "200":
+          description: Resposta JSON-RPC
+          content:
+            application/json:
+              schema: { type: object }
+        "202":
+          description: Notificação aceita (sem corpo)
+        "401":
+          description: API Key ausente ou inválida
   /api/events:
     get:
       tags: [Eventos & Histórico]
