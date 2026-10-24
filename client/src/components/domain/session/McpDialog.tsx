@@ -33,15 +33,15 @@ const CopyField = ({ label, value, multiline }: { label: string; value: string; 
     }
   };
   return (
-    <div className="space-y-1">
+    <div className="min-w-0 space-y-1">
       <Label>{label}</Label>
-      <div className="flex items-start gap-2">
+      <div className="flex min-w-0 items-start gap-2">
         {multiline ? (
-          <pre className="min-w-0 flex-1 overflow-x-auto rounded-md border bg-muted/50 p-2 text-xs">{value}</pre>
+          <pre className="min-w-0 flex-1 whitespace-pre-wrap break-all rounded-md border bg-muted/50 p-2 text-xs">{value}</pre>
         ) : (
           <Input readOnly value={value} className="min-w-0 flex-1 font-mono text-xs" onFocus={(e) => e.target.select()} />
         )}
-        <Button type="button" size="icon" variant="outline" title="Copiar" onClick={copy}>
+        <Button type="button" size="icon" variant="outline" className="shrink-0" title="Copiar" onClick={copy}>
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         </Button>
       </div>
@@ -166,7 +166,7 @@ export const McpDialog = ({ sid }: { sid: string }) => {
   );
 
   const createdView = created && (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
         <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
         Copie agora: a chave não será mostrada de novo. Se perder, revogue e crie outra.
@@ -212,7 +212,7 @@ export const McpDialog = ({ sid }: { sid: string }) => {
           <span className="hidden sm:inline">MCP{keys.length > 1 ? ` (${keys.length})` : ""}</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
