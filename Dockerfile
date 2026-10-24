@@ -53,7 +53,7 @@ RUN cmake -B build -G Ninja -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release \
     && patchelf --set-soname libopus_mlow.so /opt/libopus_mlow.so
 
 # ---------- Stage 3: build do servidor Go (cgo + tag mlow) ----------
-FROM golang:1.26-bookworm AS server
+FROM golang:1.26.10-bookworm AS server
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev zip \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
