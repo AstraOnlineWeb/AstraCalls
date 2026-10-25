@@ -70,9 +70,11 @@ func TestShouldRelayWebhook(t *testing.T) {
 		want bool
 	}{
 		{"agente escreveu (reenvia)", base(nil), true},
+		{"saudação/disponibilidade automática (reenvia)", base(map[string]any{"message_type": "template"}), true},
 		{"mensagem de entrada", base(map[string]any{"message_type": "incoming"}), false},
 		{"outro evento", base(map[string]any{"event": "conversation_updated"}), false},
 		{"nota privada", base(map[string]any{"private": true}), false},
+		{"nota privada automática (template + private)", base(map[string]any{"message_type": "template", "private": true}), false},
 		{"histórico importado (source_id)", base(map[string]any{"source_id": "3EB0ABC"}), false},
 		{"echo do aparelho (source_id)", base(map[string]any{"source_id": "XYZ"}), false},
 	}
