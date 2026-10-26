@@ -164,9 +164,12 @@ func (m *CallManager) onRelayData(data []byte) {
 		return
 	}
 	pt := data[1] & 0x7f
-	// diagnóstico (opt-in): confirma que CHEGA RTP do relay e com qual payload type/ssrc.
+	// diagnóstico: conta sempre (resumo no fim da chamada); log por pacote só em debug.
+	n := atomic.AddUint64(&m.rtpRecvN, 1)
+	if pt == core.PayloadTypeWhatsAppOpus {
+		atomic.AddUint64(&m.audioRtpN, 1)
+	}
 	if mediaDebugEnabled {
-		n := atomic.AddUint64(&m.rtpRecvN, 1)
 		if n == 1 || n%500 == 0 {
 			m.mu.Lock()
 			self, sub := m.selfSsrc, m.subscribedSsrcForLog()
@@ -216,8 +219,9 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {
+		e := atomic.AddUint64(&m.unprotectErrN, 1)
 		if mediaDebugEnabled {
-			if e := atomic.AddUint64(&m.unprotectErrN, 1); e == 1 || e%200 == 0 {
+			if e == 1 || e%200 == 0 {
 				m.log.Info("srtp unprotect falhou (áudio do peer não decodificado)", "erros", e, "err", err)
 			}
 		}
@@ -230,9 +234,17 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	if err != nil || len(pcm) == 0 {
 		return
 	}
-	// diagnóstico (opt-in): confirma que o áudio do peer chega e é decodificado do relay.
+	// diagnóstico: confirma que o áudio do peer chega e é decodificado do relay.
+	n := atomic.AddUint64(&m.recvDiagN, 1)
+	var sq float64
+	for _, v := range pcm {
+		sq += float64(v) * float64(v)
+	}
+	m.mu.Lock()
+	m.peerEnergySum += sq
+	m.peerEnergySamples += uint64(len(pcm))
+	m.mu.Unlock()
 	if mediaDebugEnabled {
-		n := atomic.AddUint64(&m.recvDiagN, 1)
 		if n == 1 || n%500 == 0 {
 			m.log.Info("relay peer audio decodificado", "pkts", n, "held", held, "has_cb", m.OnPeerAudio != nil, "samples", len(pcm))
 		}

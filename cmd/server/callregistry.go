@@ -17,6 +17,8 @@ type activeCall struct {
 	recorder    *callRecorder // nil quando a gravação está desligada na sessão
 	rtpBridge   *SIPRTPBridge // ponte RTP p/ SIP; nil quando a chamada não é SIP
 	peerAudioN  uint64        // diagnóstico: nº de frames de áudio do peer (WhatsApp) recebidos
+	toBrowserN  uint64        // diagnóstico: frames do peer entregues ao navegador (WebRTC ou WS)
+	noBrowserN  uint64        // diagnóstico: frames do peer descartados sem ponte com o navegador
 	ringTimer   *time.Timer   // timeout de toque: expira a chamada que nunca recebe encerramento
 	answered    atomic.Bool   // marca que a chamada ficou ativa (atendida) — não expirar
 	spies       *spyHub       // espiões (escuta em tempo real do mix dos dois lados); ver spy.go

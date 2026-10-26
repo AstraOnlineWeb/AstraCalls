@@ -505,8 +505,13 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnEnded = func(c *call.CallInfo) {
 		s.wsCallEvent(c.CallID, map[string]any{"type": "call-ended", "reason": string(c.StateData.EndReason)})
-		if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
-			ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
+		if ac, ok := s.reg.get(c.CallID); ok {
+			s.log.Info("call media stats (navegador)", "call_id", c.CallID,
+				"peer_frames", atomic.LoadUint64(&ac.peerAudioN), "to_browser", atomic.LoadUint64(&ac.toBrowserN),
+				"no_bridge", atomic.LoadUint64(&ac.noBrowserN), "webrtc", ac.bridge != nil, "ws", ac.wsBridge != nil)
+			if ac.rtpBridge != nil {
+				ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
+			}
 		}
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
@@ -516,9 +521,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if !ok {
 			return
 		}
-		// diagnóstico (opt-in): confirma que o áudio do peer (WhatsApp) chega e se há ponte SIP.
+		// diagnóstico: conta sempre (resumo no fim da chamada); log por frame só em debug.
+		n := atomic.AddUint64(&ac.peerAudioN, 1)
 		if sipDebugEnabled {
-			n := atomic.AddUint64(&ac.peerAudioN, 1)
 			if n == 1 || n%500 == 0 {
 				s.log.Info("peer audio (WhatsApp->consumidor)", "call_id", callID, "frames", n,
 					"has_sip", ac.rtpBridge != nil, "has_ws", ac.wsBridge != nil, "has_webrtc", ac.bridge != nil, "samples", len(pcm16))
@@ -536,7 +541,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		}
 		// ponte WebSocket: envia PCM16 direto, sem Opus (menos CPU/latência).
 		if ws := ac.wsBridge; ws != nil {
-			_ = ws.WritePCM(pcm16)
+			if ws.WritePCM(pcm16) == nil {
+				atomic.AddUint64(&ac.toBrowserN, 1)
+			}
 			return
 		}
 		// ponte WebRTC (pion): o navegador espera Opus/RTP.
@@ -546,7 +553,11 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			if err != nil || len(opus) == 0 {
 				return
 			}
-			_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
+			if ac.bridge.WriteOpus(opus, 60*time.Millisecond) == nil {
+				atomic.AddUint64(&ac.toBrowserN, 1)
+			}
+		} else if ac.rtpBridge == nil {
+			atomic.AddUint64(&ac.noBrowserN, 1)
 		}
 	}
 	cm.OnPeerVideo = func(au []byte) {

@@ -60,6 +60,14 @@ type CallManager struct {
 	recvDiagN     uint64 // diagnóstico: nº de pacotes de áudio do peer recebidos/decodificados do relay
 	rtpRecvN      uint64 // diagnóstico: nº de pacotes RTP crus recebidos do relay (qualquer payload type)
 	unprotectErrN uint64 // diagnóstico: nº de falhas de SRTP unprotect no áudio do peer
+	// peerCallKey: call key que o peer mandou no accept quando difere da nossa; a
+	// chave de RECEPÇÃO é derivada dela (initSrtpKeysLocked não pode voltar à nossa).
+	peerCallKey []byte
+	audioRtpN   uint64 // diagnóstico: nº de pacotes RTP de áudio (PT do WhatsApp) recebidos
+	// energia do áudio decodificado do peer (soma dos quadrados e nº de amostras): média
+	// ~0 com pacotes chegando = chave SRTP errada ou peer mudo (o unprotect não valida a tag).
+	peerEnergySum     float64
+	peerEnergySamples uint64
 
 	OnStateChange func(*CallInfo)
 	OnIncoming    func(*CallInfo)

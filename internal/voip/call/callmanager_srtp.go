@@ -41,8 +41,12 @@ func (m *CallManager) initSrtpKeysLocked() {
 	}
 	peerDeviceJid := ensureDeviceJid(rawPeer)
 
+	recvKey := call.EncryptionKey
+	if m.peerCallKey != nil {
+		recvKey = m.peerCallKey
+	}
 	sendKM, err1 := media.DerivePerJidSrtpKey(call.EncryptionKey, ourDeviceJid)
-	recvKM, err2 := media.DerivePerJidSrtpKey(call.EncryptionKey, peerDeviceJid)
+	recvKM, err2 := media.DerivePerJidSrtpKey(recvKey, peerDeviceJid)
 	if err1 != nil || err2 != nil {
 		m.log.Error("srtp key derivation failed", "err1", err1, "err2", err2)
 		return
@@ -85,8 +89,9 @@ func (m *CallManager) reinitSrtpLocked(peerKey []byte, peerJid types.JID) {
 	if err1 != nil || err2 != nil {
 		return
 	}
+	m.peerCallKey = peerKey
 	if sess, err := media.NewSrtpSession(sendKM, recvKM, core.SRTPSendAuthTagLen, core.SRTPRecvAuthTagLen); err == nil {
 		m.srtpSession = sess
-		m.log.Debug("srtp re-initialized with peer call key")
+		m.log.Info("srtp re-initialized with peer call key", "peer", peerJid.String())
 	}
 }
