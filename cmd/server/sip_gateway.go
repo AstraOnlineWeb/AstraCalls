@@ -830,6 +830,12 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 	if reg != nil {
 		targetURI = reg.contactURI
 		targetLabel = reg.sipUser
+		// O Asterisk registra com Contact "s@..." (chan_sip sem "/ramal" no register,
+		// PJSIP sem contact_user) e a chamada caía na entrada com DID "s", sem como
+		// separar troncos. Nesse caso o DID vira o número do WhatsApp da sessão.
+		if u := strings.TrimSpace(targetURI.User); (u == "" || u == "s") && sess.client.Store.ID != nil {
+			targetURI.User = sess.client.Store.ID.User
+		}
 	} else if cfg := sess.sipExtSnapshot(); cfg.Enabled && cfg.Host != "" && cfg.Dest != "" {
 		port := cfg.Port
 		if port <= 0 {
