@@ -505,13 +505,8 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnEnded = func(c *call.CallInfo) {
 		s.wsCallEvent(c.CallID, map[string]any{"type": "call-ended", "reason": string(c.StateData.EndReason)})
-		if ac, ok := s.reg.get(c.CallID); ok {
-			s.log.Info("call media stats (navegador)", "call_id", c.CallID,
-				"peer_frames", atomic.LoadUint64(&ac.peerAudioN), "to_browser", atomic.LoadUint64(&ac.toBrowserN),
-				"no_bridge", atomic.LoadUint64(&ac.noBrowserN), "webrtc", ac.bridge != nil, "ws", ac.wsBridge != nil)
-			if ac.rtpBridge != nil {
-				ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
-			}
+		if ac, ok := s.reg.get(c.CallID); ok && ac.rtpBridge != nil {
+			ac.rtpBridge.NotifyEnded(string(c.StateData.EndReason))
 		}
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
@@ -1077,6 +1072,9 @@ func (s *Session) removeCall(callID string) {
 	if !ok {
 		return
 	}
+	s.log.Info("call media stats (navegador)", "call_id", callID,
+		"peer_frames", atomic.LoadUint64(&ac.peerAudioN), "to_browser", atomic.LoadUint64(&ac.toBrowserN),
+		"no_bridge", atomic.LoadUint64(&ac.noBrowserN), "webrtc", ac.bridge != nil, "ws", ac.wsBridge != nil)
 	s.finalizeRecording(ac)
 	ac.spies.closeAll()
 	if ac.bridge != nil {
