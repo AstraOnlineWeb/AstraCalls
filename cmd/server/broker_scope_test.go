@@ -41,8 +41,8 @@ func TestEmitIncomingEscopadoPorConta(t *testing.T) {
 	}
 
 	admin := b.subscribe("painel", 0) // sem escopo: recebe tudo
-	widget5 := b.subscribe("w5", 5)    // widget da conta 5
-	widget9 := b.subscribe("w9", 9)    // widget da conta 9
+	widget5 := b.subscribe("w5", 5)   // widget da conta 5
+	widget9 := b.subscribe("w9", 9)   // widget da conta 9
 
 	b.emitIncoming("sess-da-conta-5", "call-1", "5511999999999@lid", "5511999999999", "", false)
 
@@ -90,5 +90,45 @@ func TestEmitIncomingSemResolvedor(t *testing.T) {
 	}
 	if hasType(drain(widget), "incoming") {
 		t.Error("widget não deveria receber sem resolvedor (conta não confere com 0)")
+	}
+}
+
+// Duas instalações de Chatwoot com a MESMA conta 1: a chamada da sessão ligada ao
+// chatwoot-a só toca no widget do chatwoot-a (e num widget de origem desconhecida,
+// que segue escopado só pela conta, como antes).
+func TestEmitIncomingEscopadoPorHostDoChatwoot(t *testing.T) {
+	b := NewBroker()
+	b.AccountForSession = func(string) int { return 1 }
+	b.HostForSession = func(string) string { return "chatwoot-a.exemplo" }
+
+	widgetA := b.subscribeScoped("wa", 1, "chatwoot-a.exemplo")
+	widgetB := b.subscribeScoped("wb", 1, "chatwoot-b.exemplo")
+	widgetSemHost := b.subscribeScoped("wx", 1, "")
+
+	b.emitIncoming("sess-a", "call-1", "5511999999999@lid", "5511999999999", "", false)
+
+	if !hasType(drain(widgetA), "incoming") {
+		t.Error("widget do mesmo Chatwoot deveria receber")
+	}
+	if hasType(drain(widgetB), "incoming") {
+		t.Error("widget da conta 1 de OUTRO Chatwoot não deveria receber")
+	}
+	if !hasType(drain(widgetSemHost), "incoming") {
+		t.Error("widget sem host identificado segue escopado só pela conta")
+	}
+}
+
+func TestChatwootHost(t *testing.T) {
+	cases := map[string]string{
+		"https://Chat.Exemplo.com.br":       "chat.exemplo.com.br",
+		"https://chat.exemplo.com.br/app/x": "chat.exemplo.com.br",
+		"http://10.0.0.5:3000":              "10.0.0.5:3000",
+		"":                                  "",
+		"null":                              "",
+	}
+	for in, want := range cases {
+		if got := chatwootHost(in); got != want {
+			t.Errorf("chatwootHost(%q) = %q, quero %q", in, got, want)
+		}
 	}
 }

@@ -453,8 +453,12 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// diagnóstico: quem conectou no SSE e com qual conta (o widget deve passar a
 	// conta do Chatwoot; o painel, nenhuma). Ajuda a ver se a chamada não "entra"
 	// no Chatwoot por o widget não estar conectado ou estar em outra conta.
-	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"))
-	s.broker.serveSSE(w, r, cid, acc)
+	host := ""
+	if acc != 0 {
+		host = s.sessions.chatwootScopeHost(r.Header.Get("Origin"))
+	}
+	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"), "cwHost", host)
+	s.broker.serveSSE(w, r, cid, acc, host)
 	s.log.Info("sse disconnect", "clientId", cid, "accountId", acc)
 }
 

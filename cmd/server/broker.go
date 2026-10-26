@@ -69,7 +69,21 @@ type subscriber struct {
 	// escopo (painel admin) e recebe TODOS os eventos; > 0 (widget de uma conta)
 	// recebe só os eventos de chamada das sessões daquela conta.
 	accountID int
-	ch        chan []byte
+	// cwHost é o host do Chatwoot do widget ("" = não identificado): com ele, conta 1
+	// de um Chatwoot não recebe as chamadas da conta 1 de outro Chatwoot.
+	cwHost string
+	ch     chan []byte
+}
+
+// wants diz se o assinante deve receber um evento da sessão com essa conta/host.
+func (s *subscriber) wants(acct int, host string) bool {
+	if s.accountID == 0 {
+		return true // painel admin
+	}
+	if s.accountID != acct {
+		return false
+	}
+	return s.cwHost == "" || host == "" || s.cwHost == host
 }
 
 type Broker struct {
@@ -82,6 +96,18 @@ type Broker struct {
 	// AccountForSession resolve o account_id do Chatwoot de uma sessão (0 = nenhum).
 	// Injetado pelo server para escopar os eventos de chamada por conta.
 	AccountForSession func(sessionID string) int
+	// HostForSession resolve o host do Chatwoot da sessão ("" = nenhum).
+	HostForSession func(sessionID string) string
+}
+
+func (b *Broker) scopeOf(sessionID string) (acct int, host string) {
+	if b.AccountForSession != nil {
+		acct = b.AccountForSession(sessionID)
+	}
+	if b.HostForSession != nil {
+		host = b.HostForSession(sessionID)
+	}
+	return
 }
 
 func NewBroker() *Broker {
@@ -92,7 +118,11 @@ func NewBroker() *Broker {
 }
 
 func (b *Broker) subscribe(clientID string, accountID int) *subscriber {
-	s := &subscriber{clientID: clientID, accountID: accountID, ch: make(chan []byte, 32)}
+	return b.subscribeScoped(clientID, accountID, "")
+}
+
+func (b *Broker) subscribeScoped(clientID string, accountID int, cwHost string) *subscriber {
+	s := &subscriber{clientID: clientID, accountID: accountID, cwHost: cwHost, ch: make(chan []byte, 32)}
 	b.mu.Lock()
 	b.subs[s] = struct{}{}
 	b.mu.Unlock()
@@ -131,14 +161,11 @@ func (b *Broker) broadcastForSession(sessionID string, ev any) {
 	if err != nil {
 		return
 	}
-	acct := 0
-	if b.AccountForSession != nil {
-		acct = b.AccountForSession(sessionID)
-	}
+	acct, host := b.scopeOf(sessionID)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
-		if s.accountID != 0 && s.accountID != acct {
+		if !s.wants(acct, host) {
 			continue // widget de outra conta: não deve tocar/abrir
 		}
 		select {
@@ -160,14 +187,11 @@ func (b *Broker) broadcastForSessionTargeted(sessionID, targetClientID string, e
 	if err != nil {
 		return
 	}
-	acct := 0
-	if b.AccountForSession != nil {
-		acct = b.AccountForSession(sessionID)
-	}
+	acct, host := b.scopeOf(sessionID)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
-		if s.accountID != 0 && s.accountID != acct {
+		if !s.wants(acct, host) {
 			continue
 		}
 		if s.clientID != targetClientID {
@@ -375,14 +399,12 @@ func (b *Broker) emitCallAction(sessionID, id, kind string, state bool) {
 // (escopo casa) e quantos são widgets de OUTRA conta (que serão filtrados). Serve
 // para explicar por que uma chamada recebida "toca no painel mas não no widget".
 func (b *Broker) subscriberScope(sessionID string) (acct, total, matched, widgetOtherAcct int) {
-	if b.AccountForSession != nil {
-		acct = b.AccountForSession(sessionID)
-	}
+	acct, host := b.scopeOf(sessionID)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
 		total++
-		if s.accountID != 0 && s.accountID != acct {
+		if !s.wants(acct, host) {
 			widgetOtherAcct++
 			continue
 		}
@@ -423,7 +445,7 @@ func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 	return rows
 }
 
-func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string, accountID int) {
+func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string, accountID int, cwHost string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -434,7 +456,7 @@ func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID strin
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	sub := b.subscribe(clientID, accountID)
+	sub := b.subscribeScoped(clientID, accountID, cwHost)
 	defer b.unsubscribe(sub)
 
 	if b.SnapshotFn != nil {

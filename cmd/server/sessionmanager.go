@@ -83,26 +83,51 @@ func (m *SessionManager) accountIDForSession(sessionID string) int {
 	return 0
 }
 
-func (m *SessionManager) sessionForChatwootAccount(accountID int) *Session {
+// hostForSession devolve o host do Chatwoot ligado à sessão ("" = nenhum).
+func (m *SessionManager) hostForSession(sessionID string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for _, s := range m.sessions {
-		if c := s.getChatwoot(); c.valid() && c.AccountID == accountID {
-			return s
+	if s, ok := m.sessions[sessionID]; ok {
+		if c := s.getChatwoot(); c.valid() {
+			return chatwootHost(c.URL)
 		}
 	}
-	return nil
+	return ""
 }
 
-// sessionForChatwootInbox: sessão amarrada à conta E à caixa (inbox) específica.
-// Usada para que o widget só apareça/ligue na caixa que tem WhatsApp conectado.
-func (m *SessionManager) sessionForChatwootInbox(accountID, inboxID int) *Session {
+// chatwootScopeHost devolve o host da origem se ele for de um Chatwoot configurado
+// em alguma sessão; senão "" (escopo só pela conta, como antes). Duas instalações de
+// Chatwoot têm contas com o mesmo número (ex.: conta 1 em cada uma): sem o host, o
+// widget de uma enxergava as sessões/chamadas da outra.
+func (m *SessionManager) chatwootScopeHost(origin string) string {
+	host := chatwootHost(origin)
+	if host == "" {
+		return ""
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, s := range m.sessions {
-		if c := s.getChatwoot(); c.valid() && c.AccountID == accountID && c.InboxID == inboxID {
-			return s
+		if c := s.getChatwoot(); c.valid() && chatwootHost(c.URL) == host {
+			return host
 		}
+	}
+	return ""
+}
+
+// sessionForChatwoot acha a sessão ligada à conta (e à inbox, se inboxID > 0) do
+// Chatwoot em host ("" = qualquer Chatwoot).
+func (m *SessionManager) sessionForChatwoot(host string, accountID, inboxID int) *Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, s := range m.sessions {
+		c := s.getChatwoot()
+		if !c.valid() || c.AccountID != accountID || (inboxID > 0 && c.InboxID != inboxID) {
+			continue
+		}
+		if host != "" && chatwootHost(c.URL) != host {
+			continue
+		}
+		return s
 	}
 	return nil
 }

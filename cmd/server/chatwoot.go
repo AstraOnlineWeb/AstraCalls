@@ -92,6 +92,16 @@ func (c ChatwootConfig) valid() bool {
 	return c.URL != "" && c.AccountID != 0 && c.AccountToken != "" && c.InboxID != 0
 }
 
+// chatwootHost normaliza a origem/URL de um Chatwoot para comparação ("host[:porta]"
+// minúsculo). Vazio se não der para extrair.
+func chatwootHost(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
 func (c ChatwootConfig) base() string {
 	return strings.TrimRight(c.URL, "/") + "/api/v1/accounts/" + strconv.Itoa(c.AccountID)
 }
@@ -1392,9 +1402,12 @@ func (s *server) handleChatwootResolve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_id and conversation_id required"})
 		return
 	}
-	s.log.Info("chatwoot resolve", "account_id", accountID, "conversation_id", convID)
+	// Host do Chatwoot de onde veio o widget (Origin): separa contas de mesmo número
+	// em instalações diferentes de Chatwoot.
+	host := s.sessions.chatwootScopeHost(r.Header.Get("Origin"))
+	s.log.Info("chatwoot resolve", "account_id", accountID, "conversation_id", convID, "host", host)
 	// Qualquer sessão da conta serve só para consultar a conversa (mesmo token de conta).
-	probe := s.sessions.sessionForChatwootAccount(accountID)
+	probe := s.sessions.sessionForChatwoot(host, accountID, 0)
 	if probe == nil {
 		s.log.Warn("chatwoot resolve: no session for account", "account_id", accountID)
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no session linked to this chatwoot account"})
@@ -1408,7 +1421,7 @@ func (s *server) handleChatwootResolve(w http.ResponseWriter, r *http.Request) {
 	}
 	// Amarra empresa + caixa: a sessão tem que ser a da inbox desta conversa.
 	inboxID := asInt(res["inbox_id"])
-	sess := s.sessions.sessionForChatwootInbox(accountID, inboxID)
+	sess := s.sessions.sessionForChatwoot(host, accountID, inboxID)
 	if sess == nil {
 		s.log.Warn("chatwoot resolve: no session for inbox", "account_id", accountID, "inbox_id", inboxID)
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no session linked to this inbox", "inbox_id": strconv.Itoa(inboxID)})
