@@ -937,8 +937,9 @@
       playRing();
       return;
     }
-    // a recebida pendente encerrou antes de atender (desistiu)
-    if (incoming && msg.id === incoming.callId && (msg.type === "call-ended" || msg.status === "ended")) {
+    // a recebida pendente foi atendida em outro lugar (painel, outro atendente, ramal SIP)
+    // ou encerrou antes de atender (desistiu)
+    if (incoming && msg.id === incoming.callId && (msg.type === "incoming-claimed" || msg.type === "call-ended" || msg.status === "ended")) {
       incoming = null;
       stopRing();
       var p = document.getElementById("wacalls-panel");

@@ -977,6 +977,12 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		if ac, ok := sess.reg.get(callID); ok {
 			if err := ac.cm.AcceptCall(context.Background(), callID); err != nil {
 				gw.log.Error("inbound: accept WhatsApp call failed", "err", err)
+			} else {
+				// Ramal atendeu: painel/widget param de tocar (antes ficavam em "tocando"
+				// e o "Atender" dava "call cannot be accepted in state active").
+				owner := "sip:" + targetLabel
+				gw.sessions.broker.setOwner(callID, owner)
+				gw.sessions.broker.emitIncomingClaimed(sess.id, callID, owner)
 			}
 		}
 		gw.log.Info("inbound: connected WhatsApp<->SIP", "sip_call_id", sipCallID, "wa_call_id", callID)
