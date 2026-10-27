@@ -253,7 +253,7 @@ func (b *Broker) upsertCall(r CallRecord) {
 	b.calls[r.CallID] = &cp
 	b.mu.Unlock()
 	b.broadcastCallList()
-	b.broadcast(map[string]any{
+	b.broadcastForSession(r.SessionID, map[string]any{
 		"type": "call-status", "sessionId": r.SessionID, "id": r.CallID, "owner": r.Owner,
 		"status": r.Status, "peer": r.Peer, "startedAt": r.StartedAt, "held": r.Held,
 	})
@@ -298,7 +298,7 @@ func (b *Broker) reassignOwner(id string, owner *string) bool {
 	rec := *c
 	b.mu.Unlock()
 	b.broadcastCallList()
-	b.broadcast(map[string]any{
+	b.broadcastForSession(rec.SessionID, map[string]any{
 		"type": "call-status", "sessionId": rec.SessionID, "id": rec.CallID, "owner": rec.Owner,
 		"status": rec.Status, "peer": rec.Peer, "startedAt": rec.StartedAt, "held": rec.Held,
 	})
@@ -337,20 +337,55 @@ func (b *Broker) endCall(id, reason string) {
 	sessionID := c.SessionID
 	b.mu.Unlock()
 
-	b.broadcast(map[string]any{
+	b.broadcastForSession(sessionID, map[string]any{
 		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now,
 	})
 	b.broadcastCallList()
 }
 
+// broadcastCallList manda a cada assinante o retrato das chamadas vivas DO SEU
+// escopo: o listener do Chatwoot toca as chamadas de entrada que vê aqui, então uma
+// lista global fazia a chamada de uma empresa tocar (e ser gravada) em outra.
 func (b *Broker) broadcastCallList() {
 	b.mu.RLock()
-	list := make([]CallRecord, 0, len(b.calls))
+	all := make([]CallRecord, 0, len(b.calls))
 	for _, c := range b.calls {
-		list = append(list, *c)
+		all = append(all, *c)
 	}
 	b.mu.RUnlock()
-	b.broadcast(map[string]any{"type": "call-list", "calls": list})
+
+	// escopo de cada sessão resolvido uma vez, fora do lock do broker (os
+	// resolvedores consultam o SessionManager).
+	type escopo struct {
+		acct int
+		host string
+	}
+	scopes := map[string]escopo{}
+	for _, c := range all {
+		if _, ok := scopes[c.SessionID]; !ok {
+			acct, host := b.scopeOf(c.SessionID)
+			scopes[c.SessionID] = escopo{acct, host}
+		}
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		list := make([]CallRecord, 0, len(all))
+		for _, c := range all {
+			if sc := scopes[c.SessionID]; s.wants(sc.acct, sc.host) {
+				list = append(list, c)
+			}
+		}
+		data, err := json.Marshal(map[string]any{"type": "call-list", "calls": list})
+		if err != nil {
+			continue
+		}
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
 }
 
 func (b *Broker) emitIncoming(sessionID, id, peer, phone, name string, video bool) {
