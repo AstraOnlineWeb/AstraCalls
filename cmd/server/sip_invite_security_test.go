@@ -145,6 +145,14 @@ func TestSessionForExtInviteByExtension(t *testing.T) {
 	if s := gw.sessionForExtInvite(inv("9999")); s != nil {
 		t.Fatalf("ramal desconhecido com 2 sessões: não deve escolher ao acaso (%s)", s.id)
 	}
+	// Asterisk discando um número (To = destino) e escolhendo a linha pelo cabeçalho.
+	for i := 0; i < 20; i++ {
+		r := inv("50255551234")
+		r.AppendHeader(sip.NewHeader(sipLineHeader, "2001"))
+		if s := gw.sessionForExtInvite(r); s == nil || s.id != "s1" {
+			t.Fatalf("cabeçalho %s=2001 deveria ir para s1, foi %v", sipLineHeader, s)
+		}
+	}
 	other := inv("2001")
 	other.SetSource("8.8.8.8:5060")
 	if s := gw.sessionForExtInvite(other); s != nil {

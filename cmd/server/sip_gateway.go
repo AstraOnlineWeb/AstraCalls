@@ -698,6 +698,10 @@ func (gw *SIPGateway) challengeInvite(sess *Session, req *sip.Request, tx sip.Se
 // Com várias sessões no mesmo PBX, escolhe pelo ramal chamado (usuário do
 // Request-URI/To = usuário que registramos); sem como decidir, não escolhe — antes
 // pegava uma qualquer e a ligação podia cair no cliente errado.
+// sipLineHeader escolhe a sessão (pelo ramal com que ela registrou no PBX) quando
+// várias sessões estão registradas no mesmo PBX.
+const sipLineHeader = "X-AstraCalls-Ramal"
+
 func (gw *SIPGateway) sessionForExtInvite(req *sip.Request) *Session {
 	sourceIP := sourceIPOf(req.Source())
 	users := map[string]bool{}
@@ -706,6 +710,13 @@ func (gw *SIPGateway) sessionForExtInvite(req *sip.Request) *Session {
 	}
 	if to := req.To(); to != nil && to.Address.User != "" {
 		users[to.Address.User] = true
+	}
+	// Várias sessões no mesmo PBX: o Request-URI/To levam o número discado, então
+	// o PBX diz por qual linha sair no cabeçalho (Asterisk: PJSIP_HEADER(add,...)).
+	if h := req.GetHeader(sipLineHeader); h != nil {
+		if u := strings.TrimSpace(h.Value()); u != "" {
+			users[u] = true
+		}
 	}
 	gw.mu.RLock()
 	defer gw.mu.RUnlock()
@@ -734,7 +745,7 @@ func (gw *SIPGateway) sessionForExtInvite(req *sip.Request) *Session {
 		}
 	}
 	if match == nil {
-		gw.log.Warn("SIP INVITE: várias sessões no mesmo PBX e nenhuma com o ramal chamado", "source", sourceIP, "ramal", req.Recipient.User)
+		gw.log.Warn("SIP INVITE: várias sessões no mesmo PBX e nenhuma com o ramal chamado (use o cabeçalho "+sipLineHeader+")", "source", sourceIP, "ramal", req.Recipient.User)
 	}
 	return match
 }
