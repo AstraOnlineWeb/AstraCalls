@@ -127,3 +127,14 @@ func TestCancelInboundRing(t *testing.T) {
 		t.Fatal("sem toque registrado não deveria cancelar nada")
 	}
 }
+
+func TestSIPExtAuthUser(t *testing.T) {
+	c := sipExtConfig{User: "36813"}
+	if got := c.authUser(); got != "36813" {
+		t.Fatalf("sem Auth ID deve usar o ramal, veio %q", got)
+	}
+	c.Agent.AuthUser = " aB3xY9kL "
+	if got := c.authUser(); got != "aB3xY9kL" {
+		t.Fatalf("com Auth ID (3CX) deve usá-lo no digest, veio %q", got)
+	}
+}

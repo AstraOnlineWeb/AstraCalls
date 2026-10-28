@@ -29,6 +29,7 @@ const emptyExt: SIPExtConfig = {
   host: "",
   port: SIP_PORT,
   user: "",
+  authUser: "",
   pass: "",
   dest: "",
   proxy: "",
@@ -105,6 +106,7 @@ export const SIPDialog = ({ session }: { session: SessionInfo }) => {
         host: ext.host.trim(),
         port: Number(ext.port) || SIP_PORT,
         user: ext.user.trim(),
+        authUser: (ext.authUser ?? "").trim(),
         pass: ext.pass,
         dest: ext.dest.trim(),
         proxy: (ext.proxy ?? "").trim(),
@@ -311,6 +313,21 @@ export const SIPDialog = ({ session }: { session: SessionInfo }) => {
                   </Button>
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Usuário de autenticação (Auth ID) — opcional</Label>
+              <Input
+                value={ext.authUser ?? ""}
+                onChange={(e) => setE("authUser", e.target.value)}
+                autoComplete="off"
+                placeholder="deixe vazio p/ usar o ramal"
+                disabled={!ext.enabled}
+              />
+              <p className="text-[0.7rem] text-muted-foreground">
+                Preencha quando o PBX autentica com um ID diferente do ramal — no <b>3CX</b> é o
+                <b> Authentication ID</b> do ramal (a senha é a <b>Authentication Password</b>).
+              </p>
             </div>
 
             <div className="space-y-1">

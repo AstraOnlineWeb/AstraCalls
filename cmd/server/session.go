@@ -1235,11 +1235,23 @@ const (
 	sipInboundAuto      = "auto"      // agent se ligaram p/ o próprio ramal; senão originate
 )
 
-// sipAgentOpts é a config do modo agente (persistida como JSON em sip_ext_opts).
+// sipAgentOpts são as opções extras do modelo 2 (persistidas como JSON em
+// sip_ext_opts): modo agente e o usuário de autenticação.
 type sipAgentOpts struct {
+	// AuthUser é o usuário do digest quando difere do ramal (3CX: "Authentication
+	// ID"; alguns provedores: "auth username"). Vazio = usa o próprio ramal.
+	AuthUser    string `json:"authUser,omitempty"`
 	InboundMode string `json:"inboundMode,omitempty"`
 	AutoAnswer  bool   `json:"agentAutoAnswer,omitempty"`
 	RingTimeout int    `json:"agentRingTimeoutSeconds,omitempty"`
+}
+
+// authUser é o usuário do digest: o Auth ID, se informado, senão o ramal.
+func (c sipExtConfig) authUser() string {
+	if u := strings.TrimSpace(c.Agent.AuthUser); u != "" {
+		return u
+	}
+	return c.User
 }
 
 func (o sipAgentOpts) mode() string {

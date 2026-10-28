@@ -268,7 +268,7 @@ func (r *sipUACRegistrar) register(ctx context.Context, expires int) (code int, 
 		return 0, 0, err
 	}
 	if res.StatusCode == 401 || res.StatusCode == 407 {
-		res, err = r.gw.client.DoDigestAuth(ctx, req, res, sipgo.DigestAuth{Username: cfg.User, Password: cfg.Pass})
+		res, err = r.gw.client.DoDigestAuth(ctx, req, res, sipgo.DigestAuth{Username: cfg.authUser(), Password: cfg.Pass})
 		// o reenvio com Authorization incrementa o CSeq: acompanha o contador.
 		if h := req.CSeq(); h != nil {
 			r.mu.Lock()

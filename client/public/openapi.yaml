@@ -1059,6 +1059,7 @@ paths:
                   host: { type: string, description: "Domínio/host do PBX (vai na URI user@host)" }
                   port: { type: integer, example: 5060 }
                   user: { type: string }
+                  authUser: { type: string, description: "Usuário de autenticação (3CX: Authentication ID); vazio = usa user" }
                   pass: { type: string }
                   dest: { type: string, description: "Ramal/fila que toca quando chega chamada do WhatsApp (opcional)" }
                   proxy: { type: string, description: "Outbound proxy host[:porta] — p/ onde enviar REGISTER/INVITE; vazio = usa host" }
@@ -1086,6 +1087,7 @@ paths:
                 host: { type: string, example: "pbx.cliente.com" }
                 port: { type: integer, default: 5060 }
                 user: { type: string, example: "1001" }
+                authUser: { type: string, example: "aB3xY9kL", description: "Opcional. Usuário do digest quando difere do ramal (3CX: Authentication ID); ausente = mantém" }
                 pass: { type: string }
                 dest: { type: string, example: "600" }
                 proxy: { type: string, example: "sip.provedor.com:5060", description: "Outbound proxy (host[:porta]); vazio = usa host" }

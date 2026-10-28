@@ -47,6 +47,8 @@ export const getProxy = (id: string) =>
 
 // Modelo 2 (SIP): registrar esta sessão num PBX externo.
 export type SIPExtConfig = {
+  /** Usuário de autenticação quando difere do ramal (3CX: Authentication ID). */
+  authUser?: string;
   enabled: boolean;
   host: string;
   port: number;

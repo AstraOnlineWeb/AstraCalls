@@ -110,6 +110,7 @@ func (s *server) handleSIPExtConfig(w http.ResponseWriter, r *http.Request) {
 			"host":                    cfg.Host,
 			"port":                    cfg.Port,
 			"user":                    cfg.User,
+			"authUser":                cfg.Agent.AuthUser,
 			"pass":                    cfg.Pass,
 			"dest":                    cfg.Dest,
 			"proxy":                   cfg.Proxy,
@@ -132,6 +133,8 @@ func (s *server) handleSIPExtConfig(w http.ResponseWriter, r *http.Request) {
 		Pass    string `json:"pass"`
 		Dest    string `json:"dest"`
 		Proxy   string `json:"proxy"`
+		// usuário de autenticação (3CX: Authentication ID); ausente = mantém
+		AuthUser *string `json:"authUser"`
 		// modo agente (opcionais; ausentes = mantém o valor atual)
 		InboundMode string `json:"inboundMode"`
 		AutoAnswer  *bool  `json:"agentAutoAnswer"`
@@ -149,6 +152,9 @@ func (s *server) handleSIPExtConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agent := sess.sipExtSnapshot().Agent
+	if body.AuthUser != nil {
+		agent.AuthUser = strings.TrimSpace(*body.AuthUser)
+	}
 	if m := strings.TrimSpace(body.InboundMode); m != "" {
 		switch m {
 		case sipInboundOriginate, sipInboundAgent, sipInboundAuto:
