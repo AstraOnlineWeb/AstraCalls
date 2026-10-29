@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+
+	"wacalls/internal/voip/core"
 )
 
 type SIPGateway struct {
@@ -982,7 +985,11 @@ func (gw *SIPGateway) handleInboundCall(sess *Session, callID, peerNumber string
 		}
 		if err != nil {
 			gw.log.Info("inbound: SIP not answered", "err", err)
-			sess.terminateCallByID(callID)
+			reason := core.EndCallReasonDeclined
+			if errors.Is(err, context.DeadlineExceeded) {
+				reason = core.EndCallReasonTimeout
+			}
+			sess.declineRingingCall(callID, reason)
 			return
 		}
 

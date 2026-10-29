@@ -1320,6 +1320,23 @@ func (s *Session) terminateCallByID(callID string) {
 	_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
 }
 
+// declineRingingCall encerra no WhatsApp uma chamada que o ramal SIP recusou
+// (486/603) ou não atendeu. Ainda tocando, precisa de <reject>: o <terminate> do
+// EndCall é ignorado antes do aceite e o celular de quem ligou seguia chamando.
+func (s *Session) declineRingingCall(callID string, reason core.EndCallReason) {
+	ac, ok := s.reg.get(callID)
+	if !ok {
+		return
+	}
+	if ac.answered.Load() {
+		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+		return
+	}
+	_ = ac.cm.RejectCall(s.mgr.appCtx, callID, reason)
+	s.removeCall(callID)
+	s.mgr.broker.endCall(callID, string(reason))
+}
+
 func (s *Session) setRTPBridge(callID string, b *SIPRTPBridge) {
 	oldB, found := s.reg.setRTPBridge(callID, b)
 	if !found {
