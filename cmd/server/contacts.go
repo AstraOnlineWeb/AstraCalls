@@ -274,7 +274,7 @@ func (s *server) handleBlock(block bool) http.HandlerFunc {
 		if block {
 			action = events.BlocklistChangeActionBlock
 		}
-		if _, err := sess.client.UpdateBlocklist(r.Context(), jid, action); err != nil {
+		if _, err := sess.client.UpdateBlocklist(r.Context(), jid, action, ""); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -288,13 +288,18 @@ func (s *server) handleBlocklist(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	bl, err := sess.client.GetBlocklist(r.Context())
+	bl, err := sess.client.GetBlocklist(r.Context(), "")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	jids := make([]string, 0, len(bl.JIDs))
-	for _, j := range bl.JIDs {
+	// a whatsmeow devolve LID e PN de cada bloqueado; o telefone (PN) quando houver.
+	jids := make([]string, 0, len(bl.Items))
+	for _, it := range bl.Items {
+		j := it.PN
+		if j.IsEmpty() {
+			j = it.LID
+		}
 		jids = append(jids, j.String())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"blocked": jids})
