@@ -419,6 +419,18 @@ func accountFromClientID(cid string) int {
 	return asInt(strings.TrimPrefix(cid, prefix))
 }
 
+// sseHost descobre o host do Chatwoot de quem assina o SSE. O listener do Chatwoot
+// roda no servidor e não manda Origin, então informa a própria URL em chatwootUrl;
+// o navegador é identificado pelo Origin. scopeHost só aceita host de Chatwoot
+// configurado em alguma sessão — alias/PWA em outro domínio ficam sem host (escopo
+// só pela conta) em vez de perder o toque.
+func sseHost(r *http.Request, scopeHost func(string) string) string {
+	if h := scopeHost(r.URL.Query().Get("chatwootUrl")); h != "" {
+		return h
+	}
+	return scopeHost(r.Header.Get("Origin"))
+}
+
 func clientID(r *http.Request) string {
 	if id := r.Header.Get("X-Client-Id"); id != "" {
 		return id
@@ -455,7 +467,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// no Chatwoot por o widget não estar conectado ou estar em outra conta.
 	host := ""
 	if acc != 0 {
-		host = s.sessions.chatwootScopeHost(r.Header.Get("Origin"))
+		host = sseHost(r, s.sessions.chatwootScopeHost)
 	}
 	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"), "cwHost", host)
 	s.broker.serveSSE(w, r, cid, acc, host)
