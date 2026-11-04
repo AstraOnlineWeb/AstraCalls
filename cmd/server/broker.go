@@ -260,7 +260,7 @@ func (b *Broker) emitAuthState(sessionID string, a AuthSnapshot) {
 	if len(a.Passkey) > 0 {
 		ev["passkey"] = a.Passkey // desafio WebAuthn p/ contas com passkey
 	}
-	b.broadcastAdmin(ev)
+	b.broadcastForSession(sessionID, ev) // painel + widget/integração da conta dona
 }
 
 // emitSessionList manda a cada assinante só as sessões do escopo dele (o painel
@@ -304,29 +304,10 @@ func sessionListFor(s *subscriber, sessions []SessionInfo, scopes map[string]ses
 	return map[string]any{"type": "session-list", "sessions": out}
 }
 
-// QR e pareamento só no painel admin: com o QR alguém de outra empresa
-// conseguiria parear o número.
+// QR/pareamento: painel admin e a conta dona da sessão (o AstraChat pareia por
+// ela); nunca widgets de outras contas, que poderiam parear o número.
 func (b *Broker) emitSessionQR(sessionID, qr string) {
-	b.broadcastAdmin(map[string]any{"type": "session-qr", "sessionId": sessionID, "qr": qr})
-}
-
-// broadcastAdmin entrega só aos assinantes sem escopo (painel admin).
-func (b *Broker) broadcastAdmin(ev any) {
-	data, err := json.Marshal(ev)
-	if err != nil {
-		return
-	}
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	for s := range b.subs {
-		if s.accountID != 0 {
-			continue
-		}
-		select {
-		case s.ch <- data:
-		default:
-		}
-	}
+	b.broadcastForSession(sessionID, map[string]any{"type": "session-qr", "sessionId": sessionID, "qr": qr})
 }
 
 func (b *Broker) upsertCall(r CallRecord) {

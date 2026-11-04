@@ -179,8 +179,11 @@ func TestEventosEscopadosPorCaixaEConta(t *testing.T) {
 
 	b.emitSessionQR("s9", "qr")
 	b.emitAuthState("s9", AuthSnapshot{QR: "qr"})
-	if evs := drain(conta9); len(evs) != 0 {
-		t.Errorf("QR/pareamento só no painel admin, widget recebeu %v", evs)
+	if evs := drain(conta7); len(evs) != 0 {
+		t.Errorf("QR da conta 9 não pode chegar na conta 7, chegou %v", evs)
+	}
+	if evs := drain(conta9); !hasType(evs, "auth-state") || !hasType(evs, "session-qr") {
+		t.Errorf("conta dona (9) precisa receber o QR para parear, recebeu %v", evs)
 	}
 	if !hasType(drain(admin), "session-qr") {
 		t.Error("painel deveria receber o QR")
@@ -244,5 +247,22 @@ func TestWidgetTokenSoOperaSessaoDaPropriaConta(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/events?apiKey=estatica", nil))
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("SSE com chave de widget sem conta: %d, queria 403", rec.Code)
+	}
+}
+
+// Sessão nova do AstraChat (inboxN_accM) ainda sem Chatwoot: o escopo sai do nome.
+func TestScopeFromName(t *testing.T) {
+	for _, c := range []struct {
+		id, name    string
+		acct, inbox int
+	}{
+		{"inbox58_acc19", "", 19, 58},
+		{"a1b2c3", "inbox58_acc19", 19, 58},
+		{"a1b2c3", "Comercial", 0, 0},
+		{"xinbox58_acc19", "", 0, 0},
+	} {
+		if a, i := scopeFromName(c.id, c.name); a != c.acct || i != c.inbox {
+			t.Errorf("%q/%q → %d/%d, queria %d/%d", c.id, c.name, a, i, c.acct, c.inbox)
+		}
 	}
 }

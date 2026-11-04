@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"sync"
 
 	"go.mau.fi/whatsmeow"
@@ -79,8 +81,26 @@ func (m *SessionManager) accountIDForSession(sessionID string) int {
 		if c := s.getChatwoot(); c.valid() {
 			return c.AccountID
 		}
+		acct, _ := scopeFromName(sessionID, s.name)
+		return acct
 	}
 	return 0
+}
+
+var sessionNameScope = regexp.MustCompile(`^inbox(\d+)_acc(\d+)$`)
+
+// scopeFromName tira conta/caixa do padrão "inboxN_accM" com que o AstraChat cria
+// as sessões. Serve para a sessão nova, que ainda não tem Chatwoot configurado
+// enquanto pareia: sem isso o QR não chegaria ao SSE escopado da conta dona.
+func scopeFromName(id, name string) (acct, inbox int) {
+	for _, v := range []string{id, name} {
+		if m := sessionNameScope.FindStringSubmatch(v); m != nil {
+			inbox, _ = strconv.Atoi(m[1])
+			acct, _ = strconv.Atoi(m[2])
+			return
+		}
+	}
+	return 0, 0
 }
 
 // inboxIDForSession devolve a caixa (inbox) do Chatwoot ligada à sessão (0 = nenhuma).
@@ -91,6 +111,8 @@ func (m *SessionManager) inboxIDForSession(sessionID string) int {
 		if c := s.getChatwoot(); c.valid() {
 			return c.InboxID
 		}
+		_, inbox := scopeFromName(sessionID, s.name)
+		return inbox
 	}
 	return 0
 }
