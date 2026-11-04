@@ -72,18 +72,32 @@ type subscriber struct {
 	// cwHost é o host do Chatwoot do widget ("" = não identificado): com ele, conta 1
 	// de um Chatwoot não recebe as chamadas da conta 1 de outro Chatwoot.
 	cwHost string
-	ch     chan []byte
+	// inboxes restringe o widget às caixas (inbox) do Chatwoot que o atendente
+	// atende (nil = todas as caixas da conta): agente da caixa A não toca com
+	// chamada da caixa B da mesma empresa.
+	inboxes map[int]bool
+	ch      chan []byte
 }
 
-// wants diz se o assinante deve receber um evento da sessão com essa conta/host.
-func (s *subscriber) wants(acct int, host string) bool {
+// wants diz se o assinante deve receber um evento da sessão com esse escopo.
+func (s *subscriber) wants(sc sessionScope) bool {
 	if s.accountID == 0 {
 		return true // painel admin
 	}
-	if s.accountID != acct {
+	if s.accountID != sc.acct {
 		return false
 	}
-	return s.cwHost == "" || host == "" || s.cwHost == host
+	if s.cwHost != "" && sc.host != "" && s.cwHost != sc.host {
+		return false
+	}
+	return s.inboxes == nil || s.inboxes[sc.inbox]
+}
+
+// sessionScope é a conta/host/caixa do Chatwoot ligada a uma sessão.
+type sessionScope struct {
+	acct  int
+	host  string
+	inbox int
 }
 
 type Broker struct {
@@ -92,20 +106,26 @@ type Broker struct {
 	calls   map[string]*CallRecord
 	history []CallRecord
 
-	SnapshotFn func() []any
+	// SessionsFn lista as sessões para o retrato inicial do SSE (filtrado por escopo).
+	SessionsFn func() []SessionInfo
 	// AccountForSession resolve o account_id do Chatwoot de uma sessão (0 = nenhum).
 	// Injetado pelo server para escopar os eventos de chamada por conta.
 	AccountForSession func(sessionID string) int
 	// HostForSession resolve o host do Chatwoot da sessão ("" = nenhum).
 	HostForSession func(sessionID string) string
+	// InboxForSession resolve a caixa (inbox) do Chatwoot da sessão (0 = nenhuma).
+	InboxForSession func(sessionID string) int
 }
 
-func (b *Broker) scopeOf(sessionID string) (acct int, host string) {
+func (b *Broker) scopeOf(sessionID string) (sc sessionScope) {
 	if b.AccountForSession != nil {
-		acct = b.AccountForSession(sessionID)
+		sc.acct = b.AccountForSession(sessionID)
 	}
 	if b.HostForSession != nil {
-		host = b.HostForSession(sessionID)
+		sc.host = b.HostForSession(sessionID)
+	}
+	if b.InboxForSession != nil {
+		sc.inbox = b.InboxForSession(sessionID)
 	}
 	return
 }
@@ -122,7 +142,11 @@ func (b *Broker) subscribe(clientID string, accountID int) *subscriber {
 }
 
 func (b *Broker) subscribeScoped(clientID string, accountID int, cwHost string) *subscriber {
-	s := &subscriber{clientID: clientID, accountID: accountID, cwHost: cwHost, ch: make(chan []byte, 32)}
+	return b.subscribeInboxes(clientID, accountID, cwHost, nil)
+}
+
+func (b *Broker) subscribeInboxes(clientID string, accountID int, cwHost string, inboxes map[int]bool) *subscriber {
+	s := &subscriber{clientID: clientID, accountID: accountID, cwHost: cwHost, inboxes: inboxes, ch: make(chan []byte, 32)}
 	b.mu.Lock()
 	b.subs[s] = struct{}{}
 	b.mu.Unlock()
@@ -161,12 +185,12 @@ func (b *Broker) broadcastForSession(sessionID string, ev any) {
 	if err != nil {
 		return
 	}
-	acct, host := b.scopeOf(sessionID)
+	sc := b.scopeOf(sessionID)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
-		if !s.wants(acct, host) {
-			continue // widget de outra conta: não deve tocar/abrir
+		if !s.wants(sc) {
+			continue // widget de outra conta/caixa: não deve tocar/abrir
 		}
 		select {
 		case s.ch <- data:
@@ -187,11 +211,11 @@ func (b *Broker) broadcastForSessionTargeted(sessionID, targetClientID string, e
 	if err != nil {
 		return
 	}
-	acct, host := b.scopeOf(sessionID)
+	sc := b.scopeOf(sessionID)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
-		if !s.wants(acct, host) {
+		if !s.wants(sc) {
 			continue
 		}
 		if s.clientID != targetClientID {
@@ -236,15 +260,73 @@ func (b *Broker) emitAuthState(sessionID string, a AuthSnapshot) {
 	if len(a.Passkey) > 0 {
 		ev["passkey"] = a.Passkey // desafio WebAuthn p/ contas com passkey
 	}
-	b.broadcast(ev)
+	b.broadcastAdmin(ev)
 }
 
+// emitSessionList manda a cada assinante só as sessões do escopo dele (o painel
+// admin vê todas; o widget de uma conta, só as da própria conta/caixa).
 func (b *Broker) emitSessionList(sessions []SessionInfo) {
-	b.broadcast(map[string]any{"type": "session-list", "sessions": sessions})
+	scopes := b.sessionScopes(sessions)
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		data, err := json.Marshal(sessionListFor(s, sessions, scopes))
+		if err != nil {
+			return
+		}
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
 }
 
+// sessionScopes resolve o escopo de cada sessão. Fora do b.mu: scopeOf consulta o
+// SessionManager, que tem lock próprio.
+func (b *Broker) sessionScopes(sessions []SessionInfo) map[string]sessionScope {
+	scopes := make(map[string]sessionScope, len(sessions))
+	for _, si := range sessions {
+		scopes[si.ID] = b.scopeOf(si.ID)
+	}
+	return scopes
+}
+
+func sessionListFor(s *subscriber, sessions []SessionInfo, scopes map[string]sessionScope) map[string]any {
+	if s.accountID == 0 {
+		return map[string]any{"type": "session-list", "sessions": sessions}
+	}
+	out := make([]SessionInfo, 0, len(sessions))
+	for _, si := range sessions {
+		if s.wants(scopes[si.ID]) {
+			out = append(out, si)
+		}
+	}
+	return map[string]any{"type": "session-list", "sessions": out}
+}
+
+// QR e pareamento só no painel admin: com o QR alguém de outra empresa
+// conseguiria parear o número.
 func (b *Broker) emitSessionQR(sessionID, qr string) {
-	b.broadcast(map[string]any{"type": "session-qr", "sessionId": sessionID, "qr": qr})
+	b.broadcastAdmin(map[string]any{"type": "session-qr", "sessionId": sessionID, "qr": qr})
+}
+
+// broadcastAdmin entrega só aos assinantes sem escopo (painel admin).
+func (b *Broker) broadcastAdmin(ev any) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		if s.accountID != 0 {
+			continue
+		}
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
 }
 
 func (b *Broker) upsertCall(r CallRecord) {
@@ -253,7 +335,7 @@ func (b *Broker) upsertCall(r CallRecord) {
 	b.calls[r.CallID] = &cp
 	b.mu.Unlock()
 	b.broadcastCallList()
-	b.broadcast(map[string]any{
+	b.broadcastForSession(r.SessionID, map[string]any{
 		"type": "call-status", "sessionId": r.SessionID, "id": r.CallID, "owner": r.Owner,
 		"status": r.Status, "peer": r.Peer, "startedAt": r.StartedAt, "held": r.Held,
 	})
@@ -298,7 +380,7 @@ func (b *Broker) reassignOwner(id string, owner *string) bool {
 	rec := *c
 	b.mu.Unlock()
 	b.broadcastCallList()
-	b.broadcast(map[string]any{
+	b.broadcastForSession(rec.SessionID, map[string]any{
 		"type": "call-status", "sessionId": rec.SessionID, "id": rec.CallID, "owner": rec.Owner,
 		"status": rec.Status, "peer": rec.Peer, "startedAt": rec.StartedAt, "held": rec.Held,
 	})
@@ -337,7 +419,7 @@ func (b *Broker) endCall(id, reason string) {
 	sessionID := c.SessionID
 	b.mu.Unlock()
 
-	b.broadcast(map[string]any{
+	b.broadcastForSession(sessionID, map[string]any{
 		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now,
 	})
 	b.broadcastCallList()
@@ -350,7 +432,35 @@ func (b *Broker) broadcastCallList() {
 		list = append(list, *c)
 	}
 	b.mu.RUnlock()
-	b.broadcast(map[string]any{"type": "call-list", "calls": list})
+	// cada assinante recebe só as chamadas das sessões do seu escopo (escopo
+	// resolvido fora do b.mu: scopeOf consulta o SessionManager).
+	scopes := map[string]sessionScope{}
+	for _, c := range list {
+		if _, ok := scopes[c.SessionID]; !ok {
+			scopes[c.SessionID] = b.scopeOf(c.SessionID)
+		}
+	}
+	b.mu.RLock()
+	for s := range b.subs {
+		mine := list
+		if s.accountID != 0 {
+			mine = make([]CallRecord, 0, len(list))
+			for _, c := range list {
+				if s.wants(scopes[c.SessionID]) {
+					mine = append(mine, c)
+				}
+			}
+		}
+		data, err := json.Marshal(map[string]any{"type": "call-list", "calls": mine})
+		if err != nil {
+			break
+		}
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
+	b.mu.RUnlock()
 }
 
 func (b *Broker) emitIncoming(sessionID, id, peer, phone, name string, video bool) {
@@ -399,12 +509,13 @@ func (b *Broker) emitCallAction(sessionID, id, kind string, state bool) {
 // (escopo casa) e quantos são widgets de OUTRA conta (que serão filtrados). Serve
 // para explicar por que uma chamada recebida "toca no painel mas não no widget".
 func (b *Broker) subscriberScope(sessionID string) (acct, total, matched, widgetOtherAcct int) {
-	acct, host := b.scopeOf(sessionID)
+	sc := b.scopeOf(sessionID)
+	acct = sc.acct
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
 		total++
-		if !s.wants(acct, host) {
+		if !s.wants(sc) {
 			widgetOtherAcct++
 			continue
 		}
@@ -445,7 +556,7 @@ func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 	return rows
 }
 
-func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string, accountID int, cwHost string) {
+func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string, accountID int, cwHost string, inboxes map[int]bool) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -456,13 +567,12 @@ func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID strin
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	sub := b.subscribeScoped(clientID, accountID, cwHost)
+	sub := b.subscribeInboxes(clientID, accountID, cwHost, inboxes)
 	defer b.unsubscribe(sub)
 
-	if b.SnapshotFn != nil {
-		for _, ev := range b.SnapshotFn() {
-			writeSSE(w, flusher, ev)
-		}
+	if b.SessionsFn != nil {
+		sessions := b.SessionsFn()
+		writeSSE(w, flusher, sessionListFor(sub, sessions, b.sessionScopes(sessions)))
 	}
 	b.broadcastCallList()
 

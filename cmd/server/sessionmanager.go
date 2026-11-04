@@ -83,6 +83,18 @@ func (m *SessionManager) accountIDForSession(sessionID string) int {
 	return 0
 }
 
+// inboxIDForSession devolve a caixa (inbox) do Chatwoot ligada à sessão (0 = nenhuma).
+func (m *SessionManager) inboxIDForSession(sessionID string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s, ok := m.sessions[sessionID]; ok {
+		if c := s.getChatwoot(); c.valid() {
+			return c.InboxID
+		}
+	}
+	return 0
+}
+
 // hostForSession devolve o host do Chatwoot ligado à sessão ("" = nenhum).
 func (m *SessionManager) hostForSession(sessionID string) string {
 	m.mu.RLock()
@@ -153,10 +165,6 @@ func (m *SessionManager) infos() []SessionInfo {
 		out = append(out, s.info())
 	}
 	return out
-}
-
-func (m *SessionManager) snapshotEvents() []any {
-	return []any{map[string]any{"type": "session-list", "sessions": m.infos()}}
 }
 
 func (m *SessionManager) Restore(ctx context.Context) error {

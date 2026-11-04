@@ -178,7 +178,7 @@ func TestMCPInvokeDispatchesToMux(t *testing.T) {
 
 func TestWithAuthAcceptsBearer(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := withAuth(ok, "segredo", "widget")
+	h := withAuth(ok, "segredo", "widget", nil)
 	for hdr, want := range map[string]int{
 		"Bearer segredo": http.StatusNoContent,
 		"Bearer errado":  http.StatusUnauthorized,

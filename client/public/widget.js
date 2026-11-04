@@ -879,15 +879,48 @@
     return m ? m[1] : null;
   }
 
+  // Caixas (inbox) que o atendente logado enxerga no Chatwoot: o agente só recebe
+  // as caixas em que está; admin, todas. Usa a sessão do próprio Chatwoot
+  // (cookie cw_d_session_info). Falhou → null = sem filtro de caixa (só por conta).
+  function agentInboxIds(acc) {
+    try {
+      var m = document.cookie.match(/(?:^|;\s*)cw_d_session_info=([^;]*)/);
+      if (!m) return Promise.resolve(null);
+      var info = JSON.parse(decodeURIComponent(m[1]));
+      return fetch("/api/v1/accounts/" + acc + "/inboxes", {
+        headers: { "access-token": info["access-token"], client: info.client, uid: info.uid, "token-type": info["token-type"] || "Bearer" },
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          var list = j && (j.payload || j);
+          if (!Array.isArray(list)) return null;
+          return list.map(function (i) { return i.id; }).filter(Boolean);
+        })
+        .catch(function () { return null; });
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
   function connectEvents() {
     if (!BASE) return;
     var acc = currentAccountId();
     if (!acc) return; // fora de uma conta do Chatwoot: nada a escutar ainda
-    if (globalES && esAccount === acc) return; // já conectado nesta conta
+    if (esAccount === acc) return; // já conectado (ou conectando) nesta conta
     if (globalES) { try { globalES.close(); } catch (e) {} globalES = null; }
     esAccount = acc;
+    agentInboxIds(acc).then(function (inboxes) {
+      if (esAccount !== acc) return; // trocou de conta enquanto buscava
+      openEvents(acc, inboxes);
+    });
+  }
+
+  function openEvents(acc, inboxes) {
+    if (globalES) { try { globalES.close(); } catch (e) {} } // trocas rápidas de conta
     try {
       var q = "?accountId=" + encodeURIComponent(acc) + (KEY ? "&apiKey=" + encodeURIComponent(KEY) : "");
+      // lista vazia = agente sem caixa nenhuma: manda 0 para não receber nada
+      if (inboxes) q += "&inboxIds=" + (inboxes.length ? inboxes.join(",") : "0");
       globalES = new EventSource(BASE + "/api/events" + q);
       globalES.onmessage = function (ev) {
         var msg;
