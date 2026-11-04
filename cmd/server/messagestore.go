@@ -150,6 +150,11 @@ type chatOverview struct {
 	LastTS     int64  `json:"timestamp"`
 	Count      int    `json:"count"`
 	LastFromMe bool   `json:"lastFromMe"`
+	// Name/Phone resolvidos do contato (agenda, push name ou nome comercial) e o
+	// LID original quando a conversa veio por LID e foi trocada pelo telefone.
+	Name  string `json:"name,omitempty"`
+	Phone string `json:"phone,omitempty"`
+	LID   string `json:"lid,omitempty"`
 }
 
 // MarshalJSON acrescenta o alias id (chatId estilo WAHA).
@@ -191,14 +196,20 @@ func (s *sessionStore) findMessage(ctx context.Context, sessionID, msgID string)
 
 // listMessages devolve as mensagens de um chat, mais recentes primeiro.
 func (s *sessionStore) listMessages(ctx context.Context, sessionID, chatJID string, limit, offset int, withRaw bool) ([]storedMessage, error) {
+	return s.listMessagesIn(ctx, sessionID, []string{chatJID}, limit, offset, withRaw)
+}
+
+// listMessagesIn é o listMessages de um contato gravado sob mais de um JID
+// (telefone e LID da mesma pessoa).
+func (s *sessionStore) listMessagesIn(ctx context.Context, sessionID string, chatJIDs []string, limit, offset int, withRaw bool) ([]storedMessage, error) {
 	rawCol := "NULL"
 	if withRaw {
 		rawCol = "raw"
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT chat_jid, sender_jid, msg_id, from_me, ts, type, COALESCE(body, ''), `+rawCol+`
-		FROM messages WHERE session_id = $1 AND chat_jid = $2
-		ORDER BY ts DESC LIMIT $3 OFFSET $4`, sessionID, chatJID, limit, offset)
+		FROM messages WHERE session_id = $1 AND chat_jid = ANY($2)
+		ORDER BY ts DESC LIMIT $3 OFFSET $4`, sessionID, chatJIDs, limit, offset)
 	if err != nil {
 		return nil, err
 	}
