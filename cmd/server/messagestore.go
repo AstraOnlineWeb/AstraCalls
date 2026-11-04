@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -30,6 +31,59 @@ func (s *Session) storeMessageEvent(evt *events.Message) {
 		m.Raw = json.RawMessage(raw)
 	}
 	go func() { _ = s.mgr.store.saveMessage(s.mgr.appCtx, s.id, m) }()
+}
+
+// storeHistorySync grava no histórico as mensagens que o WhatsApp manda no
+// pareamento (e nas respostas ON_DEMAND), de todas as conversas, inclusive grupos.
+// Sem isso só existia o que chegou ao vivo: GET de chats/mensagens e o import sob
+// demanda (que ancora na msg mais antiga de cada chat) não enxergavam o passado.
+func (s *Session) storeHistorySync(data *waHistorySync.HistorySync) {
+	if s.mgr.store == nil || data == nil {
+		return
+	}
+	saved := 0
+	for _, conv := range data.GetConversations() {
+		chat, err := types.ParseJID(conv.GetID())
+		if err != nil {
+			continue
+		}
+		for _, hm := range conv.GetMessages() {
+			wmi := hm.GetMessage()
+			if wmi == nil || wmi.GetMessage() == nil {
+				continue
+			}
+			evt, err := s.client.ParseWebMessage(chat, wmi)
+			if err != nil || evt.Message == nil {
+				continue
+			}
+			msg := evt.Message
+			if inner, viewOnce := unwrapViewOnce(msg); viewOnce {
+				msg = inner
+			}
+			typ := messageType(msg)
+			if typ == "unknown" {
+				continue // reação, edição, protocolo: não é conteúdo
+			}
+			m := storedMessage{
+				ChatJID:   evt.Info.Chat.String(),
+				SenderJID: evt.Info.Sender.String(),
+				MsgID:     evt.Info.ID,
+				FromMe:    evt.Info.IsFromMe,
+				Timestamp: evt.Info.Timestamp.UnixMilli(),
+				Type:      typ,
+				Body:      messageText(msg),
+			}
+			if raw, err := protojson.Marshal(msg); err == nil {
+				m.Raw = json.RawMessage(raw)
+			}
+			if s.mgr.store.saveMessage(s.mgr.appCtx, s.id, m) == nil {
+				saved++
+			}
+		}
+	}
+	if saved > 0 {
+		s.log.Info("histórico gravado", "mensagens", saved, "tipo", data.GetSyncType().String(), "chunk", data.GetChunkOrder())
+	}
 }
 
 // recordOutgoing persiste uma mensagem que ESTE cliente enviou. Só grava

@@ -806,8 +806,12 @@ func (s *Session) handleEvent(rawEvt any) {
 			s.maybeMarkRead(ctx, evt)
 		}
 	case *events.HistorySync:
-		// conversas antigas que o WhatsApp envia ao parear -> importa pro Chatwoot
-		go s.importHistorySync(evt.Data)
+		// conversas antigas que o WhatsApp envia ao parear: grava no histórico (base
+		// das rotas de chats e das âncoras do import sob demanda) e importa pro Chatwoot
+		go func() {
+			s.storeHistorySync(evt.Data)
+			s.importHistorySync(evt.Data)
+		}()
 	case *events.GroupInfo:
 		// entrou/saiu/promoveu no grupo -> webhook + nota no Chatwoot
 		go s.handleGroupSystemEvent(evt)
