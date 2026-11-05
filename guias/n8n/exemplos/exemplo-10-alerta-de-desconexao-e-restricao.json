@@ -1,0 +1,101 @@
+{
+  "name": "AstraCalls — Exemplo 10: Alerta de desconexão e restrição",
+  "nodes": [
+    {
+      "id": "8fc24677-cd12-43a6-918c-7dd3084cc822",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -260
+      ],
+      "parameters": {
+        "content": "## 🚨 Alerta de sessão\n\nAvisa o responsável quando o número **desconecta** do WhatsApp ou recebe uma **restrição** (limite de alcance).\n\nO aviso sai por **outra sessão** (o número com problema pode não conseguir enviar): escolha essa sessão no node **Avisar responsável** e coloque o número do responsável.",
+        "width": 380,
+        "height": 380,
+        "color": 5
+      }
+    },
+    {
+      "id": "99355201-51c7-4ede-8e21-c7d948752536",
+      "name": "AstraCalls Trigger",
+      "webhookId": "d748b385-a6e2-4508-800b-089632a78e6e",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "events": [
+          "session_status",
+          "restriction"
+        ],
+        "options": {
+          "ignoreFromMe": true
+        }
+      }
+    },
+    {
+      "id": "bcb10c2c-9050-40e3-8c1b-b64c72317b04",
+      "name": "Montar alerta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const e = $input.first().json;\nconst msg = e.evento === 'restriction'\n  ? '⚠️ O WhatsApp aplicou uma *restrição* na sessão ' + e.sessao + '. Reduza os envios e confira o painel.'\n  : '🔌 A sessão ' + e.sessao + ' mudou para *' + (e.status || '?') + '*' + (e.motivo ? ' (' + e.motivo + ')' : '') + '. Abra o painel para reconectar.';\nreturn [{ json: { msg } }];"
+      }
+    },
+    {
+      "id": "b8db1c2c-ef42-48c2-9336-d7b5bc56cd41",
+      "name": "Avisar responsável",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "message",
+        "operation": "sendText",
+        "to": "5511999999999",
+        "text": "={{ $json.msg }}",
+        "textOptions": {}
+      }
+    }
+  ],
+  "connections": {
+    "AstraCalls Trigger": {
+      "main": [
+        [
+          {
+            "node": "Montar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar alerta": {
+      "main": [
+        [
+          {
+            "node": "Avisar responsável",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

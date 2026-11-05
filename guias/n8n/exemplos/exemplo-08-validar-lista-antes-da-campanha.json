@@ -1,0 +1,181 @@
+{
+  "name": "AstraCalls — Exemplo 08: Validar lista antes da campanha",
+  "nodes": [
+    {
+      "id": "1cf9fa08-f6ab-4bac-a259-0c4537d8d46d",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -260
+      ],
+      "parameters": {
+        "content": "## ✅ Validar lista antes da campanha\n\nConfere **quais números têm WhatsApp** antes de enviar (evita erro e reduz o risco de bloqueio). O AstraCalls também acerta o **9º dígito** sozinho.\n\n- Tem WhatsApp → envia a mensagem\n- Não tem → vai para a saída **Sem WhatsApp** (salve numa planilha, por exemplo).",
+        "width": 380,
+        "height": 420,
+        "color": 5
+      }
+    },
+    {
+      "id": "0ffd3369-61ea-406f-95c7-1f9e432a0d5b",
+      "name": "Executar manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "3f0df2e5-f09c-468c-a6f0-5caf265ca38c",
+      "name": "Lista de números",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const lista = `5511999999999\n5511988888888\n5521977777777`;\nreturn lista.split(/\\s+/).filter(Boolean).map(telefone => ({ json: { telefone } }));"
+      }
+    },
+    {
+      "id": "a1988888-570f-4e55-a58e-53e8e3c3af33",
+      "name": "Tem WhatsApp?",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "contact",
+        "operation": "check",
+        "phone": "={{ $json.telefone }}"
+      }
+    },
+    {
+      "id": "aa620b23-9150-4746-9eda-eb558808e3fc",
+      "name": "Existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "96671562-7dd2-4a24-b653-f46277b4f544",
+              "leftValue": "={{ $json.exists }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ed706d76-0548-4745-a4eb-42c259fa0dfc",
+      "name": "Enviar oferta",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        900,
+        -80
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "message",
+        "operation": "sendText",
+        "to": "={{ $('Lista de números').item.json.telefone }}",
+        "text": "Olá! 🎁 Temos uma condição especial esta semana. Quer saber mais? Responda *SIM*.",
+        "textOptions": {}
+      }
+    },
+    {
+      "id": "80325e38-00a5-4558-9890-a8a346a0966a",
+      "name": "Sem WhatsApp",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        100
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Executar manualmente": {
+      "main": [
+        [
+          {
+            "node": "Lista de números",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lista de números": {
+      "main": [
+        [
+          {
+            "node": "Tem WhatsApp?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem WhatsApp?": {
+      "main": [
+        [
+          {
+            "node": "Existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe?": {
+      "main": [
+        [
+          {
+            "node": "Enviar oferta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sem WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,272 @@
+{
+  "name": "AstraCalls — Exemplo 04: Atendente de IA com ferramentas",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🤖 Atendente de IA com ferramentas AstraCalls\n\nO **AI Agent** responde cada mensagem e pode **usar o AstraCalls como ferramenta**:\n- 📞 *Ligar para o cliente*\n- 📍 *Enviar localização da loja*\n- ✅ *Verificar se um número tem WhatsApp*\n\nA memória guarda as últimas 10 mensagens de cada contato.\n\n**Para usar:** escolha a credencial no node **Modelo (OpenAI)** (ou troque por outro modelo) e ajuste o prompt do agente.\n\n⚠️ No n8n self-hosted, nodes da comunidade como ferramenta exigem `N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true`.",
+        "height": 520,
+        "width": 420,
+        "color": 5
+      },
+      "id": "fa4aecaf-fe1a-4109-8bb6-c66159a1beec",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -416,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "options": {
+          "ignoreFromMe": true,
+          "ignoreGroups": true
+        }
+      },
+      "id": "2f697a4b-0483-4e5a-9b4f-f49605b5671f",
+      "name": "AstraCalls Trigger",
+      "webhookId": "32545438-5399-4944-bc99-a17d01494036",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "typing",
+        "sessionId": "",
+        "to": "={{ $json.responderPara }}"
+      },
+      "id": "e9c25bda-6d3b-480c-948d-554a0290a118",
+      "name": "Digitando…",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('AstraCalls Trigger').item.json.texto }}",
+        "options": {
+          "systemMessage": "=Você é o atendente virtual da Loja Exemplo no WhatsApp. Responda em português, de forma curta e simpática.\nO cliente se chama {{ $('AstraCalls Trigger').item.json.nome }} e o telefone dele é {{ $('AstraCalls Trigger').item.json.responderPara }}.\nSe ele pedir para falar por voz, use a ferramenta de ligar. Se perguntar onde fica a loja, envie a localização."
+        }
+      },
+      "id": "4ba99abe-212c-487e-aded-71a2e73e5fbc",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        464,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "14139e0d-98d5-46e5-a021-1cdad8960795",
+      "name": "Modelo (OpenAI)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        208,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('AstraCalls Trigger').item.json.responderPara }}",
+        "contextWindowLength": 10
+      },
+      "id": "2a300896-c0e6-42c7-b913-d759749a8ac7",
+      "name": "Memória",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        368,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Faz uma ligação de voz pelo WhatsApp para o cliente. Use quando ele pedir para ser chamado.",
+        "resource": "call",
+        "operation": "broadcast",
+        "sessionId": "",
+        "broadcastOptions": {}
+      },
+      "id": "02d911e1-23cb-4259-bed8-e2f9044214e6",
+      "name": "Ligar para o cliente",
+      "type": "n8n-nodes-astracalls.astraCallsTool",
+      "typeVersion": 1,
+      "position": [
+        560,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Envia a localização da loja para o cliente no WhatsApp.",
+        "operation": "sendLocation",
+        "sessionId": "",
+        "to": "={{ $('AstraCalls Trigger').item.json.responderPara }}",
+        "latitude": -23.5614,
+        "longitude": -46.6559,
+        "locationOptions": {
+          "name": "Loja Exemplo",
+          "address": "Av. Paulista, 1000 - São Paulo"
+        }
+      },
+      "id": "35122991-720c-4863-97b1-79e779cbf0a0",
+      "name": "Enviar localização",
+      "type": "n8n-nodes-astracalls.astraCallsTool",
+      "typeVersion": 1,
+      "position": [
+        720,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Confere se um número de telefone tem WhatsApp. Informe o número com DDI.",
+        "resource": "contact",
+        "sessionId": "",
+        "phone": "={{ $fromAI('telefone', 'Número com DDI + DDD, só dígitos', 'string') }}"
+      },
+      "id": "37daebe9-72b0-4a15-87de-48ce26e5412b",
+      "name": "Verificar WhatsApp",
+      "type": "n8n-nodes-astracalls.astraCallsTool",
+      "typeVersion": 1,
+      "position": [
+        912,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "to": "={{ $('AstraCalls Trigger').item.json.responderPara }}",
+        "text": "={{ $json.output }}",
+        "textOptions": {}
+      },
+      "id": "94e43fe0-34a0-4f8f-87cd-57f21fc67e72",
+      "name": "Responder",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        832,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "AstraCalls Trigger": {
+      "main": [
+        [
+          {
+            "node": "Digitando…",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digitando…": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo (OpenAI)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memória": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ligar para o cliente": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar localização": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar WhatsApp": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

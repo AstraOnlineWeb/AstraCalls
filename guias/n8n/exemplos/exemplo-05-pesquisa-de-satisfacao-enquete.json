@@ -1,0 +1,214 @@
+{
+  "name": "AstraCalls — Exemplo 05: Pesquisa de satisfação (enquete)",
+  "nodes": [
+    {
+      "id": "197609e6-4db0-40b3-b56d-29ce27873cf2",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -260
+      ],
+      "parameters": {
+        "content": "## 📊 Pesquisa de satisfação\n\n**Parte 1 (manual):** envia uma **enquete** para a lista de clientes do node **Clientes**.\n\n**Parte 2 (gatilho):** quando alguém vota, agradece e, se a nota for ruim, avisa o gestor.\n\nAtive o fluxo para a parte 2 funcionar.",
+        "width": 380,
+        "height": 380,
+        "color": 5
+      }
+    },
+    {
+      "id": "8d48a6d9-4a78-4eb5-bf6e-ecadae6edfe1",
+      "name": "Executar manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "74848693-ef5c-494c-ad3b-7ddf0a5d22f1",
+      "name": "Clientes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        -160
+      ],
+      "parameters": {
+        "jsCode": "// um item por cliente\nreturn [\n  { json: { telefone: '5511999999999', nome: 'Maria' } },\n  { json: { telefone: '5511988888888', nome: 'João' } },\n];"
+      }
+    },
+    {
+      "id": "09634c64-12f8-4aa8-9391-e5543db2cfcb",
+      "name": "Enviar enquete",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        440,
+        -160
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "message",
+        "operation": "sendPoll",
+        "to": "={{ $json.telefone }}",
+        "pollName": "=Oi {{ $json.nome }}! Como foi o seu atendimento? ⭐",
+        "pollOptions": "😍 Ótimo\n🙂 Bom\n😐 Regular\n😞 Ruim",
+        "multipleAnswers": false
+      }
+    },
+    {
+      "id": "1c22a074-def3-4724-8f11-2c89b0b79ffb",
+      "name": "Voto recebido",
+      "webhookId": "32ca08f8-60a0-4406-849a-cb4e365e960f",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        120
+      ],
+      "parameters": {
+        "sessionId": "",
+        "events": [
+          "poll_vote"
+        ],
+        "options": {
+          "ignoreFromMe": true
+        }
+      }
+    },
+    {
+      "id": "b1b002cd-28ce-48d8-8d44-643e9d2199ed",
+      "name": "Agradecer",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        220,
+        120
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "message",
+        "operation": "sendText",
+        "to": "={{ $json.responderPara }}",
+        "text": "=Obrigado pela avaliação ({{ $json.opcoesEscolhidas.join(', ') }})! 💙",
+        "textOptions": {}
+      }
+    },
+    {
+      "id": "a2a88439-c267-43db-bf11-cb7a9f5d7cac",
+      "name": "Nota ruim?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "8607848d-e197-4ab5-8e71-4a7c5c238d7b",
+              "leftValue": "={{ $('Voto recebido').item.json.opcoesEscolhidas.join(' ') }}",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              },
+              "rightValue": "Regular|Ruim"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "7e3afc9e-ce3d-4960-939c-498ba8dc9a63",
+      "name": "Avisar gestor",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        660,
+        80
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "message",
+        "operation": "sendText",
+        "to": "5511999999999",
+        "text": "=⚠️ Avaliação negativa de +{{ $('Voto recebido').item.json.de }}: {{ $('Voto recebido').item.json.opcoesEscolhidas.join(', ') }}",
+        "textOptions": {}
+      }
+    }
+  ],
+  "connections": {
+    "Executar manualmente": {
+      "main": [
+        [
+          {
+            "node": "Clientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clientes": {
+      "main": [
+        [
+          {
+            "node": "Enviar enquete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voto recebido": {
+      "main": [
+        [
+          {
+            "node": "Agradecer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agradecer": {
+      "main": [
+        [
+          {
+            "node": "Nota ruim?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nota ruim?": {
+      "main": [
+        [
+          {
+            "node": "Avisar gestor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

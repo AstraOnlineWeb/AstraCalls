@@ -1,0 +1,191 @@
+{
+  "name": "AstraCalls — Exemplo 07: Disparo de ligações com áudio",
+  "nodes": [
+    {
+      "id": "661eae8f-93f4-4313-b4b6-ec7e0110efd1",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -260
+      ],
+      "parameters": {
+        "content": "## 📞 Disparo de ligações com áudio gravado\n\nLiga para uma lista de números e **toca um áudio** quando a pessoa atende (ótimo para avisos e cobranças).\n\n1. Coloque os números e o link do áudio (MP3/OGG) em **Configuração**.\n2. O disparo roda no servidor; o fluxo espera e depois **busca o resultado** (quem atendeu).\n\nUse com moderação para não ser bloqueado.",
+        "width": 380,
+        "height": 420,
+        "color": 5
+      }
+    },
+    {
+      "id": "9164e52b-522e-430a-bdd8-44c789b99d60",
+      "name": "Executar manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e7d16310-e8f4-4e19-88e7-16b854f0d8f9",
+      "name": "Configuração",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f7d7966b-1e80-4723-90e3-671873bf1ede",
+              "name": "numeros",
+              "value": "5511999999999\n5511988888888",
+              "type": "string"
+            },
+            {
+              "id": "344f242a-65e3-421c-90e3-3dcce875b33d",
+              "name": "audio",
+              "value": "https://exemplo.com/aviso.mp3",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c51b6a81-0ede-49b0-8a8a-319739123f18",
+      "name": "Disparar ligações",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "call",
+        "operation": "broadcast",
+        "numbers": "={{ $json.numeros }}",
+        "mediaSource": "url",
+        "mediaUrl": "={{ $json.audio }}",
+        "video": false,
+        "broadcastOptions": {
+          "concurrency": 1,
+          "gapSeconds": 5,
+          "maxRingSeconds": 30,
+          "hangupAfterSeconds": 60
+        }
+      }
+    },
+    {
+      "id": "f77a7c7f-1f0e-4dcc-afcd-51c08d24152c",
+      "name": "Esperar terminar",
+      "webhookId": "c711d459-02a4-44e7-9533-d3197dddc882",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "amount": 3,
+        "unit": "minutes"
+      }
+    },
+    {
+      "id": "0f0d80db-df03-4ba2-b825-aec28a8d959f",
+      "name": "Ver resultado",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "call",
+        "operation": "broadcastStatus",
+        "campaignId": "={{ $('Disparar ligações').item.json.campaignId || $('Disparar ligações').item.json.id }}"
+      }
+    },
+    {
+      "id": "c97cfb51-c06f-4adb-bc99-c15bead34adb",
+      "name": "Resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst res = r.results || [];\nconst atend = res.filter(x => ['answered','completed'].includes(x.status));\nreturn [{ json: { total: res.length, atenderam: atend.length, naoAtenderam: res.length - atend.length, detalhes: res } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Executar manualmente": {
+      "main": [
+        [
+          {
+            "node": "Configuração",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuração": {
+      "main": [
+        [
+          {
+            "node": "Disparar ligações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disparar ligações": {
+      "main": [
+        [
+          {
+            "node": "Esperar terminar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar terminar": {
+      "main": [
+        [
+          {
+            "node": "Ver resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ver resultado": {
+      "main": [
+        [
+          {
+            "node": "Resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

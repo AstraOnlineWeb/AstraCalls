@@ -1,0 +1,312 @@
+{
+  "name": "AstraCalls — Exemplo 02: Menu com botões",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🔘 Menu com botões\n\nQuando o cliente manda *oi* ou *menu*, recebe 3 botões. O clique chega de volta no gatilho **com o texto do botão**, e o **Switch** leva para a resposta certa.\n\n- **Vendas** → texto com a oferta\n- **Suporte** → texto com orientações\n- **Atendente** → avisa e dá um toque no celular do atendente\n\nTroque o número do atendente no node **Avisar atendente**.",
+        "height": 460,
+        "width": 380,
+        "color": 5
+      },
+      "id": "7d16e2b9-9087-4ff7-b18b-348bc9e4a97a",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -416,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "options": {
+          "ignoreFromMe": true,
+          "ignoreGroups": true
+        }
+      },
+      "id": "3f06e6e0-a583-4c75-a923-d95f78966b95",
+      "name": "AstraCalls Trigger",
+      "webhookId": "27769bc3-91e5-4b9b-94c9-f23b27712622",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "c551f750-6910-4aa6-b4e8-ce91b052e429",
+                    "leftValue": "={{ $json.texto.trim().toLowerCase() }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "rightValue": "^(oi|olá|ola|menu|bom dia|boa tarde|boa noite)$"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Menu"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "e069b633-759f-4f28-b90d-318ad79259df",
+                    "leftValue": "={{ $json.texto.trim().toLowerCase() }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "rightValue": "vendas"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Vendas"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "cae298c8-bb4c-47e9-9b63-f9820000137b",
+                    "leftValue": "={{ $json.texto.trim().toLowerCase() }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "rightValue": "suporte"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Suporte"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "de205872-d1c1-4924-b859-0d8d54b8142f",
+                    "leftValue": "={{ $json.texto.trim().toLowerCase() }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "rightValue": "atendente"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Atendente"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ed4c72ca-91bc-4bd3-b698-c9eda28ce415",
+      "name": "Escolha",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendButtons",
+        "sessionId": "",
+        "to": "={{ $json.responderPara }}",
+        "buttonsText": "=Olá, {{ $json.nome || 'tudo bem' }}! 👋 Como podemos ajudar?",
+        "buttons": {
+          "button": [
+            {
+              "text": "Vendas",
+              "id": "vendas"
+            },
+            {
+              "text": "Suporte",
+              "id": "suporte"
+            },
+            {
+              "text": "Atendente",
+              "id": "atendente"
+            },
+            {}
+          ]
+        },
+        "buttonsOptions": {
+          "footer": "Toque numa opção"
+        }
+      },
+      "id": "03e047d2-5115-418f-b71c-836dff584735",
+      "name": "Enviar menu",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        480,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "to": "={{ $json.responderPara }}",
+        "text": "🛒 *Vendas*\nConfira nossos planos: https://exemplo.com/planos\nQuer um orçamento? Responda com o seu nome e cidade.",
+        "textOptions": {}
+      },
+      "id": "11ffc749-3441-4138-a18a-1e78033eaabe",
+      "name": "Resposta vendas",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        480,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "to": "={{ $json.responderPara }}",
+        "text": "🛠️ *Suporte*\nDescreva o problema e, se puder, mande um print. Nosso time responde por aqui.",
+        "textOptions": {}
+      },
+      "id": "7988a552-af56-448d-a9c6-161caa99e4c0",
+      "name": "Resposta suporte",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        480,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "to": "={{ $json.responderPara }}",
+        "text": "👤 Certo! Um atendente vai falar com você em instantes.",
+        "textOptions": {}
+      },
+      "id": "16fd1964-2731-4b35-9b1b-7856e6848cdb",
+      "name": "Avisar cliente",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        480,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "to": "5511999999999",
+        "text": "=📣 Cliente pedindo atendente: {{ $('AstraCalls Trigger').item.json.nome }} (+{{ $('AstraCalls Trigger').item.json.responderPara }})",
+        "textOptions": {}
+      },
+      "id": "9a2028fa-7331-40d4-bca1-752da384a141",
+      "name": "Avisar atendente",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        704,
+        240
+      ]
+    }
+  ],
+  "connections": {
+    "AstraCalls Trigger": {
+      "main": [
+        [
+          {
+            "node": "Escolha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escolha": {
+      "main": [
+        [
+          {
+            "node": "Enviar menu",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta vendas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta suporte",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Avisar cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avisar cliente": {
+      "main": [
+        [
+          {
+            "node": "Avisar atendente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

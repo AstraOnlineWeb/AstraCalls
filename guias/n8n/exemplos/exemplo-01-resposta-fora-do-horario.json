@@ -1,0 +1,145 @@
+{
+  "name": "AstraCalls — Exemplo 01: Resposta fora do horário",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🌙 Resposta fora do horário\n\nResponde automaticamente quem escreve **fora do expediente** (seg–sex, 8h–18h, horário de Brasília).\n\n1. **Gatilho** recebe as mensagens (ignora grupos e as suas).\n2. **Fora do horário?** confere dia e hora.\n3. Mostra *digitando…* e envia o aviso.\n\nAjuste os horários no node **Fora do horário?**.",
+        "height": 420,
+        "width": 380,
+        "color": 5
+      },
+      "id": "fc15d9f7-9481-4f98-a518-764ab38b09b4",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -416,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "options": {
+          "ignoreFromMe": true,
+          "ignoreGroups": true
+        }
+      },
+      "id": "41f814d2-a821-4121-9a75-cfa967da87d6",
+      "name": "AstraCalls Trigger",
+      "webhookId": "9545a0d4-2059-4f6d-a580-6080ec9333ee",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [
+        32,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "a7fcaedd-bc6d-4cd1-b006-2867e886279a",
+              "leftValue": "={{ (() => { const t = $now.setZone('America/Sao_Paulo'); return t.weekday > 5 || t.hour < 8 || t.hour >= 18 })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bec2f207-bc87-4cd6-bd70-04d4107e43f8",
+      "name": "Fora do horário?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "typing",
+        "sessionId": "",
+        "to": "={{ $json.responderPara }}"
+      },
+      "id": "456eec67-a82e-49b4-b38a-2bc6ae71d142",
+      "name": "Digitando…",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        448,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "to": "={{ $('AstraCalls Trigger').item.json.responderPara }}",
+        "text": "=Olá, {{ $('AstraCalls Trigger').item.json.nome || 'tudo bem' }}! 🌙\nNosso atendimento funciona de *segunda a sexta, das 8h às 18h*.\nRecebemos sua mensagem e respondemos assim que abrirmos. 🙂",
+        "textOptions": {
+          "quotedMessageId": "={{ $('AstraCalls Trigger').item.json.idMensagem }}"
+        }
+      },
+      "id": "69bbdda5-4bf9-4bbb-9a1d-42290c610124",
+      "name": "Aviso de horário",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        672,
+        -96
+      ]
+    }
+  ],
+  "connections": {
+    "AstraCalls Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fora do horário?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fora do horário?": {
+      "main": [
+        [
+          {
+            "node": "Digitando…",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digitando…": {
+      "main": [
+        [
+          {
+            "node": "Aviso de horário",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
