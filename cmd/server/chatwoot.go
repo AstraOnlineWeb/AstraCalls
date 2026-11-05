@@ -1128,7 +1128,8 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 		// source_id bloqueia reentrega, aqui (sem envio) não há risco de duplicar.
 		errMsg := "envio ao WhatsApp falhou (sessão indisponível?)"
 		if sendErr != nil {
-			errMsg = sendErr.Error()
+			_, body := sendErrorResponse(sendErr)
+			errMsg = body["error"]
 		}
 		s.log.Error("chatwoot->wa: nenhuma mensagem enviada; sinalizando falha ao Chatwoot",
 			"chat", chatID, "err", errMsg)
@@ -1276,8 +1277,9 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 			Caption: proto.String(caption), Mimetype: proto.String("video/mp4"),
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-			StreamingSidecar: up.StreamingSidecar,
-			ContextInfo:      quote,
+			StreamingSidecar:  up.StreamingSidecar,
+			MediaKeyTimestamp: proto.Int64(time.Now().Unix()),
+			ContextInfo:       quote,
 		}})
 	default:
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaDocument)

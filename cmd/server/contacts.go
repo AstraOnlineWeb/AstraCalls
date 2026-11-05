@@ -270,6 +270,15 @@ func (s *server) handleBlock(block bool) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		// mesmo cuidado do envio: o UpdateBlocklist procura o LID pelo número
+		// cru, e número BR na forma errada do 9º dígito não tem LID no servidor.
+		// Resolve a forma canônica, grava o par LID↔PN e bloqueia pelo PN real.
+		if jid.Server == types.DefaultUserServer {
+			if lid, pn, ok := sess.resolveCanonical(r.Context(), jid); ok {
+				sess.client.StoreLIDPNMapping(r.Context(), lid, pn)
+				jid = pn
+			}
+		}
 		action := events.BlocklistChangeActionUnblock
 		if block {
 			action = events.BlocklistChangeActionBlock
@@ -314,7 +323,10 @@ func (s *server) handleBlocklist(w http.ResponseWriter, r *http.Request) {
 	items := make([]blockedItem, 0, len(bl.Items))
 	for _, it := range bl.Items {
 		pn := it.PN
-		if pn.IsEmpty() && it.LID.Server == types.HiddenUserServer {
+		if it.LID.Server == types.DefaultUserServer {
+			// lista em addressing_mode pn: o "jid" já é o telefone.
+			pn = it.LID
+		} else if pn.IsEmpty() && it.LID.Server == types.HiddenUserServer {
 			// a lista nem sempre traz o pn_jid; o store costuma ter o mapeamento.
 			pn, _ = sess.client.Store.LIDs.GetPNForLID(r.Context(), it.LID)
 		}

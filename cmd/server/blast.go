@@ -130,6 +130,10 @@ func (m *blastManager) sendOne(sess *Session, to string, msg *waE2E.Message) bla
 			return blastResult{To: to, OK: true, MsgID: id}
 		}
 		lastErr = e.Error()
+		if isPermanentSendErr(e) {
+			_, body := sendErrorResponse(e)
+			return blastResult{To: to, Error: body["error"]}
+		}
 		time.Sleep(2 * time.Second)
 	}
 	return blastResult{To: to, Error: lastErr}

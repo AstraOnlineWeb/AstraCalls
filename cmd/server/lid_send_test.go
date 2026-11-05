@@ -53,3 +53,15 @@ func TestConfigureClientUnifiedSession(t *testing.T) {
 		t.Fatalf("UnifiedSessionInterval = %v, want %v (>0)", cli.UnifiedSessionInterval, unifiedSessionInterval)
 	}
 }
+
+func TestIsPermanentSendErr(t *testing.T) {
+	if !isPermanentSendErr(fmt.Errorf("%w: no LID found", whatsmeow.ErrRecipientNotOnWhatsApp)) {
+		t.Error("número sem WhatsApp deveria ser permanente")
+	}
+	if !isPermanentSendErr(whatsmeow.ErrNoPermissionInGroup) {
+		t.Error("grupo só de admins deveria ser permanente")
+	}
+	if isPermanentSendErr(errors.New("websocket disconnected")) {
+		t.Error("queda de conexão não é permanente")
+	}
+}

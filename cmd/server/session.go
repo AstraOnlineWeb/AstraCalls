@@ -183,6 +183,15 @@ func (s *Session) sendResolvingLID(ctx context.Context, jid types.JID, msg *waE2
 	}
 	jid = s.canonicalBRTarget(ctx, jid)
 	resp, err := s.client.SendMessage(ctx, jid, msg, extra...)
+	if errors.Is(err, whatsmeow.ErrNoPermissionInGroup) {
+		// o cache de grupo do whatsmeow só é atualizado por notificações; se o
+		// grupo mudou com a sessão offline (deixou de ser só de admins, conta
+		// promovida) ele está velho. Rebusca as informações (atualiza o cache)
+		// e tenta uma vez antes de recusar.
+		if _, gerr := s.client.GetGroupInfo(ctx, jid); gerr == nil {
+			resp, err = s.client.SendMessage(ctx, jid, msg, extra...)
+		}
+	}
 	if err != nil && isLIDResolveErr(err) && jid.Server == types.DefaultUserServer {
 		if lid, pn, ok := s.resolveCanonical(ctx, jid); ok {
 			s.client.StoreLIDPNMapping(ctx, lid, pn)
@@ -231,6 +240,12 @@ func (s *Session) canonicalBRTarget(ctx context.Context, jid types.JID) types.JI
 		return pn
 	}
 	return jid
+}
+
+// isPermanentSendErr indica erro de envio que repetir não resolve: número sem
+// WhatsApp ou grupo em que só administradores podem enviar.
+func isPermanentSendErr(err error) bool {
+	return errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp) || errors.Is(err, whatsmeow.ErrNoPermissionInGroup)
 }
 
 // isLIDResolveErr indica que o whatsmeow não conseguiu resolver o LID do

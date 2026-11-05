@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -163,7 +164,8 @@ func (s *server) handleStatusVideo(w http.ResponseWriter, r *http.Request) {
 		Caption: proto.String(b.Caption), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-		StreamingSidecar: up.StreamingSidecar,
+		StreamingSidecar:  up.StreamingSidecar,
+		MediaKeyTimestamp: proto.Int64(time.Now().Unix()),
 	}})
 }
 
