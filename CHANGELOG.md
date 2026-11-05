@@ -2,6 +2,59 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.1.6 — 2026-11-05
+
+Aproveita os recursos novos do whatsmeow de 02/11: o vídeo começa a tocar antes de baixar
+inteiro, e os erros de envio ficam claros (número sem WhatsApp, grupo só de admins). Traz
+também a lista de bloqueados completa, conversas por LID com telefone e nome, histórico do
+pareamento gravado e o SSE separado por conta e caixa. Inclui o **tutorial do n8n** com 10
+fluxos prontos.
+
+### 📤 Envio
+
+- **Vídeo com streaming:** vídeo, PTV, status e envio pelo Chatwoot levam o *streaming
+  sidecar*, então o vídeo começa a tocar enquanto baixa. Também passam a levar o
+  `mediaKeyTimestamp`, cuja falta já fazia o áudio sumir no iPhone.
+- **Número sem WhatsApp:** responde **422** com `code: not_on_whatsapp` (antes era um 500
+  genérico).
+- **Grupo só de admins:** responde **403** com `code: no_permission_in_group` sem mandar a
+  mensagem. Antes de recusar, o grupo é consultado de novo, porque a informação guardada
+  pode estar velha.
+- **Disparos** não repetem 3 vezes um erro permanente, e o Chatwoot mostra o motivo em texto
+  amigável.
+- **Sessão unificada** a cada conexão, como faz o WhatsApp Web
+  (`WACALLS_UNIFIED_SESSION_MINUTES`, padrão 5; `0` desliga).
+
+### 🚫 Bloqueados
+
+- `GET /blocklist` devolve `items` (`jid`, `lid`, `phone`, `active`) e o `dhash`. Com
+  `?dhash=` só devolve a lista quando ela mudou.
+- Bloquear/desbloquear corrige o 9º dígito do número antes de enviar ao WhatsApp, como já é
+  feito no envio.
+
+### 💬 Conversas e histórico
+
+- **Conversa por LID** sai com o telefone e o nome do contato: `/chats` junta as conversas do
+  mesmo contato, e `/chats/{jid}/messages` busca pelo telefone e pelo LID. Sem `limit`,
+  `/chats` devolve até 500 conversas (antes 100).
+- **Histórico do pareamento gravado:** as conversas que o WhatsApp manda ao parear (e no
+  import sob demanda) agora ficam no histórico. Antes só iam para o Chatwoot.
+
+### 🔒 Eventos (SSE) por conta e caixa
+
+- Chamadas (`call-list`, `call-status`, `call-ended`) e a lista de sessões chegam só para a
+  conta e a caixa donas. Antes, widgets de outras contas viam números e sessões alheias.
+- QR e estado do pareamento vão para o painel e para a conta/caixa da sessão.
+- Filtro por caixa: `?inboxIds=1,2` em `/api/events`. O token de widget com caixa fixa só
+  opera chamadas da própria conta/caixa.
+
+### 📚 n8n
+
+- **Tutorial passo a passo** em [`guias/n8n.md`](guias/n8n.md), com **10 fluxos de exemplo**
+  prontos para importar: fora do horário, menu com botões, agendamento, atendente de IA,
+  enquete, boas-vindas no grupo, disparo de ligações, validar lista, lembrete diário e
+  alerta de desconexão.
+
 ## v1.1.5 — 2026-11-03
 
 Versão **urgente de conexão**: desde 02/11 o WhatsApp recusa clientes com versão antiga
