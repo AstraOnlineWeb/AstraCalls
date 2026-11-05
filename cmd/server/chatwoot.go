@@ -119,7 +119,7 @@ func (c ChatwootConfig) req(method, path string, body any) (map[string]any, int,
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("api_access_token", c.AccountToken)
+	req.Header.Set("Authorization", "Bearer "+c.AccountToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := cwHTTP.Do(req)
 	if err != nil {
@@ -953,7 +953,7 @@ func (c ChatwootConfig) postAttachment(convID int, content, filename, mime strin
 	if err != nil {
 		return err
 	}
-	req.Header.Set("api_access_token", c.AccountToken)
+	req.Header.Set("Authorization", "Bearer "+c.AccountToken)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := cwHTTP.Do(req)
 	if err != nil {
