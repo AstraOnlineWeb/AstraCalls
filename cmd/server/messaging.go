@@ -312,6 +312,7 @@ func (s *server) handleSendVideo(w http.ResponseWriter, r *http.Request) {
 		Caption: proto.String(b.Caption), Mimetype: proto.String(mime),
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		StreamingSidecar: up.StreamingSidecar,
 	}}
 	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, sess.autoMentions(r.Context(), b.To, b.Caption, withMentionAll(b.Mentions, b.MentionAll))))
 	s.send(sess, w, r, b.To, msg)
@@ -343,6 +344,7 @@ func (s *server) handleSendPtv(w http.ResponseWriter, r *http.Request) {
 		Mimetype: proto.String(mime),
 		URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		StreamingSidecar: up.StreamingSidecar,
 	}}
 	applyContextInfo(msg, sess.buildSendContext(r.Context(), b.QuotedMessageID, b.Participant, b.FromMe, nil))
 	s.send(sess, w, r, b.To, msg)

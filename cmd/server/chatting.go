@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -346,11 +347,25 @@ func (s *server) sendTo(sess *Session, w http.ResponseWriter, r *http.Request, j
 	}
 	resp, err := sess.sendResolvingLID(r.Context(), jid, msg, extra...)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		code, body := sendErrorResponse(err)
+		writeJSON(w, code, body)
 		return
 	}
 	sess.recordOutgoing(jid, resp.ID, resp.Timestamp.UnixMilli(), msg)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
 	})
+}
+
+// sendErrorResponse traduz os erros de envio conhecidos numa resposta limpa:
+// número sem WhatsApp (422 not_on_whatsapp) e grupo só de admins (403
+// no_permission_in_group). Demais erros seguem como 500 com a mensagem crua.
+func sendErrorResponse(err error) (int, map[string]string) {
+	switch {
+	case errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp):
+		return http.StatusUnprocessableEntity, map[string]string{"error": "número sem WhatsApp", "code": "not_on_whatsapp"}
+	case errors.Is(err, whatsmeow.ErrNoPermissionInGroup):
+		return http.StatusForbidden, map[string]string{"error": "só administradores podem enviar mensagens neste grupo", "code": "no_permission_in_group"}
+	}
+	return http.StatusInternalServerError, map[string]string{"error": err.Error()}
 }

@@ -165,12 +165,22 @@ func (s *Session) selfSentOrigin(id string) (origin string, ok bool) {
 
 // sendAndMark envia uma mensagem, a registra como "enviada por nós" e devolve o
 // ID da mensagem do WhatsApp (usado p/ gravar o source_id no Chatwoot).
-// sendResolvingLID envia a mensagem e, no erro "no LID found" (número sem
+// sendResolvingLID envia a mensagem e, no ErrRecipientNotOnWhatsApp (número sem
 // mapeamento PN↔LID no store — ex.: 9º dígito BR), resolve o LID+PN canônicos via
 // IsOnWhatsApp, GRAVA o mapeamento e reenvia PELO PN (e por fim pelo @lid cru).
 // Usado por TODOS os envios (sendTo/API e sendAndMark/Chatwoot) para que o 9º
 // dígito não quebre nenhum caminho de envio.
+//
+// Em grupo, liga CheckPermissions: se o grupo só aceita mensagens de admins e a
+// conta não é admin, o whatsmeow recusa na hora (ErrNoPermissionInGroup) em vez
+// de mandar uma mensagem que o WhatsApp descarta.
 func (s *Session) sendResolvingLID(ctx context.Context, jid types.JID, msg *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	if jid.Server == types.GroupServer {
+		if len(extra) == 0 {
+			extra = []whatsmeow.SendRequestExtra{{}}
+		}
+		extra[0].CheckPermissions = true
+	}
 	jid = s.canonicalBRTarget(ctx, jid)
 	resp, err := s.client.SendMessage(ctx, jid, msg, extra...)
 	if err != nil && isLIDResolveErr(err) && jid.Server == types.DefaultUserServer {
@@ -225,13 +235,13 @@ func (s *Session) canonicalBRTarget(ctx context.Context, jid types.JID) types.JI
 
 // isLIDResolveErr indica que o whatsmeow não conseguiu resolver o LID do
 // destinatário (novo requisito do WhatsApp) — normalmente por o número (PN)
-// estar num formato que o servidor não reconhece.
+// estar num formato que o servidor não reconhece. O "sem LID no servidor" vem
+// tipado (ErrRecipientNotOnWhatsApp); a falha de leitura do store local, não.
 func isLIDResolveErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	e := err.Error()
-	return strings.Contains(e, "no LID found") || strings.Contains(e, "get LID for PN")
+	return errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp) || strings.Contains(err.Error(), "get LID for PN")
 }
 
 type canonInfo struct {
@@ -341,6 +351,7 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 		auth:   AuthSnapshot{State: "connecting"},
 		reg:    newCallRegistry(),
 	}
+	configureClient(client)
 	client.AddEventHandler(s.handleEvent)
 	go s.runPresenceKeepalive()
 	go s.runCappingRefresh()
@@ -1181,7 +1192,19 @@ func (s *Session) replaceClient(client *whatsmeow.Client) {
 	s.teardownAllCalls()
 	s.client.Disconnect()
 	s.client = client
+	configureClient(client)
 	client.AddEventHandler(s.handleEvent)
+}
+
+// unifiedSessionInterval é o intervalo mínimo entre envios do "unified_session"
+// ao conectar. O WhatsApp Web manda esse sinal a cada conexão (além do
+// pareamento e da presença available, que o whatsmeow já cobre); sem ele o
+// aparelho foge do padrão de um cliente oficial. 0 desliga o envio na conexão.
+var unifiedSessionInterval = time.Duration(envInt("WACALLS_UNIFIED_SESSION_MINUTES", 5)) * time.Minute
+
+// configureClient aplica as opções do whatsmeow comuns a todo client de sessão.
+func configureClient(client *whatsmeow.Client) {
+	client.UnifiedSessionInterval = unifiedSessionInterval
 }
 
 func (s *Session) shutdown() {

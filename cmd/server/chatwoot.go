@@ -1276,7 +1276,8 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 			Caption: proto.String(caption), Mimetype: proto.String("video/mp4"),
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
-			ContextInfo: quote,
+			StreamingSidecar: up.StreamingSidecar,
+			ContextInfo:      quote,
 		}})
 	default:
 		up, e := s.client.Upload(ctx, data, whatsmeow.MediaDocument)

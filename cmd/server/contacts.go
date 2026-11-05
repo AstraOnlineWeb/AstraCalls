@@ -275,32 +275,62 @@ func (s *server) handleBlock(block bool) http.HandlerFunc {
 			action = events.BlocklistChangeActionBlock
 		}
 		if _, err := sess.client.UpdateBlocklist(r.Context(), jid, action, ""); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			code, body := sendErrorResponse(err)
+			writeJSON(w, code, body)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "blocked": block})
 	}
 }
 
-// GET /api/sessions/{sid}/blocklist  → JIDs bloqueados
+// GET /api/sessions/{sid}/blocklist[?dhash=…]  → bloqueados com LID e telefone
+//
+// "blocked" segue com um JID por bloqueado (telefone quando houver, senão o LID)
+// e "items" traz o par completo. "dhash" identifica a versão da lista: passando o
+// último dhash recebido, o WhatsApp não reenvia a lista se nada mudou e a
+// resposta vem só com {"changed": false}.
 func (s *server) handleBlocklist(w http.ResponseWriter, r *http.Request) {
 	sess := s.pairedSession(w, r.PathValue("sid"))
 	if sess == nil {
 		return
 	}
-	bl, err := sess.client.GetBlocklist(r.Context(), "")
+	dhash := r.URL.Query().Get("dhash")
+	bl, err := sess.client.GetBlocklist(r.Context(), dhash)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	// a whatsmeow devolve LID e PN de cada bloqueado; o telefone (PN) quando houver.
+	if bl == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"changed": false, "dhash": dhash})
+		return
+	}
+	type blockedItem struct {
+		JID    string `json:"jid"`
+		LID    string `json:"lid,omitempty"`
+		Phone  string `json:"phone,omitempty"`
+		Active bool   `json:"active"`
+	}
 	jids := make([]string, 0, len(bl.Items))
+	items := make([]blockedItem, 0, len(bl.Items))
 	for _, it := range bl.Items {
-		j := it.PN
+		pn := it.PN
+		if pn.IsEmpty() && it.LID.Server == types.HiddenUserServer {
+			// a lista nem sempre traz o pn_jid; o store costuma ter o mapeamento.
+			pn, _ = sess.client.Store.LIDs.GetPNForLID(r.Context(), it.LID)
+		}
+		j := pn
 		if j.IsEmpty() {
 			j = it.LID
 		}
+		item := blockedItem{JID: j.String(), Active: it.Active}
+		if it.LID.Server == types.HiddenUserServer {
+			item.LID = it.LID.String()
+		}
+		if !pn.IsEmpty() {
+			item.Phone = pn.User
+		}
 		jids = append(jids, j.String())
+		items = append(items, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"blocked": jids})
+	writeJSON(w, http.StatusOK, map[string]any{"changed": true, "dhash": bl.DHash, "blocked": jids, "items": items})
 }

@@ -2461,9 +2461,13 @@ paths:
   /api/sessions/{sid}/blocklist:
     get:
       tags: [Contatos]
-      summary: Lista os JIDs bloqueados
+      summary: Lista os contatos bloqueados (telefone e LID)
+      description: |
+        Passe o `dhash` da resposta anterior em `?dhash=` para só receber a lista
+        quando ela mudou; sem mudança, a resposta é `{"changed": false}`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
+        - { name: dhash, in: query, required: false, schema: { type: string }, description: "dhash da última consulta" }
       responses:
         "200":
           description: OK
@@ -2471,7 +2475,19 @@ paths:
             application/json:
               schema:
                 type: object
-                properties: { blocked: { type: array, items: { type: string }, description: "JIDs bloqueados (podem vir como @lid)" } }
+                properties:
+                  changed: { type: boolean, description: "false quando o dhash informado ainda é o atual" }
+                  dhash: { type: string, description: "versão atual da lista" }
+                  blocked: { type: array, items: { type: string }, description: "um JID por bloqueado: telefone quando conhecido, senão @lid" }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        jid: { type: string }
+                        lid: { type: string, description: "JID @lid do bloqueado" }
+                        phone: { type: string, description: "telefone (só dígitos), quando conhecido" }
+                        active: { type: boolean }
 
   # ===================== Grupos =====================
   /api/sessions/{sid}/groups:

@@ -369,7 +369,8 @@ func (s *server) handleMetaAI(w http.ResponseWriter, r *http.Request) {
 			resp, err = sess.sendResolvingLID(r.Context(), jid, pm)
 		}
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			code, body := sendErrorResponse(err)
+			writeJSON(w, code, body)
 			return
 		}
 		placeholder = resp.ID

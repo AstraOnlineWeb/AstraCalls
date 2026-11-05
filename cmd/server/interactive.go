@@ -68,7 +68,8 @@ func (s *server) sendNativeFlowNamed(sess *Session, w http.ResponseWriter, r *ht
 	}
 	resp, err := sess.sendResolvingLID(r.Context(), jid, msg, extra)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		code, body := sendErrorResponse(err)
+		writeJSON(w, code, body)
 		return
 	}
 	sess.recordOutgoing(jid, resp.ID, resp.Timestamp.UnixMilli(), msg)
