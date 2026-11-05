@@ -1,0 +1,253 @@
+{
+  "name": "AstraCalls — Exemplo 03: Lista de serviços e agendamento",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📋 Lista de serviços\n\nQuando a mensagem tem *agendar* ou *serviços*, envia uma **lista interativa**. A opção escolhida volta no gatilho como texto; o fluxo confirma o pedido e **reage com ✅** na mensagem do cliente.\n\n⚠️ Listas aparecem no **celular** (o WhatsApp Web não mostra).",
+        "height": 420,
+        "width": 380,
+        "color": 5
+      },
+      "id": "4d5bb604-a0a4-4064-8281-f930b1a448a4",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -416,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "options": {
+          "ignoreFromMe": true,
+          "ignoreGroups": true
+        }
+      },
+      "id": "d845be3f-1614-48f3-8003-50b46a3032ec",
+      "name": "AstraCalls Trigger",
+      "webhookId": "3e625bac-5e54-435b-b330-d18bdef748ad",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "de38f903-3a75-42db-954a-2ea7c47ad556",
+              "leftValue": "={{ $json.texto.toLowerCase() }}",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              },
+              "rightValue": "agendar|servi[cç]os"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "20e92232-75a3-43f0-a1e6-6d906bea13a5",
+      "name": "Pediu a lista?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendList",
+        "sessionId": "",
+        "to": "=5511999999999",
+        "listBody": "Escolha o serviço que deseja agendar:",
+        "buttonText": "Ver serviços",
+        "sectionTitle": "Serviços",
+        "listRows": {
+          "row": [
+            {
+              "title": "Consulta",
+              "description": "30 minutos",
+              "id": "consulta"
+            },
+            {
+              "title": "Retorno",
+              "description": "15 minutos",
+              "id": "retorno"
+            },
+            {
+              "title": "Exame",
+              "description": "Com preparo",
+              "id": "exame"
+            }
+          ]
+        },
+        "listOptions": {
+          "footer": "Clínica Exemplo"
+        }
+      },
+      "id": "6e51a9d9-a57e-419e-89d5-746f0ff9f3c8",
+      "name": "Enviar lista",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        464,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "8e40df77-b2c1-4eeb-934f-fec6ff88456a",
+              "leftValue": "={{ $json.texto.toLowerCase() }}",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              },
+              "rightValue": "^(consulta|retorno|exame)$"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3a64e945-857b-4450-a943-dc1f0bf77931",
+      "name": "Escolheu serviço?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        464,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "react",
+        "sessionId": "",
+        "to": "={{ $json.responderPara }}",
+        "targetMessageId": "={{ $json.idMensagem }}",
+        "reaction": "✅",
+        "targetOptions": {}
+      },
+      "id": "b7261100-c40c-4b3e-a379-8b437209616e",
+      "name": "Reagir ✅",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        704,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sessionId": "",
+        "to": "={{ $('AstraCalls Trigger').item.json.responderPara }}",
+        "text": "=Perfeito! Anotamos *{{ $('AstraCalls Trigger').item.json.texto }}*. Agora me diga o melhor dia e horário. 📅",
+        "textOptions": {}
+      },
+      "id": "5874f4bb-dbd3-4585-8d25-05bbdce467f8",
+      "name": "Confirmar pedido",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        928,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        256,
+        -256
+      ],
+      "id": "6f081978-069a-49d4-86c3-f0278eaed7db",
+      "name": "When clicking ‘Execute workflow’"
+    }
+  ],
+  "connections": {
+    "AstraCalls Trigger": {
+      "main": [
+        [
+          {
+            "node": "Pediu a lista?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pediu a lista?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Escolheu serviço?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escolheu serviço?": {
+      "main": [
+        [
+          {
+            "node": "Reagir ✅",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reagir ✅": {
+      "main": [
+        [
+          {
+            "node": "Confirmar pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Enviar lista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

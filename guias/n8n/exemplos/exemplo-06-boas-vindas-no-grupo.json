@@ -1,0 +1,146 @@
+{
+  "name": "AstraCalls — Exemplo 06: Boas-vindas no grupo",
+  "nodes": [
+    {
+      "id": "33303bb3-e5d1-4e7c-aafc-8a7463c65bac",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -260
+      ],
+      "parameters": {
+        "content": "## 👋 Boas-vindas em grupo\n\nQuando alguém **entra** num grupo onde a sessão é participante, envia uma mensagem de boas-vindas **mencionando** quem chegou (@).\n\nPara limitar a um grupo só, coloque o ID dele (…@g.us) no node **Entrou alguém?**.",
+        "width": 380,
+        "height": 420,
+        "color": 5
+      }
+    },
+    {
+      "id": "d214f308-b92f-4a5d-9936-c8b09b6e5211",
+      "name": "AstraCalls Trigger",
+      "webhookId": "555f0da0-bf89-40bf-831a-802e4038a227",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "events": [
+          "group_participants"
+        ],
+        "options": {
+          "ignoreFromMe": true
+        }
+      }
+    },
+    {
+      "id": "4f36381e-17b2-4b0e-84f5-19cd0a3d66d4",
+      "name": "Entrou alguém?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "484b6741-124a-4649-8fe6-859d9f032af1",
+              "leftValue": "={{ ($json.entraram || []).length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f1266ed5-ff3a-4300-afdd-e7ed6dca5077",
+      "name": "Montar menções",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        -60
+      ],
+      "parameters": {
+        "jsCode": "const it = $input.first().json;\nconst nums = (it.entraram || []).map(j => String(j).split('@')[0].split(':')[0]);\nreturn [{ json: { grupo: it.grupo, nums, texto: 'Bem-vindo(a) ' + nums.map(n => '@' + n).join(' ') + '! 🎉\\nLeia as regras na descrição do grupo.' } }];"
+      }
+    },
+    {
+      "id": "5981be3e-447e-4d88-b539-39f90f73a223",
+      "name": "Enviar boas-vindas",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        660,
+        -60
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "message",
+        "operation": "sendText",
+        "to": "={{ $json.grupo }}",
+        "text": "={{ $json.texto }}",
+        "textOptions": {
+          "mentions": "={{ $json.nums.join(',') }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "AstraCalls Trigger": {
+      "main": [
+        [
+          {
+            "node": "Entrou alguém?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrou alguém?": {
+      "main": [
+        [
+          {
+            "node": "Montar menções",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar menções": {
+      "main": [
+        [
+          {
+            "node": "Enviar boas-vindas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

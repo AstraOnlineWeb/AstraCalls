@@ -77,6 +77,27 @@ Para que uma IA atenda pelo WhatsApp:
 
 ---
 
+## 📚 10 fluxos de exemplo prontos
+
+Baixe o `.json`, importe no n8n pelo menu **⋯ → Import from File**, escolha a credencial e a **Sessão** em cada node AstraCalls e troque os números de exemplo (`5511999999999`). Cada fluxo tem uma nota amarela explicando como funciona.
+
+| # | Fluxo | O que faz |
+|---|---|---|
+| 01 | [Resposta fora do horário](n8n/exemplos/exemplo-01-resposta-fora-do-horario.json) | Responde automaticamente a quem escreve fora do expediente |
+| 02 | [Menu com botões](n8n/exemplos/exemplo-02-menu-com-botoes.json) | Envia um menu com botões e segue um caminho para cada opção (Switch) |
+| 03 | [Lista de serviços e agendamento](n8n/exemplos/exemplo-03-lista-de-servicos-e-agendamento.json) | Envia uma lista interativa, confirma a opção escolhida e reage com ✅ |
+| 04 | [Atendente de IA com ferramentas](n8n/exemplos/exemplo-04-atendente-de-ia-com-ferramentas.json) | AI Agent com memória que usa o AstraCalls como ferramenta (requer credencial OpenAI) |
+| 05 | [Pesquisa de satisfação (enquete)](n8n/exemplos/exemplo-05-pesquisa-de-satisfacao-enquete.json) | Envia uma enquete para os clientes, agradece cada voto e avisa o gestor se a nota for ruim |
+| 06 | [Boas-vindas no grupo](n8n/exemplos/exemplo-06-boas-vindas-no-grupo.json) | Dá boas-vindas a quem entra no grupo, mencionando a pessoa |
+| 07 | [Disparo de ligações com áudio](n8n/exemplos/exemplo-07-disparo-de-ligacoes-com-audio.json) | Liga para uma lista tocando um áudio gravado e acompanha o status |
+| 08 | [Validar lista antes da campanha](n8n/exemplos/exemplo-08-validar-lista-antes-da-campanha.json) | Confere quais números têm WhatsApp e só envia para eles |
+| 09 | [Lembrete diário com toque](n8n/exemplos/exemplo-09-lembrete-diario-com-toque.json) | Todo dia, no horário marcado, envia um lembrete e faz o telefone tocar |
+| 10 | [Alerta de desconexão e restrição](n8n/exemplos/exemplo-10-alerta-de-desconexao-e-restricao.json) | Avisa quando a sessão cai ou recebe restrição do WhatsApp |
+
+> Os fluxos com **AstraCalls Trigger** (01 a 06 e 10) trocam o webhook da sessão quando ativados. Ative **um por sessão**, ou junte os caminhos num só fluxo (veja o aviso abaixo).
+
+---
+
 ## ⚠️ Antes de usar em produção
 
 - **Cada sessão tem um único webhook.** Ao ativar um fluxo com o AstraCalls Trigger, o node coloca o webhook do n8n no lugar do que estava configurado. Ao desativar, restaura o anterior. **Use um só gatilho por sessão** e separe os caminhos com o **Switch**. A integração nativa com o Chatwoot não é afetada.

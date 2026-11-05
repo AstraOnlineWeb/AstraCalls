@@ -1,0 +1,128 @@
+{
+  "name": "AstraCalls — Exemplo 09: Lembrete diário com toque",
+  "nodes": [
+    {
+      "id": "dd3591ad-fddf-45c6-8d87-0ca55acef69d",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -260
+      ],
+      "parameters": {
+        "content": "## ⏰ Lembrete diário com toque fantasma\n\nTodo dia às **8h** envia o lembrete das consultas do dia e dá um **toque rápido** (3 s) no celular do cliente para chamar a atenção. A ligação não é atendida: só toca.\n\nTroque o node **Consultas de hoje** pela sua agenda (Google Sheets, banco, CRM…).",
+        "width": 380,
+        "height": 400,
+        "color": 5
+      }
+    },
+    {
+      "id": "7c06329a-c467-4132-9d74-b8903b810edf",
+      "name": "Todo dia às 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "16b87b82-c9ab-47ee-9ebc-942412d23d28",
+      "name": "Consultas de hoje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [\n  { json: { telefone: '5511999999999', nome: 'Maria', hora: '14:00' } },\n];"
+      }
+    },
+    {
+      "id": "05831a71-d481-4733-b7c0-a3ef33b15ccd",
+      "name": "Enviar lembrete",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "message",
+        "operation": "sendText",
+        "to": "={{ $json.telefone }}",
+        "text": "=Oi {{ $json.nome }}! ⏰ Lembrete: sua consulta é *hoje às {{ $json.hora }}*.\nResponda *1* para confirmar ou *2* para remarcar.",
+        "textOptions": {}
+      }
+    },
+    {
+      "id": "bae03be9-5768-4831-9506-beb5b637f3fb",
+      "name": "Toque fantasma",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "sessionId": "",
+        "resource": "call",
+        "operation": "fake",
+        "phone": "={{ $('Consultas de hoje').item.json.telefone }}",
+        "durationSeconds": 3,
+        "video": false
+      }
+    }
+  ],
+  "connections": {
+    "Todo dia às 8h": {
+      "main": [
+        [
+          {
+            "node": "Consultas de hoje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultas de hoje": {
+      "main": [
+        [
+          {
+            "node": "Enviar lembrete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar lembrete": {
+      "main": [
+        [
+          {
+            "node": "Toque fantasma",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
