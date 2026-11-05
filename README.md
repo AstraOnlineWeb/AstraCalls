@@ -368,6 +368,8 @@ Automatize o WhatsApp no **n8n sem escrever código**: o node oficial [`n8n-node
 - **Pronto para responder:** o gatilho entrega `de`, `nome`, `texto` e `responderPara` prontos para usar no envio, e ignora as mensagens da própria conta (sem loop).
 - **Agentes de IA:** o node pode ser usado como ferramenta pelos agentes de IA do n8n.
 
+📘 **[Tutorial passo a passo](guias/n8n.md)**: instalar, criar a credencial, enviar a primeira mensagem e montar um robô que responde, com [fluxo pronto para importar](guias/n8n/responder-mensagem.json).
+
 ## 🤖 MCP para agentes de IA
 
 O AstraCalls traz um **servidor MCP** (Model Context Protocol) embutido: Claude, ChatGPT, Cursor,
