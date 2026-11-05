@@ -1,0 +1,55 @@
+{
+  "name": "AstraCalls - Responder mensagem recebida",
+  "nodes": [
+    {
+      "parameters": {
+        "sessionId": "",
+        "events": ["message"],
+        "options": {
+          "ignoreFromMe": true,
+          "ignoreGroups": true
+        }
+      },
+      "id": "5b0f3c1e-0c7a-4a51-9a40-6f0a1d6c0a01",
+      "name": "Quando chegar mensagem",
+      "type": "n8n-nodes-astracalls.astraCallsTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "2f1d3a9e-7b7d-4b6a-9d3a-5c1a2b3c4d01"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendText",
+        "sessionId": "={{ $json.sessao }}",
+        "to": "={{ $json.responderPara }}",
+        "text": "=Olá, {{ $json.nome || 'tudo bem' }}! 👋\nRecebemos sua mensagem: \"{{ $json.texto }}\".\nJá já alguém da equipe responde.",
+        "textOptions": {
+          "quotedMessageId": "={{ $json.idMensagem }}"
+        }
+      },
+      "id": "5b0f3c1e-0c7a-4a51-9a40-6f0a1d6c0a02",
+      "name": "Responder",
+      "type": "n8n-nodes-astracalls.astraCalls",
+      "typeVersion": 1,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Quando chegar mensagem": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
