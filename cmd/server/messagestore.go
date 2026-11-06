@@ -93,6 +93,9 @@ func (s *Session) recordOutgoing(chat types.JID, msgID string, ts int64, msg *wa
 	// registra como "enviada por nós pela API" — o espelhamento no Chatwoot usa a
 	// origem para decidir se reflete (toggle mirror_api) ou ignora
 	s.markSelfSent(msgID, selfSentAPI)
+	if messageType(msg) != "unknown" {
+		s.chatwootMirrorAPI(chat, msgID, ts, msg)
+	}
 	if s.mgr.store == nil {
 		return
 	}

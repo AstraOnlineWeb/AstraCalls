@@ -57,7 +57,7 @@ func TestShouldMirrorOwn(t *testing.T) {
 	}{
 		{"aparelho espelha mesmo com toggle off", "phone-1", false, true},
 		{"aparelho espelha com toggle on", "phone-1", true, true},
-		{"API com toggle ligado espelha", "api-1", true, true},
+		{"API não espelha pelo evento (já espelhada no envio)", "api-1", true, false},
 		{"API com toggle desligado não espelha", "api-1", false, false},
 		{"agente do Chatwoot nunca espelha", "cw-1", true, false},
 		{"agente do Chatwoot nunca espelha (toggle off)", "cw-1", false, false},

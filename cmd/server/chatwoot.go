@@ -274,7 +274,8 @@ func (s *Session) shouldMirrorOwn(msgID string, cfg ChatwootConfig) bool {
 	if !sent {
 		return true // veio do aparelho
 	}
-	return origin == selfSentAPI && cfg.MirrorAPI
+	_ = origin // API: já espelhada no envio (chatwootMirrorAPI); Chatwoot: já está na conversa
+	return false
 }
 
 func (s *Session) chatwootPushIncoming(evt *events.Message) {
@@ -325,6 +326,35 @@ const mirrorDeviceTitle = "📲 Enviado pelo aparelho:\n"
 // enviou pelo aparelho — para o agente ver no Chatwoot o que foi dito por fora.
 // Não é reenviado ao contato (nota privada não dispara o webhook de saída).
 func (s *Session) chatwootMirrorOwn(cfg ChatwootConfig, evt *events.Message) {
+	s.chatwootMirrorOwnTitled(cfg, evt, mirrorDeviceTitle)
+}
+
+// mirrorAPITitle identifica, na nota privada, o que saiu pela API do AstraCalls.
+const mirrorAPITitle = "🤖 Enviado pela integração:\n"
+
+// chatwootMirrorAPI espelha (mirror_api) uma mensagem 1:1 que ESTE cliente acabou
+// de enviar pela API. O WhatsApp não devolve como evento o que o próprio cliente
+// envia (só o que sai de outros aparelhos), então o espelho é feito aqui, no envio.
+func (s *Session) chatwootMirrorAPI(chat types.JID, msgID string, tsMs int64, msg *waE2E.Message) {
+	cfg := s.getChatwoot()
+	if !cfg.valid() || !cfg.MirrorAPI {
+		return
+	}
+	if chat.Server != types.DefaultUserServer && chat.Server != types.HiddenUserServer {
+		return
+	}
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: chat, IsFromMe: true},
+			ID:            msgID,
+			Timestamp:     time.UnixMilli(tsMs),
+		},
+		Message: msg,
+	}
+	go s.chatwootMirrorOwnTitled(cfg, evt, mirrorAPITitle)
+}
+
+func (s *Session) chatwootMirrorOwnTitled(cfg ChatwootConfig, evt *events.Message, title string) {
 	chat := evt.Info.Chat // numa msg from_me 1:1, o Chat é o destinatário
 	phone, chatID, altID, _ := s.directIdentity(chat, evt.Info.RecipientAlt)
 	name := phone
@@ -332,7 +362,7 @@ func (s *Session) chatwootMirrorOwn(cfg ChatwootConfig, evt *events.Message) {
 		name = chat.User
 	}
 	avatar := s.cachedAvatar(chat)
-	j := deliverContent(evt, mirrorDeviceTitle, true)
+	j := deliverContent(evt, title, true)
 	j.ChatID = chatID
 	j.Phone = phone
 	j.AltID = altID
