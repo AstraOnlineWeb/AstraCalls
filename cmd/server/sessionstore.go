@@ -197,6 +197,12 @@ func (s *sessionStore) insert(ctx context.Context, id, name string) (sipUser, si
 	return sipUser, sipPass, nil
 }
 
+// setName renomeia a sessão (só o rótulo do painel; não mexe no WhatsApp).
+func (s *sessionStore) setName(ctx context.Context, id, name string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET name = $2 WHERE id = $1`, id, name)
+	return err
+}
+
 func (s *sessionStore) setSIP(ctx context.Context, id, sipUser, sipPass string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET sip_user = $1, sip_pass = $2 WHERE id = $3`, sipUser, sipPass, id)
 	return err
