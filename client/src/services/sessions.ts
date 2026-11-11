@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { getClientId } from "@/lib/client-id";
 import { apiUrl, getApiKey } from "@/lib/auth";
 import type { SessionInfo } from "@/types/session";
@@ -10,6 +10,9 @@ export const createSession = (name: string) =>
   apiPost<{ id: string }>("/api/sessions", { name });
 
 export const deleteSession = (id: string) => apiDelete(`/api/sessions/${id}`);
+
+export const renameSession = (id: string, name: string) =>
+  apiPut<{ id: string; name: string }>(`/api/sessions/${id}/name`, { name });
 
 const postVoid = async (path: string): Promise<void> => {
   const r = await fetch(apiUrl(path), {

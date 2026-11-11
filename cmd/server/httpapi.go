@@ -31,6 +31,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{sid}/restriction-status", s.handleRestrictionStatus)
 	mux.HandleFunc("GET /api/sessions/{sid}/capping", s.handleMessageCapping)
 	mux.HandleFunc("DELETE /api/sessions/{sid}", s.handleSessionDelete)
+	mux.HandleFunc("PUT /api/sessions/{sid}/name", s.handleSessionRename)
 	mux.HandleFunc("POST /api/sessions/{sid}/logout", s.handleSessionLogout)
 	mux.HandleFunc("POST /api/sessions/{sid}/pair", s.handleSessionPair)
 	mux.HandleFunc("POST /api/sessions/{sid}/pair-code", s.handleSessionPairCode)
@@ -580,6 +581,34 @@ func (s *server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+// handleSessionRename troca o nome (rótulo) da sessão. Body: {"name":"Navalha"}.
+func (s *server) handleSessionRename(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&b)
+	name := strings.TrimSpace(b.Name)
+	if name == "" || len([]rune(name)) > 60 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name obrigatório (até 60 caracteres)"})
+		return
+	}
+	if err := sess.mgr.store.setName(r.Context(), sess.id, name); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	sess.mgr.mu.Lock()
+	sess.mu.Lock()
+	sess.name = name
+	sess.mu.Unlock()
+	sess.mgr.mu.Unlock()
+	sess.mgr.broker.emitSessionList(sess.mgr.infos())
+	writeJSON(w, http.StatusOK, map[string]string{"id": sess.id, "name": name})
 }
 
 func (s *server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
