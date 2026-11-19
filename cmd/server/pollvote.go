@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 
@@ -116,8 +115,8 @@ func (s *Session) chatwootPushVote(cfg ChatwootConfig, evt *events.Message, text
 		}
 		group := evt.Info.Chat
 		name := group.String()
-		if gi, e := s.client.GetGroupInfo(context.Background(), group); e == nil && gi.Name != "" {
-			name = gi.Name
+		if n := s.cachedGroupName(group); n != "" {
+			name = n
 		}
 		contactID, sourceID, err = cfg.ensureContact(group.String(), "", name, "")
 	case types.DefaultUserServer, types.HiddenUserServer:

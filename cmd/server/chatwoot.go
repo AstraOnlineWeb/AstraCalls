@@ -444,8 +444,8 @@ func (s *Session) chatwootMirrorOwnGroup(cfg ChatwootConfig, evt *events.Message
 func (s *Session) groupJobTarget(group types.JID) (chatID, name, avatar string) {
 	chatID = group.String() // 1203...@g.us
 	name = chatID
-	if gi, err := s.client.GetGroupInfo(context.Background(), group); err == nil && gi.Name != "" {
-		name = gi.Name
+	if n := s.cachedGroupName(group); n != "" {
+		name = n
 	}
 	avatar = s.cachedAvatar(group)
 	return
@@ -468,8 +468,8 @@ func (s *Session) chatwootPushChannel(cfg ChatwootConfig, evt *events.Message) {
 	channel := evt.Info.Chat
 	chatID := channel.String() // ...@newsletter
 	name := chatID
-	if ni, err := s.client.GetNewsletterInfo(context.Background(), channel); err == nil && ni.ThreadMeta.Name.Text != "" {
-		name = ni.ThreadMeta.Name.Text
+	if n := s.cachedChannelName(channel); n != "" {
+		name = n
 	}
 	j := deliverContent(evt, "", false)
 	j.ChatID = chatID
@@ -1531,15 +1531,7 @@ func (s *server) handleChatwootOpenGroup(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	chatID := gid.String()
-	name := chatID
-	if gi, e := sess.client.GetGroupInfo(r.Context(), gid); e == nil && gi.Name != "" {
-		name = gi.Name
-	}
-	avatar := ""
-	if pp, perr := sess.client.GetProfilePictureInfo(r.Context(), gid, nil); perr == nil && pp != nil {
-		avatar = pp.URL
-	}
+	chatID, name, avatar := sess.groupJobTarget(gid)
 	s.openChatwootConversation(w, cfg, chatID, name, avatar)
 }
 

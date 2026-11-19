@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -69,8 +67,8 @@ func (s *Session) viewOnceConversation(cfg ChatwootConfig, info *types.MessageIn
 		}
 		chatID = info.Chat.String()
 		name = chatID
-		if gi, err := s.client.GetGroupInfo(context.Background(), info.Chat); err == nil && gi.Name != "" {
-			name = gi.Name
+		if n := s.cachedGroupName(info.Chat); n != "" {
+			name = n
 		}
 		avatar = s.cachedAvatar(info.Chat)
 		author := info.PushName
@@ -84,8 +82,8 @@ func (s *Session) viewOnceConversation(cfg ChatwootConfig, info *types.MessageIn
 		}
 		chatID = info.Chat.String()
 		name = chatID
-		if ni, err := s.client.GetNewsletterInfo(context.Background(), info.Chat); err == nil && ni.ThreadMeta.Name.Text != "" {
-			name = ni.ThreadMeta.Name.Text
+		if n := s.cachedChannelName(info.Chat); n != "" {
+			name = n
 		}
 		name = "📢 " + name
 	default:

@@ -67,6 +67,17 @@ func (c *avatarCache) get(key string, now time.Time, fetch func() (string, error
 	return url
 }
 
+// set grava um valor já conhecido (ex.: nome novo vindo do evento de grupo),
+// sem consultar o WhatsApp.
+func (c *avatarCache) set(key, val string, now time.Time) {
+	c.mu.Lock()
+	if c.m == nil {
+		c.m = make(map[string]avatarEntry)
+	}
+	c.m[key] = avatarEntry{url: val, exp: now.Add(avatarTTL)}
+	c.mu.Unlock()
+}
+
 // cachedAvatar é a foto de perfil (contato ou grupo) usada nos fluxos
 // automáticos; "" quando não há foto visível.
 func (s *Session) cachedAvatar(jid types.JID) string {
@@ -80,4 +91,61 @@ func (s *Session) cachedAvatar(jid types.JID) string {
 		}
 		return pp.URL, nil
 	})
+}
+
+// cachedGroupName é o nome do grupo usado nos fluxos automáticos (cada mensagem
+// de grupo no Chatwoot, voto de enquete, visualização única). GetGroupInfo é um
+// IQ ao servidor sem cache no whatsmeow: chamar a cada mensagem gerava milhares
+// de consultas por dia e levava o número à restrição. Mesmo cache/TTL da foto;
+// falha (ex.: rate-overlimit) fica 5 min sem nova tentativa. "" quando não há
+// nome — o chamador usa o JID.
+func (s *Session) cachedGroupName(group types.JID) string {
+	if group.IsEmpty() {
+		return ""
+	}
+	return s.groupNames.get(group.ToNonAD().String(), time.Now(), func() (string, error) {
+		gi, err := s.client.GetGroupInfo(context.Background(), group)
+		if err != nil || gi == nil {
+			return "", err
+		}
+		return gi.Name, nil
+	})
+}
+
+// updateGroupName grava o nome novo quando o grupo é renomeado (events.GroupInfo).
+func (s *Session) updateGroupName(group types.JID, name string) {
+	if group.IsEmpty() || name == "" {
+		return
+	}
+	s.groupNames.set(group.ToNonAD().String(), name, time.Now())
+}
+
+// cachedChannelName: idem para canais (newsletter) — GetNewsletterInfo também é
+// um IQ por chamada e rodava a cada mensagem de canal.
+func (s *Session) cachedChannelName(channel types.JID) string {
+	if channel.IsEmpty() {
+		return ""
+	}
+	return s.groupNames.get(channel.String(), time.Now(), func() (string, error) {
+		ni, err := s.client.GetNewsletterInfo(context.Background(), channel)
+		if err != nil || ni == nil {
+			return "", err
+		}
+		return ni.ThreadMeta.Name.Text, nil
+	})
+}
+
+// groupRefreshInterval limita o reenvio após ErrNoPermissionInGroup a uma
+// consulta GetGroupInfo por grupo nesse intervalo (senão cada envio recusado
+// num grupo só de admins viraria uma consulta ao WhatsApp).
+const groupRefreshInterval = avatarErrTTL
+
+// allowGroupRefresh devolve true se o grupo não foi rebuscado no intervalo.
+func (s *Session) allowGroupRefresh(group types.JID, now time.Time) bool {
+	key := group.ToNonAD().String()
+	if v, ok := s.groupRefreshed.Load(key); ok && now.Sub(v.(time.Time)) < groupRefreshInterval {
+		return false
+	}
+	s.groupRefreshed.Store(key, now)
+	return true
 }
