@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { ChatwootDialog } from "./ChatwootDialog";
 import { FormsDialog } from "./FormsDialog";
 import { McpDialog } from "./McpDialog";
+import { OptionsDialog } from "./OptionsDialog";
 import { ProxyDialog } from "./ProxyDialog";
 import { SIPDialog } from "./SIPDialog";
 import { WebhookDialog } from "./WebhookDialog";
@@ -114,6 +115,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
             />
           </label>
         )}
+        {session.paired && <OptionsDialog sid={session.id} />}
         {session.paired && <ProxyDialog sid={session.id} />}
         {session.paired && <SIPDialog session={session} />}
         <WebhookDialog sid={session.id} />

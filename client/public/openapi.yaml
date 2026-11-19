@@ -137,6 +137,11 @@ components:
       schema: { type: string }
       description: Número ou JID do chat.
   schemas:
+    SessionOptions:
+      type: object
+      properties:
+        read_messages: { type: boolean, description: "marca como lida toda mensagem recebida" }
+        always_online: { type: boolean, description: "mantém a conta online (o celular deixa de notificar)" }
     SIPAgentConfig:
       type: object
       properties:
@@ -636,6 +641,40 @@ paths:
                 type: object
                 properties: { enabled: { type: boolean } }
 
+  /api/sessions/{sid}/options:
+    get:
+      tags: [Sessões]
+      summary: Opções da conta (ler automático, sempre online)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionOptions" }
+    put:
+      tags: [Sessões]
+      summary: Altera as opções da conta
+      description: |
+        `read_messages` marca como lida toda mensagem recebida. `always_online`
+        mantém a conta online; enquanto um dispositivo vinculado está online o
+        WhatsApp **não notifica o celular**. Desligado (padrão), a conta fica
+        online só por um instante a cada conexão/reforço e volta para offline.
+        Campos ausentes mantêm o valor atual.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionOptions" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionOptions" }
   /api/sessions/{sid}/proxy:
     get:
       tags: [Sessões]

@@ -56,9 +56,12 @@ type Session struct {
 	webhookMu sync.Mutex      // serializa alterar+persistir a lista de webhooks
 	avatars   avatarCache     // foto de perfil p/ o Chatwoot (ver avatarcache.go)
 	chatwoot  ChatwootConfig
-	recording bool   // grava as chamadas desta sessão (opt-in)
-	proxy     string // proxy de saída da conexão WhatsApp (http/https/socks5)
-	lastJID   string // último número (JID) que esteve conectado; mantido após desconectar
+	recording bool           // grava as chamadas desta sessão (opt-in)
+	proxy     string         // proxy de saída da conexão WhatsApp (http/https/socks5)
+	options   sessionOptions // ler automático / sempre online (ver sessionoptions.go)
+	// offlineTimer volta a conta para "offline" após o pulso de presença.
+	offlineTimer *time.Timer
+	lastJID      string // último número (JID) que esteve conectado; mantido após desconectar
 
 	// Credenciais SIP desta sessão (modelo Wavoip: o PBX do cliente se registra
 	// no AstraCalls usando estes dados). Definidas na criação da sessão.
@@ -405,6 +408,11 @@ func (s *Session) keepPresenceActive(ctx context.Context) {
 		return
 	}
 	s.log.Info("keepalive presence enviada", "pushname", s.client.Store.PushName)
+	// Fica online só o suficiente para registrar atividade: com o dispositivo
+	// online o WhatsApp não notifica o celular (ver sessionoptions.go).
+	if !s.alwaysOnlineEnabled() {
+		s.scheduleOffline()
+	}
 }
 
 // presenceFallbackName é o pushname usado apenas quando o aparelho não propaga o
@@ -736,9 +744,10 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 }
 
 // maybeMarkRead confirma leitura automática das mensagens recebidas quando
-// read_messages está ligado na config do Chatwoot (paridade com a Evolution).
+// read_messages está ligado nas opções da sessão ou na config do Chatwoot
+// (paridade com a Evolution).
 func (s *Session) maybeMarkRead(ctx context.Context, evt *events.Message) {
-	if !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
+	if !s.readMessagesEnabled() || evt.Info.IsFromMe {
 		return
 	}
 	// não faz sentido/formato p/ newsletters e status/broadcast

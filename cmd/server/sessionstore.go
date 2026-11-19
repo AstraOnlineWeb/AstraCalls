@@ -31,6 +31,7 @@ type sessionRow struct {
 	SIPExtDest    string // ramal/número no PBX p/ tocar chamadas recebidas do WhatsApp (opcional)
 	SIPExtProxy   string // outbound proxy (host[:porta]); vazio = usa host
 	SIPExtOpts    string // JSON de sipAgentOpts (modo do INVITE entrante)
+	Options       string // JSON de sessionOptions (ler automático, sempre online)
 }
 
 type sessionStore struct{ db *sql.DB }
@@ -74,6 +75,7 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_ext_dest TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_ext_proxy TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sip_ext_opts TEXT`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS options TEXT`)
 
 	// Histórico de mensagens (para as rotas de chats/messages).
 	// O whatsmeow não persiste histórico; guardamos aqui o que passa pela sessão.
@@ -168,7 +170,7 @@ func newSessionID() string {
 }
 
 func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(last_jid, ''), COALESCE(webhook, ''), COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''), COALESCE(webhook_ignore_groups, false), COALESCE(webhooks, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, ''), COALESCE(sip_user, ''), COALESCE(sip_pass, ''), COALESCE(sip_ext_enabled, false), COALESCE(sip_ext_host, ''), COALESCE(sip_ext_port, 5060), COALESCE(sip_ext_user, ''), COALESCE(sip_ext_pass, ''), COALESCE(sip_ext_dest, ''), COALESCE(sip_ext_proxy, ''), COALESCE(sip_ext_opts, '') FROM sessions ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(last_jid, ''), COALESCE(webhook, ''), COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''), COALESCE(webhook_ignore_groups, false), COALESCE(webhooks, ''), COALESCE(chatwoot, ''), COALESCE(recording, false), COALESCE(proxy, ''), COALESCE(sip_user, ''), COALESCE(sip_pass, ''), COALESCE(sip_ext_enabled, false), COALESCE(sip_ext_host, ''), COALESCE(sip_ext_port, 5060), COALESCE(sip_ext_user, ''), COALESCE(sip_ext_pass, ''), COALESCE(sip_ext_dest, ''), COALESCE(sip_ext_proxy, ''), COALESCE(sip_ext_opts, ''), COALESCE(options, '') FROM sessions ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +178,7 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	var out []sessionRow
 	for rows.Next() {
 		var r sessionRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.LastJID, &r.Webhook, &r.WebhookSecret, &r.WebhookEvents, &r.WebhookIgnoreGroups, &r.Webhooks, &r.Chatwoot, &r.Recording, &r.Proxy, &r.SIPUser, &r.SIPPass, &r.SIPExtEnabled, &r.SIPExtHost, &r.SIPExtPort, &r.SIPExtUser, &r.SIPExtPass, &r.SIPExtDest, &r.SIPExtProxy, &r.SIPExtOpts); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.LastJID, &r.Webhook, &r.WebhookSecret, &r.WebhookEvents, &r.WebhookIgnoreGroups, &r.Webhooks, &r.Chatwoot, &r.Recording, &r.Proxy, &r.SIPUser, &r.SIPPass, &r.SIPExtEnabled, &r.SIPExtHost, &r.SIPExtPort, &r.SIPExtUser, &r.SIPExtPass, &r.SIPExtDest, &r.SIPExtProxy, &r.SIPExtOpts, &r.Options); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -238,6 +240,12 @@ func (s *sessionStore) setChatwoot(ctx context.Context, id, cfgJSON string) erro
 
 func (s *sessionStore) setRecording(ctx context.Context, id string, on bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET recording = $1 WHERE id = $2`, on, id)
+	return err
+}
+
+// setOptions persiste as opções da sessão (JSON de sessionOptions).
+func (s *sessionStore) setOptions(ctx context.Context, id, opts string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET options = $1 WHERE id = $2`, opts, id)
 	return err
 }
 

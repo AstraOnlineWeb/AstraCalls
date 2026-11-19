@@ -224,6 +224,9 @@ func (s *server) routes() http.Handler {
 	// Proxy de saída por sessão (http/https/socks5)
 	mux.HandleFunc("GET /api/sessions/{sid}/proxy", s.handleGetProxy)
 	mux.HandleFunc("PUT /api/sessions/{sid}/proxy", s.handleSetProxy)
+	// Opções da conta: ler mensagens automaticamente / sempre online
+	mux.HandleFunc("GET /api/sessions/{sid}/options", s.handleGetOptions)
+	mux.HandleFunc("PUT /api/sessions/{sid}/options", s.handleSetOptions)
 	// Votar numa enquete recebida
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll-vote", s.handlePollVote)
 	// Responder (RSVP) um evento recebido

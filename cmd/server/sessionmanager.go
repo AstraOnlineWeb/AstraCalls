@@ -248,6 +248,12 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 		s.loadWebhooks(row)
 		s.setRecording(row.Recording)
 		s.setProxy(row.Proxy)
+		if row.Options != "" {
+			var opts sessionOptions
+			if json.Unmarshal([]byte(row.Options), &opts) == nil {
+				s.setOptions(opts)
+			}
+		}
 		if row.Chatwoot != "" {
 			var cfg ChatwootConfig
 			if json.Unmarshal([]byte(row.Chatwoot), &cfg) == nil {
