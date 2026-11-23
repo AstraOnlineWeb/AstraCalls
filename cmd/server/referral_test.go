@@ -64,3 +64,52 @@ func TestFormatReferralNote(t *testing.T) {
 		t.Error("referral nil deveria dar nota vazia")
 	}
 }
+
+// #202: link wa.me/busca trazem entryPointSource sem anúncio — não pode virar
+// "Contato veio de um anúncio".
+func TestFormatReferralNote_NotAd(t *testing.T) {
+	cases := map[string]string{
+		"click_to_chat_link":     "Origem: link do WhatsApp",
+		"phone_number_hyperlink": "Origem: link de número de telefone",
+		"contact_search":         "Origem: busca de contato",
+		"global_search_new_chat": "Origem: busca do WhatsApp",
+		"algo_novo":              "Origem não identificada* (algo_novo)",
+	}
+	for src, want := range cases {
+		m := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        proto.String("oi"),
+			ContextInfo: &waE2E.ContextInfo{EntryPointConversionSource: proto.String(src)},
+		}}
+		note := formatReferralNote(messageReferral(m))
+		if strings.Contains(note, "anúncio") {
+			t.Errorf("%s: rotulado como anúncio: %q", src, note)
+		}
+		if !strings.Contains(note, want) {
+			t.Errorf("%s: esperava %q em %q", src, want, note)
+		}
+	}
+}
+
+// ExternalAdReply sem ctwa_clid nem sourceType "ad" (ex.: prévia de link de
+// outro app) e sem origem: nenhuma nota.
+func TestFormatReferralNote_ExternalReplyWithoutAd(t *testing.T) {
+	m := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+		Text: proto.String("veja"),
+		ContextInfo: &waE2E.ContextInfo{ExternalAdReply: &waE2E.ContextInfo_ExternalAdReplyInfo{
+			Title:     proto.String("Página"),
+			SourceURL: proto.String("https://exemplo.com"),
+			SourceID:  proto.String("123"),
+		}},
+	}}
+	if note := formatReferralNote(messageReferral(m)); note != "" {
+		t.Errorf("não deveria gerar nota: %q", note)
+	}
+}
+
+// anúncio reconhecido só pelo sourceType (sem ctwa_clid) continua anúncio.
+func TestFormatReferralNote_AdBySourceType(t *testing.T) {
+	ref := map[string]any{"sourceType": "ad", "title": "Promo", "entryPointSource": "ctwa_ad"}
+	if note := formatReferralNote(ref); !strings.Contains(note, "Click to WhatsApp") {
+		t.Errorf("sourceType=ad deveria ser anúncio: %q", note)
+	}
+}

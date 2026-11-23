@@ -499,20 +499,51 @@ type cwJob struct {
 
 func (j cwJob) hasMedia() bool { return len(j.MsgRaw) > 0 }
 
-// formatReferralNote monta a nota privada que avisa o atendente que o contato
-// chegou por um anúncio (Click to WhatsApp), com os dados de campanha. Retorna
-// "" quando não há origem de anúncio.
+// referralIsAd diz se o referral é de anúncio Click to WhatsApp. Só conta sinal
+// real de anúncio (ctwa_clid ou sourceType "ad"): link wa.me, busca e link de
+// telefone também trazem entryPointSource/ExternalAdReply e não são anúncio.
+func referralIsAd(ref map[string]any) bool {
+	clid, _ := ref["ctwaClid"].(string)
+	st, _ := ref["sourceType"].(string)
+	return clid != "" || strings.EqualFold(st, "ad")
+}
+
+// referralOriginLabels traduz o entryPointSource das origens que não são anúncio.
+var referralOriginLabels = map[string]string{
+	"click_to_chat_link":     "link do WhatsApp",
+	"phone_number_hyperlink": "link de número de telefone",
+	"contact_search":         "busca de contato",
+	"global_search_new_chat": "busca do WhatsApp",
+}
+
+// formatReferralNote monta a nota privada que avisa o atendente de onde o
+// contato veio: anúncio (Click to WhatsApp, com os dados da campanha) ou outra
+// origem (link, busca), sem afirmar anúncio. Retorna "" quando não há origem.
 func formatReferralNote(ref map[string]any) string {
 	if len(ref) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("📢 *Contato veio de um anúncio (Click to WhatsApp)*")
 	line := func(label, key string) {
 		if v, ok := ref[key].(string); ok && v != "" {
 			b.WriteString("\n• " + label + ": " + v)
 		}
 	}
+	if !referralIsAd(ref) {
+		src, _ := ref["entryPointSource"].(string)
+		if src == "" {
+			return "" // sem anúncio nem origem conhecida (ex.: prévia de link)
+		}
+		if label, ok := referralOriginLabels[src]; ok {
+			b.WriteString("📍 *Origem: " + label + "*")
+		} else {
+			b.WriteString("📍 *Origem não identificada* (" + src + ")")
+		}
+		line("Origem", "utmSource")
+		line("Meio", "utmMedium")
+		return b.String()
+	}
+	b.WriteString("📢 *Contato veio de um anúncio (Click to WhatsApp)*")
 	line("Título", "title")
 	line("Descrição", "body")
 	line("Link do anúncio", "sourceUrl")
