@@ -227,6 +227,11 @@ func (s *server) handleContactInfo(w http.ResponseWriter, r *http.Request) {
 	if !lid.IsEmpty() {
 		out["lid"] = lid.ToNonAD().String()
 	}
+	// conta comercial: nome verificado do WhatsApp Business (whatsmeow 20261116)
+	out["isBusiness"] = ui.VerifiedName != nil
+	if ui.VerifiedName != nil && ui.VerifiedName.Details != nil {
+		out["verifiedName"] = ui.VerifiedName.Details.GetVerifiedName()
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

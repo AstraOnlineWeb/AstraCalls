@@ -2444,6 +2444,8 @@ paths:
                   lid: { type: string, description: "LID quando conhecido (\"\" senão)" }
                   status: { type: string, description: "Recado/About" }
                   pictureId: { type: string }
+                  isBusiness: { type: boolean, description: "conta WhatsApp Business" }
+                  verifiedName: { type: string, description: "nome comercial verificado (só contas Business)" }
                   id: { type: string, description: "alias WAHA (número@c.us)" }
         "404": { description: "not found" }
 
