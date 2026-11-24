@@ -4094,6 +4094,108 @@ paths:
         - { name: ids, in: query, schema: { type: string }, description: "outros ids separados por vírgula" }
       responses:
         "200": { description: "{ deleted_count }" }
+  /api/sessions/{sid}/catalog/products/{id}/visibility:
+    put:
+      tags: [Catálogo]
+      summary: "Oculta ou mostra um produto (EXPERIMENTAL: ainda não validado)"
+      description: >
+        Em validação: hoje o WhatsApp responde "item não encontrado". Use o app por enquanto.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [hidden], properties: { hidden: { type: boolean } } }
+      responses:
+        "200": { description: "visibilidade atualizada" }
+  /api/sessions/{sid}/catalog/settings:
+    put:
+      tags: [Catálogo]
+      summary: Liga ou desliga o carrinho de compras do catálogo
+      description: Com o carrinho ligado, o cliente monta o pedido no catálogo e envia para a conta.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [cartEnabled], properties: { cartEnabled: { type: boolean } } }
+            example: { cartEnabled: true }
+      responses:
+        "200": { description: "{ cart_enabled }" }
+  /api/sessions/{sid}/catalog/collections:
+    get:
+      tags: [Catálogo]
+      summary: Lista as coleções do catálogo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200": { description: "{ collections: [{ id, name, products, status_info }], paging }" }
+    post:
+      tags: [Catálogo]
+      summary: Cria uma coleção
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                productIds: { type: array, items: { type: string } }
+            example: { name: "Fones", productIds: ["28935733206126350"] }
+      responses:
+        "200": { description: "{ collection: { id, status_info } }" }
+  /api/sessions/{sid}/catalog/collections/{id}:
+    put:
+      tags: [Catálogo]
+      summary: Adiciona ou tira produtos da coleção (renomear EXPERIMENTAL)
+      description: >
+        `addProductIds` / `removeProductIds` alteram os produtos. ATENÇÃO: o WhatsApp devolve um
+        **id novo** para a coleção a cada alteração; use o `collection.id` da resposta daí em
+        diante. Renomear (`name`) ainda não foi validado ("não aceitável").
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                addProductIds: { type: array, items: { type: string } }
+                removeProductIds: { type: array, items: { type: string } }
+      responses:
+        "200": { description: "{ collection: { id (NOVO), status_info } }" }
+    delete:
+      tags: [Catálogo]
+      summary: Apaga coleção(ões)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: ids, in: query, schema: { type: string }, description: "outros ids separados por vírgula" }
+      responses:
+        "200": { description: "{ success: true }" }
+  /api/sessions/{sid}/orders/{orderId}:
+    get:
+      tags: [Catálogo]
+      summary: Detalhes de um pedido recebido (itens, quantidades, total)
+      description: >
+        Quando o cliente envia um pedido pelo carrinho, o webhook da mensagem traz `type: "order"`
+        e o campo `order` com `orderId` e `token`. Use os dois aqui para ver os itens.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: orderId, in: path, required: true, schema: { type: string } }
+        - { name: token, in: query, required: true, schema: { type: string }, description: "order.token do webhook" }
+      responses:
+        "200": { description: "{ id, items: [{ id, name, quantity, price, currency, imageUrl }], total, subtotal, currency }" }
   /api/sessions/{sid}/groups/{gid}/requests:
     get:
       tags: [Grupos]
