@@ -393,17 +393,22 @@ func (s *Session) bizJIDCandidates(pn string) []string {
 	return []string{pn}
 }
 
-// bizMutate roda a mutation tentando cada biz_jid candidato.
+// bizMutate roda a mutation tentando cada biz_jid candidato até uma dar certo.
+// Devolve o erro mais informativo (o que não for "while getting catalog").
 func (s *Session) bizMutate(ctx context.Context, pn, docID string, vars func(bizJID string) map[string]any) (map[string]json.RawMessage, error) {
 	var data map[string]json.RawMessage
-	var err error
+	var err, best error
 	for _, bj := range s.bizJIDCandidates(pn) {
 		data, err = s.bizGraphQL(ctx, docID, vars(bj))
-		if !bizNoCatalog(err) {
-			return data, err
+		if err == nil {
+			return data, nil
+		}
+		s.log.Info("mutation do catálogo recusada", "doc", docID, "biz_jid", bj, "err", err)
+		if best == nil || bizNoCatalog(best) {
+			best = err
 		}
 	}
-	return data, err
+	return data, best
 }
 
 // bizFindProduct procura no catálogo um produto pelo retailerId (ou nome).
