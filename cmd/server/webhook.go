@@ -106,6 +106,10 @@ func summarizeMessage(evt *events.Message) map[string]any {
 	if om := evt.Message.GetOrderMessage(); om != nil {
 		out["order"] = orderSummary(om)
 	}
+	// cobrança do vendedor / confirmação de pagamento do cliente / status do pedido
+	if ou := orderUpdateSummary(evt.Message); ou != nil {
+		out["orderUpdate"] = ou
+	}
 	if raw, err := protojson.Marshal(evt.Message); err == nil {
 		out["raw"] = json.RawMessage(raw)
 	}

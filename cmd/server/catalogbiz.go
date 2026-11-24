@@ -825,65 +825,34 @@ func (s *server) handleCommerceSettings(w http.ResponseWriter, r *http.Request) 
 
 // ---- pedidos ----
 
-// GET /api/sessions/{sid}/orders/{orderId}?token=...
-// Detalhes (itens, preços, total) de um pedido que um cliente mandou para a
-// conta. orderId e token vêm no webhook da mensagem de pedido (campo order).
-// IQ fb:thrift_iq smax_id=5 (Baileys getOrderDetails).
-func (s *server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
+// POST /api/sessions/{sid}/orders/{orderId}/charge → aceita o pedido do cliente
+// mandando a cobrança (review_and_pay) ligada a ele, como o "Aceitar pedido" do app.
+// Corpo: {to, items:[{productId, name, amount, quantity}], key?, keyType?,
+// merchantName?, reference?, body?, footer?}. Sem key: cobrança sem meio de pagamento.
+func (s *server) handleOrderCharge(w http.ResponseWriter, r *http.Request) {
 	sess := s.pairedSession(w, r.PathValue("sid"))
 	if sess == nil {
 		return
 	}
-	id := strings.TrimSpace(r.PathValue("orderId"))
-	tok := strings.TrimSpace(r.URL.Query().Get("token"))
-	if id == "" || tok == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "orderId e token obrigatórios (vêm no webhook do pedido)"})
+	var b struct {
+		To           string          `json:"to"`
+		Items        []pixChargeItem `json:"items"`
+		Key          string          `json:"key"`
+		KeyType      string          `json:"keyType"`
+		MerchantName string          `json:"merchantName"`
+		Reference    string          `json:"reference"`
+		Body         string          `json:"body"`
+		Footer       string          `json:"footer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.To) == "" || len(b.Items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to e items obrigatórios"})
 		return
 	}
-	resp, err := sess.client.DangerousInternals().SendIQ(r.Context(), whatsmeow.DangerousInfoQuery{
-		Namespace: "fb:thrift_iq", Type: "get", To: types.ServerJID, SMaxID: "5",
-		Content: []waBinary.Node{{
-			Tag: "order", Attrs: waBinary.Attrs{"op": "get", "id": id},
-			Content: []waBinary.Node{
-				{Tag: "image_dimensions", Content: []waBinary.Node{
-					{Tag: "width", Content: []byte("100")}, {Tag: "height", Content: []byte("100")}}},
-				{Tag: "token", Content: []byte(tok)},
-			},
-		}},
+	s.sendPixCharge(sess, w, r, pixChargeReq{
+		To: b.To, Key: b.Key, KeyType: b.KeyType, MerchantName: b.MerchantName,
+		Reference: b.Reference, Body: b.Body, Footer: b.Footer, Items: b.Items,
+		OrderRequestID: r.PathValue("orderId"),
 	})
-	if err == nil {
-		err = firstNodeError(resp)
-	}
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-	order, ok := resp.GetOptionalChildByTag("order")
-	if !ok {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "WhatsApp não devolveu o pedido"})
-		return
-	}
-	items := []map[string]any{}
-	for _, p := range order.GetChildrenByTag("product") {
-		img := ""
-		if im, ok := p.GetOptionalChildByTag("image"); ok {
-			img = nodeText(&im, "url")
-		}
-		qty, _ := strconv.Atoi(nodeText(&p, "quantity"))
-		items = append(items, map[string]any{
-			"id": nodeText(&p, "id"), "name": nodeText(&p, "name"), "imageUrl": img,
-			"price": priceFrom1000(nodeText(&p, "price")), "currency": nodeText(&p, "currency"), "quantity": qty,
-		})
-	}
-	out := map[string]any{"id": id, "items": items}
-	if pr, ok := order.GetOptionalChildByTag("price"); ok {
-		out["total"] = priceFrom1000(nodeText(&pr, "total"))
-		out["currency"] = nodeText(&pr, "currency")
-		if sub := nodeText(&pr, "subtotal"); sub != "" {
-			out["subtotal"] = priceFrom1000(sub)
-		}
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 func nodeText(n *waBinary.Node, tag string) string {
@@ -925,4 +894,73 @@ func orderSummary(om *waE2E.OrderMessage) map[string]any {
 		out["surface"] = om.GetSurface().String()
 	}
 	return out
+}
+
+// orderUpdateSummary lê os botões nativos de pedido/pagamento (review_and_pay =
+// cobrança do vendedor; payment_method = confirmação do cliente; order_status =
+// atualização de status) e devolve um resumo para o webhook (campo orderUpdate).
+func orderUpdateSummary(m *waE2E.Message) map[string]any {
+	im := m.GetInteractiveMessage()
+	if im == nil || im.GetNativeFlowMessage() == nil {
+		return nil
+	}
+	for _, btn := range im.GetNativeFlowMessage().GetButtons() {
+		name := btn.GetName()
+		if name != "review_and_pay" && name != "payment_method" && name != "order_status" {
+			continue
+		}
+		var p struct {
+			OrderRequestID string `json:"order_request_id"`
+			ReferenceID    string `json:"reference_id"`
+			PaymentMethod  string `json:"payment_method"`
+			PaymentTS      int64  `json:"payment_timestamp"`
+			Currency       string `json:"currency"`
+			Total          *struct {
+				Value  float64 `json:"value"`
+				Offset float64 `json:"offset"`
+			} `json:"total_amount"`
+			Order struct {
+				Status string `json:"status"`
+				Items  []struct {
+					ProductID string `json:"product_id"`
+					Name      string `json:"name"`
+					Quantity  int    `json:"quantity"`
+					Amount    struct {
+						Value  float64 `json:"value"`
+						Offset float64 `json:"offset"`
+					} `json:"amount"`
+				} `json:"items"`
+			} `json:"order"`
+		}
+		if json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &p) != nil {
+			return map[string]any{"type": name}
+		}
+		kind := map[string]string{"review_and_pay": "charge", "payment_method": "payment", "order_status": "status"}[name]
+		out := map[string]any{"type": kind}
+		putStr(out, "orderId", p.OrderRequestID)
+		putStr(out, "referenceId", p.ReferenceID)
+		putStr(out, "status", p.Order.Status)
+		putStr(out, "paymentMethod", p.PaymentMethod)
+		putStr(out, "currency", p.Currency)
+		if p.PaymentTS > 0 {
+			out["paymentTimestamp"] = p.PaymentTS * 1000
+		}
+		if p.Total != nil && p.Total.Offset > 0 {
+			out["total"] = p.Total.Value / p.Total.Offset
+		}
+		if len(p.Order.Items) > 0 {
+			items := make([]map[string]any, 0, len(p.Order.Items))
+			for _, it := range p.Order.Items {
+				x := map[string]any{"name": it.Name, "quantity": it.Quantity}
+				putStr(x, "productId", it.ProductID)
+				if it.Amount.Offset > 0 {
+					x["amount"] = it.Amount.Value / it.Amount.Offset
+				}
+				items = append(items, x)
+			}
+			out["items"] = items
+		}
+		return out
+	}
+	return nil
 }

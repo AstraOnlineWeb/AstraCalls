@@ -4183,19 +4183,56 @@ paths:
         - { name: ids, in: query, schema: { type: string }, description: "outros ids separados por vírgula" }
       responses:
         "200": { description: "{ success: true }" }
-  /api/sessions/{sid}/orders/{orderId}:
-    get:
+  /api/sessions/{sid}/orders/{orderId}/charge:
+    post:
       tags: [Catálogo]
-      summary: Detalhes de um pedido recebido (itens, quantidades, total)
+      summary: Aceita um pedido do cliente mandando a cobrança (como o "Aceitar pedido" do app)
       description: >
-        Quando o cliente envia um pedido pelo carrinho, o webhook da mensagem traz `type: "order"`
-        e o campo `order` com `orderId` e `token`. Use os dois aqui para ver os itens.
+        Fluxo de pedido pelo carrinho do catálogo, como chega no WEBHOOK:
+        (1) o cliente envia o pedido → `type: "order"` e campo `order` {orderId, token, title,
+        itemCount, total, currency, status: INQUIRY}; (2) a loja aceita mandando a cobrança
+        (esta rota, ou pelo app) → campo `orderUpdate` {type: "charge", orderId, referenceId,
+        status: payment_requested, items, total}; (3) o cliente confirma → `orderUpdate`
+        {type: "payment", paymentMethod: "confirm", paymentTimestamp, orderId, items, total}.
+        Os itens do pedido NÃO vêm na mensagem do cliente (só título, quantidade e total), e a
+        consulta de detalhes do pedido não está disponível para aparelho vinculado: monte os
+        itens a partir do catálogo. Com `key` (Pix), a cobrança leva "Copiar chave Pix"; sem
+        `key`, vai sem meio de pagamento, como o app.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
-        - { name: orderId, in: path, required: true, schema: { type: string } }
-        - { name: token, in: query, required: true, schema: { type: string }, description: "order.token do webhook" }
+        - { name: orderId, in: path, required: true, schema: { type: string }, description: "order.orderId do webhook" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, items]
+              properties:
+                to: { type: string }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, amount]
+                    properties:
+                      productId: { type: string, description: "id do produto no catálogo" }
+                      retailerId: { type: string }
+                      name: { type: string }
+                      amount: { type: number, description: "valor unitário em reais" }
+                      quantity: { type: integer, default: 1 }
+                key: { type: string, description: "chave Pix (opcional)" }
+                keyType: { type: string }
+                merchantName: { type: string }
+                reference: { type: string, description: "código de referência (padrão: gerado)" }
+                body: { type: string }
+                footer: { type: string }
+            example:
+              to: "5561999999999"
+              items: [{ productId: "28935733206126350", name: "Fone Bluetooth", amount: 199.90, quantity: 1 }]
+              key: "contato@minhaloja.com"
       responses:
-        "200": { description: "{ id, items: [{ id, name, quantity, price, currency, imageUrl }], total, subtotal, currency }" }
+        "200": { description: "{ id, timestamp, to }" }
   /api/sessions/{sid}/groups/{gid}/requests:
     get:
       tags: [Grupos]

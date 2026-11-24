@@ -205,9 +205,11 @@ func (s *server) handleSendPix(w http.ResponseWriter, r *http.Request) {
 // ===== cobrança nativa (review_and_pay) =====
 
 type pixChargeItem struct {
-	Name     string    `json:"name"`
-	Amount   flexFloat `json:"amount"` // valor unitário em reais
-	Quantity int       `json:"quantity"`
+	Name       string    `json:"name"`
+	Amount     flexFloat `json:"amount"` // valor unitário em reais
+	Quantity   int       `json:"quantity"`
+	ProductID  string    `json:"productId"`  // produto do catálogo (pedido); vazio = item avulso
+	RetailerID string    `json:"retailerId"` // código do produto (padrão: productId)
 }
 
 type pixChargeReq struct {
@@ -215,6 +217,7 @@ type pixChargeReq struct {
 	Amount                         float64
 	Reference, Body, Footer        string
 	Items                          []pixChargeItem
+	OrderRequestID                 string // número do pedido do cliente (aceitar pedido)
 }
 
 // pixKeyType deduz o tipo da chave Pix (o cartão mostra "Copiar chave <tipo>").
@@ -264,6 +267,8 @@ func buildPixChargeMessage(c pixChargeReq, merchantFallback string) (*waE2E.Mess
 		Quantity      int    `json:"quantity"`
 		IsCustomItem  bool   `json:"isCustomItem"`
 		IsQuantitySet bool   `json:"isQuantitySet"`
+		ProductID     string `json:"product_id,omitempty"`
+		RetailerID    string `json:"retailer_id,omitempty"`
 	}
 	items := make([]item, 0, len(c.Items))
 	var total int64
@@ -277,7 +282,12 @@ func buildPixChargeMessage(c pixChargeReq, merchantFallback string) (*waE2E.Mess
 		if name == "" || v <= 0 {
 			return nil, "", errors.New("cada item precisa de name e amount > 0")
 		}
-		items = append(items, item{Name: name, Amount: amt{v, 100}, Quantity: q, IsCustomItem: true, IsQuantitySet: true})
+		pid := strings.TrimSpace(it.ProductID)
+		rid := strings.TrimSpace(it.RetailerID)
+		if pid != "" && rid == "" {
+			rid = pid // o app manda retailer_id = product_id quando o produto não tem código
+		}
+		items = append(items, item{Name: name, Amount: amt{v, 100}, Quantity: q, IsCustomItem: pid == "", IsQuantitySet: true, ProductID: pid, RetailerID: rid})
 		total += v * int64(q)
 	}
 	if len(items) == 0 {
@@ -297,23 +307,32 @@ func buildPixChargeMessage(c pixChargeReq, merchantFallback string) (*waE2E.Mess
 	if ref == "" {
 		ref = "PIX" + strings.ToUpper(strconv.FormatInt(time.Now().UnixMilli(), 36))
 	}
-	params := map[string]any{
-		"currency":     "BRL",
-		"reference_id": ref,
-		"type":         "physical-goods",
-		"total_amount": amt{total, 100},
-		"payment_settings": []any{map[string]any{
+	// sem chave Pix (aceite de pedido): como o app, cobrança sem meio de pagamento
+	paySettings := []any{map[string]any{"type": "cards", "cards": map[string]bool{"enabled": false}}}
+	if k := strings.TrimSpace(c.Key); k != "" {
+		paySettings = []any{map[string]any{
 			"type": "pix_static_code",
 			"pix_static_code": map[string]string{
-				"merchant_name": merchant, "key": strings.TrimSpace(c.Key), "key_type": pixKeyType(c.Key, c.KeyType),
+				"merchant_name": merchant, "key": k, "key_type": pixKeyType(c.Key, c.KeyType),
 			},
-		}},
+		}}
+	}
+	params := map[string]any{
+		"currency":         "BRL",
+		"reference_id":     ref,
+		"type":             "physical-goods",
+		"total_amount":     amt{total, 100},
+		"payment_settings": paySettings,
 		"order": map[string]any{
 			"status": "payment_requested", "subtotal": amt{total, 100}, "order_type": "ORDER", "items": items,
 		},
 		"native_payment_methods": []any{},
 		"share_payment_status":   false,
 		"is_soft_deleted":        false,
+	}
+	if id := strings.TrimSpace(c.OrderRequestID); id != "" {
+		params["order_request_id"] = id
+		params["additional_note"] = ""
 	}
 	pj, _ := json.Marshal(params)
 	body := strings.TrimSpace(c.Body)
@@ -341,7 +360,7 @@ func buildPixChargeMessage(c pixChargeReq, merchantFallback string) (*waE2E.Mess
 }
 
 func (s *server) sendPixCharge(sess *Session, w http.ResponseWriter, r *http.Request, c pixChargeReq) {
-	if strings.TrimSpace(c.Key) == "" {
+	if strings.TrimSpace(c.Key) == "" && strings.TrimSpace(c.OrderRequestID) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key obrigatória na cobrança"})
 		return
 	}
