@@ -11,10 +11,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// O card de produto NATIVO (ProductMessage do catálogo) é recurso da API oficial do
-// WhatsApp Business e não pode ser enviado por cliente não-oficial (whatsmeow). O que
-// funciona é mandar o produto como imagem (a foto) + legenda formatada — ou, sem foto,
-// como texto. É o mesmo formato legível que já usamos no inbound (productText).
+// /messages/product manda o produto como imagem (a foto) + legenda formatada — ou, sem
+// foto, como texto —, sem depender de catálogo. É o mesmo formato legível do inbound
+// (productText). Para o card nativo com botão "Ver", use /messages/product-native.
 
 // productSendBody é o corpo do POST /messages/product.
 type productSendBody struct {
@@ -108,10 +107,11 @@ func (s *server) handleSendProduct(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// handleSendProductNative envia o CARD DE PRODUTO NATIVO (ProductMessage) referenciando
-// um produto REAL do catálogo da conta. SÓ funciona se a conta conectada for WhatsApp
-// Business E o `productId` existir no catálogo dela — o app do destinatário busca o
-// produto em `businessJid` por esse ID. Com ID inexistente, o card não renderiza.
+// handleSendProductNative envia o CARD DE PRODUTO NATIVO (ProductMessage). O card
+// renderiza com o snapshot enviado (foto, título, preço) mesmo de conta comum —
+// validado em 24/11/2026. A tela de detalhes ("Ver") busca o produto no catálogo de
+// `businessJid` pelo `productId`: sem produto real lá (conta Business), dá
+// "Ocorreu um erro".
 // Corpo: {to, productId, businessJid?, title?, description?, price?, salePrice?,
 //         currency?, retailerId?, url?, image?/imageUrl?}
 func (s *server) handleSendProductNative(w http.ResponseWriter, r *http.Request) {

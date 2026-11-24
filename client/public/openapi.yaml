@@ -3956,8 +3956,10 @@ paths:
       tags: [Mensagens]
       summary: Envia produto NATIVO (catálogo do WhatsApp Business)
       description: >
-        Mensagem de produto nativa via catálogo. Exige conta WhatsApp Business e um produto
-        no catálogo (productId/businessJid).
+        Card de produto nativo (foto, título, preço e botão "Ver"). O card aparece com os dados
+        enviados mesmo de conta comum; já a tela de detalhes ("Ver") busca o produto no catálogo
+        de `businessJid` pelo `productId`. Sem produto real nesse catálogo (conta Business), o
+        detalhe mostra "Ocorreu um erro".
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/ClientId" }
