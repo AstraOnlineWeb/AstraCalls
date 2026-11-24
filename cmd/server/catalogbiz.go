@@ -41,7 +41,6 @@ const (
 	bizDocEditProduct  = "9889773371084956"
 	bizDocDeleteProd   = "9376108569185474"
 	bizDocFetchCatalog = "9957894520961099"
-	bizDocCreateCat    = "29232780583035464"
 	bizNonceWait       = 20 * time.Second
 	bizTokenTTL        = 30 * time.Minute
 )
@@ -384,16 +383,13 @@ func bizNoCatalog(err error) bool {
 	return strings.Contains(m, "2498049") || strings.Contains(m, "2498052")
 }
 
-// bizEnsureCatalog cria o catálogo da conta (WAWebBizCatalogManagementCreateCatalogMutation).
-func (s *Session) bizEnsureCatalog(ctx context.Context, jid string) error {
-	_, err := s.bizGraphQL(ctx, bizDocCreateCat, map[string]any{
-		"input": map[string]any{"product_catalog": map[string]any{"biz_jid": jid, "platform": "WEB"}},
-	})
-	if err != nil {
-		return fmt.Errorf("criar catálogo: %w", err)
+// bizJIDCandidates: telefone e, se houver, o LID da própria conta.
+func (s *Session) bizJIDCandidates(pn string) []string {
+	out := []string{pn}
+	if lid := s.client.Store.LID; !lid.IsEmpty() {
+		out = append(out, lid.ToNonAD().String())
 	}
-	s.log.Info("catálogo criado na conta Business")
-	return nil
+	return out
 }
 
 // bizResult escreve a resposta: 200 com o nó de dados, ou 502 com o erro.
@@ -473,18 +469,19 @@ func (s *server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	vars := map[string]any{
-		"input": map[string]any{"product": map[string]any{
-			"biz_jid": jid, "width": 100, "height": 100, "product_info": in.productInfo(imgs, true),
-		}},
-	}
-	data, err := sess.bizGraphQL(r.Context(), bizDocAddProduct, vars)
-	if bizNoCatalog(err) { // conta sem catálogo ainda: cria e tenta de novo
-		if cerr := sess.bizEnsureCatalog(r.Context(), jid); cerr != nil {
-			err = fmt.Errorf("%v; %v", err, cerr)
-		} else {
-			data, err = sess.bizGraphQL(r.Context(), bizDocAddProduct, vars)
+	// o WhatsApp Web novo identifica a conta pelo LID; tenta telefone e depois LID
+	info := in.productInfo(imgs, true)
+	var data map[string]json.RawMessage
+	for _, bj := range sess.bizJIDCandidates(jid) {
+		data, err = sess.bizGraphQL(r.Context(), bizDocAddProduct, map[string]any{
+			"input": map[string]any{"product": map[string]any{
+				"biz_jid": bj, "width": 100, "height": 100, "product_info": info,
+			}},
+		})
+		if !bizNoCatalog(err) {
+			break
 		}
+		sess.log.Info("cadastro de produto recusado com este biz_jid; tentando o próximo", "biz_jid", bj, "err", err)
 	}
 	if err == nil {
 		sess.log.Info("produto cadastrado no catálogo")
