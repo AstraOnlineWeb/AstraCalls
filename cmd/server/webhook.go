@@ -102,6 +102,10 @@ func summarizeMessage(evt *events.Message) map[string]any {
 	if ref := messageReferral(evt.Message); ref != nil {
 		out["referral"] = ref
 	}
+	// pedido do catálogo: orderId + token servem no GET /orders/{orderId}?token=
+	if om := evt.Message.GetOrderMessage(); om != nil {
+		out["order"] = orderSummary(om)
+	}
 	if raw, err := protojson.Marshal(evt.Message); err == nil {
 		out["raw"] = json.RawMessage(raw)
 	}

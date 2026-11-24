@@ -19,6 +19,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/socket"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -659,4 +660,266 @@ func (s *server) handleGetProduct(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": "produto não encontrado no catálogo"})
+}
+
+// ---- coleções, visibilidade, carrinho (fluxo do dono, doc_ids do WA Web via Cobalt) ----
+
+const (
+	bizDocFetchColl      = "9687699931342731"
+	bizDocCreateColl     = "29361942130088470"
+	bizDocUpdateColl     = "24486970300891371"
+	bizDocDeleteColl     = "29970196299234260"
+	bizDocVisibility     = "9665162096898581"
+	bizDocCommerceConfig = "9797519763673469"
+)
+
+func (s *server) bizSession(w http.ResponseWriter, r *http.Request) (*Session, string, bool) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return nil, "", false
+	}
+	jid, err := sess.bizOwnJID()
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return nil, "", false
+	}
+	return sess, jid, true
+}
+
+// GET /api/sessions/{sid}/catalog/collections
+func (s *server) handleGetCollections(w http.ResponseWriter, r *http.Request) {
+	sess, jid, ok := s.bizSession(w, r)
+	if !ok {
+		return
+	}
+	data, err := sess.bizMutate(r.Context(), jid, bizDocFetchColl, func(bj string) map[string]any {
+		return map[string]any{"request": map[string]any{"collections": map[string]any{
+			"biz_jid": bj, "collection_limit": "50", "item_limit": "50", "width": "100", "height": "100",
+		}}}
+	})
+	bizResult(w, data, "xfb_whatsapp_catalog_collections", err)
+}
+
+// POST /api/sessions/{sid}/catalog/collections {name, productIds[]}
+func (s *server) handleCreateCollection(w http.ResponseWriter, r *http.Request) {
+	sess, jid, ok := s.bizSession(w, r)
+	if !ok {
+		return
+	}
+	var b struct {
+		Name       string   `json:"name"`
+		ProductIDs []string `json:"productIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Name) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name obrigatório"})
+		return
+	}
+	if b.ProductIDs == nil {
+		b.ProductIDs = []string{}
+	}
+	data, err := sess.bizMutate(r.Context(), jid, bizDocCreateColl, func(bj string) map[string]any {
+		return map[string]any{"input": map[string]any{
+			"collection": map[string]any{"name": b.Name, "product_ids": b.ProductIDs},
+			"biz_jid":    bj,
+		}}
+	})
+	bizResult(w, data, "xfb_whatsapp_catalog_create_collection", err)
+}
+
+// PUT /api/sessions/{sid}/catalog/collections/{id} {name?, addProductIds[], removeProductIds[]}
+func (s *server) handleUpdateCollection(w http.ResponseWriter, r *http.Request) {
+	sess, jid, ok := s.bizSession(w, r)
+	if !ok {
+		return
+	}
+	var b struct {
+		Name   *string  `json:"name"`
+		Add    []string `json:"addProductIds"`
+		Remove []string `json:"removeProductIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload inválido"})
+		return
+	}
+	data, err := sess.bizMutate(r.Context(), jid, bizDocUpdateColl, func(bj string) map[string]any {
+		c := map[string]any{"id": r.PathValue("id")}
+		if b.Name != nil {
+			c["name"] = *b.Name
+		}
+		if len(b.Add) > 0 {
+			c["add"] = map[string]any{"ids": b.Add}
+		}
+		if len(b.Remove) > 0 {
+			c["remove"] = map[string]any{"ids": b.Remove}
+		}
+		return map[string]any{"input": map[string]any{"collection": c, "biz_jid": bj}}
+	})
+	bizResult(w, data, "xfb_whatsapp_catalog_update_collection", err)
+}
+
+// DELETE /api/sessions/{sid}/catalog/collections/{id}  (outros: ?ids=a,b)
+func (s *server) handleDeleteCollection(w http.ResponseWriter, r *http.Request) {
+	sess, jid, ok := s.bizSession(w, r)
+	if !ok {
+		return
+	}
+	ids := []string{strings.TrimSpace(r.PathValue("id"))}
+	for _, x := range strings.Split(r.URL.Query().Get("ids"), ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			ids = append(ids, x)
+		}
+	}
+	data, err := sess.bizMutate(r.Context(), jid, bizDocDeleteColl, func(bj string) map[string]any {
+		return map[string]any{"input": map[string]any{
+			"collections": map[string]any{"collection_ids": ids}, "biz_jid": bj,
+		}}
+	})
+	bizResult(w, data, "xfb_whatsapp_catalog_delete_collections", err)
+}
+
+// PUT /api/sessions/{sid}/catalog/products/{id}/visibility {hidden: bool}
+// Oculta ou mostra o produto no catálogo (sem apagar).
+func (s *server) handleProductVisibility(w http.ResponseWriter, r *http.Request) {
+	sess, jid, ok := s.bizSession(w, r)
+	if !ok {
+		return
+	}
+	var b struct {
+		Hidden *bool `json:"hidden"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Hidden == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hidden (true/false) obrigatório"})
+		return
+	}
+	data, err := sess.bizMutate(r.Context(), jid, bizDocVisibility, func(bj string) map[string]any {
+		return map[string]any{"input": map[string]any{
+			"jid":      bj,
+			"products": []map[string]any{{"product_id": r.PathValue("id"), "is_hidden": *b.Hidden}},
+		}}
+	})
+	bizResult(w, data, "xfb_whatsapp_catalog_product_visibility_update", err)
+}
+
+// PUT /api/sessions/{sid}/catalog/settings {cartEnabled: bool}
+// Liga/desliga o carrinho de compras do catálogo para os clientes.
+func (s *server) handleCommerceSettings(w http.ResponseWriter, r *http.Request) {
+	sess, jid, ok := s.bizSession(w, r)
+	if !ok {
+		return
+	}
+	var b struct {
+		CartEnabled *bool `json:"cartEnabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.CartEnabled == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cartEnabled (true/false) obrigatório"})
+		return
+	}
+	data, err := sess.bizMutate(r.Context(), jid, bizDocCommerceConfig, func(bj string) map[string]any {
+		return map[string]any{"input": map[string]any{"biz_jid": bj, "cart_enabled": *b.CartEnabled}}
+	})
+	bizResult(w, data, "xfb_whatsapp_smb_commerce_settings", err)
+}
+
+// ---- pedidos ----
+
+// GET /api/sessions/{sid}/orders/{orderId}?token=...
+// Detalhes (itens, preços, total) de um pedido que um cliente mandou para a
+// conta. orderId e token vêm no webhook da mensagem de pedido (campo order).
+// IQ fb:thrift_iq smax_id=5 (Baileys getOrderDetails).
+func (s *server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("orderId"))
+	tok := strings.TrimSpace(r.URL.Query().Get("token"))
+	if id == "" || tok == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "orderId e token obrigatórios (vêm no webhook do pedido)"})
+		return
+	}
+	resp, err := sess.client.DangerousInternals().SendIQ(r.Context(), whatsmeow.DangerousInfoQuery{
+		Namespace: "fb:thrift_iq", Type: "get", To: types.ServerJID, SMaxID: "5",
+		Content: []waBinary.Node{{
+			Tag: "order", Attrs: waBinary.Attrs{"op": "get", "id": id},
+			Content: []waBinary.Node{
+				{Tag: "image_dimensions", Content: []waBinary.Node{
+					{Tag: "width", Content: []byte("100")}, {Tag: "height", Content: []byte("100")}}},
+				{Tag: "token", Content: []byte(tok)},
+			},
+		}},
+	})
+	if err == nil {
+		err = firstNodeError(resp)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	order, ok := resp.GetOptionalChildByTag("order")
+	if !ok {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "WhatsApp não devolveu o pedido"})
+		return
+	}
+	items := []map[string]any{}
+	for _, p := range order.GetChildrenByTag("product") {
+		img := ""
+		if im, ok := p.GetOptionalChildByTag("image"); ok {
+			img = nodeText(&im, "url")
+		}
+		qty, _ := strconv.Atoi(nodeText(&p, "quantity"))
+		items = append(items, map[string]any{
+			"id": nodeText(&p, "id"), "name": nodeText(&p, "name"), "imageUrl": img,
+			"price": priceFrom1000(nodeText(&p, "price")), "currency": nodeText(&p, "currency"), "quantity": qty,
+		})
+	}
+	out := map[string]any{"id": id, "items": items}
+	if pr, ok := order.GetOptionalChildByTag("price"); ok {
+		out["total"] = priceFrom1000(nodeText(&pr, "total"))
+		out["currency"] = nodeText(&pr, "currency")
+		if sub := nodeText(&pr, "subtotal"); sub != "" {
+			out["subtotal"] = priceFrom1000(sub)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func nodeText(n *waBinary.Node, tag string) string {
+	if n == nil {
+		return ""
+	}
+	c, ok := n.GetOptionalChildByTag(tag)
+	if !ok {
+		return ""
+	}
+	return nodeContentString(c)
+}
+
+func priceFrom1000(s string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	return v / 1000
+}
+
+// orderSummary resume a mensagem de pedido para o webhook (campo order).
+func orderSummary(om *waE2E.OrderMessage) map[string]any {
+	if om == nil {
+		return nil
+	}
+	out := map[string]any{"orderId": om.GetOrderID(), "token": om.GetToken(), "itemCount": om.GetItemCount()}
+	putStr(out, "title", om.GetOrderTitle())
+	putStr(out, "message", om.GetMessage())
+	putStr(out, "sellerJid", om.GetSellerJID())
+	putStr(out, "currency", om.GetTotalCurrencyCode())
+	if om.TotalAmount1000 != nil {
+		out["total"] = float64(om.GetTotalAmount1000()) / 1000
+	}
+	if om.Status != nil {
+		out["status"] = om.GetStatus().String()
+	}
+	if om.Surface != nil {
+		out["surface"] = om.GetSurface().String()
+	}
+	return out
 }
