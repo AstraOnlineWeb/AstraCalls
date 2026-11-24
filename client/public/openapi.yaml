@@ -49,8 +49,6 @@ tags:
     description: Iniciar, atender, rejeitar e encerrar chamadas
   - name: SIP
     description: Gateway SIP (sipgo nativo, sem Asterisk) — modelo 1 (PBX registra aqui) e modelo 2 (registrar em PBX externo, com outbound proxy)
-  - name: Catálogo
-    description: Produtos do catálogo WhatsApp Business (cadastrar, editar, apagar, listar)
   - name: Mensagens
     description: Envio e ações de mensagem (texto, mídia, localização, contato, enquete, reação, edição, exclusão, visto, digitando)
   - name: Contatos
@@ -139,32 +137,6 @@ components:
       schema: { type: string }
       description: Número ou JID do chat.
   schemas:
-    CatalogProduct:
-      type: object
-      properties:
-        id: { type: string }
-        name: { type: string }
-        description: { type: string }
-        price: { type: number, example: 199.9, description: "em reais" }
-        currency: { type: string, example: BRL }
-        retailerId: { type: string }
-        url: { type: string }
-        imageUrls: { type: array, items: { type: string } }
-        isHidden: { type: boolean }
-        reviewStatus: { type: string, description: "análise do WhatsApp (APPROVED, PENDING...)" }
-    CatalogProductInput:
-      type: object
-      properties:
-        name: { type: string }
-        description: { type: string }
-        price: { type: number, example: 199.9, description: "em reais (o WhatsApp guarda em milésimos)" }
-        currency: { type: string, default: BRL }
-        retailerId: { type: string, description: "código do produto no seu sistema" }
-        url: { type: string }
-        isHidden: { type: boolean, default: false }
-        images: { type: array, items: { type: string }, description: "fotos em base64" }
-        imageUrls: { type: array, items: { type: string }, description: "fotos por URL" }
-        originCountryCode: { type: string, description: "país de origem (ISO), opcional" }
     SessionOptions:
       type: object
       properties:
@@ -4019,95 +3991,6 @@ paths:
   # ─────────────────────────────────────────────────────────────────
   # Grupos: solicitações de entrada e configurações
   # ─────────────────────────────────────────────────────────────────
-  /api/sessions/{sid}/catalog:
-    get:
-      tags: [Catálogo]
-      summary: Lista os produtos do catálogo
-      description: >
-        Catálogo da própria conta (padrão) ou de qualquer conta WhatsApp Business (`jid`).
-        Paginação por `cursor` (vem em `nextCursor`).
-      parameters:
-        - { $ref: "#/components/parameters/Sid" }
-        - { name: jid, in: query, schema: { type: string }, description: "conta dona do catálogo (padrão: a conectada)" }
-        - { name: limit, in: query, schema: { type: integer, default: 10, maximum: 100 } }
-        - { name: cursor, in: query, schema: { type: string } }
-      responses:
-        "200":
-          description: Produtos
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  jid: { type: string }
-                  products: { type: array, items: { $ref: "#/components/schemas/CatalogProduct" } }
-                  nextCursor: { type: string }
-        "502": { description: "WhatsApp recusou (ex.: conta sem catálogo)" }
-  /api/sessions/{sid}/catalog/collections:
-    get:
-      tags: [Catálogo]
-      summary: Lista as coleções do catálogo
-      parameters:
-        - { $ref: "#/components/parameters/Sid" }
-        - { name: jid, in: query, schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, default: 51 } }
-      responses:
-        "200": { description: "{ jid, collections: [{ id, name, status, products }] }" }
-  /api/sessions/{sid}/catalog/products:
-    post:
-      tags: [Catálogo]
-      summary: Cadastra um produto no catálogo (conta WhatsApp Business)
-      description: >
-        Sobe as fotos ao WhatsApp e cadastra o produto. O `id` devolvido serve direto no
-        `productId` do `/messages/product-native`, e aí o botão "Ver" abre o produto.
-        Só funciona em conta WhatsApp Business. O WhatsApp pode deixar o produto em análise
-        (`reviewStatus`).
-      parameters:
-        - { $ref: "#/components/parameters/Sid" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CatalogProductInput" }
-            example:
-              name: Fone Bluetooth AstraSound
-              description: Fone sem fio com cancelamento de ruído, 30h de bateria.
-              price: 199.90
-              currency: BRL
-              retailerId: FONE-001
-              url: https://astraonline.com.br
-              imageUrls: ["https://exemplo.com/fone.jpg"]
-      responses:
-        "200":
-          description: Produto cadastrado
-          content: { application/json: { schema: { $ref: "#/components/schemas/CatalogProduct" } } }
-        "400": { description: "faltou name, price ou foto" }
-        "502": { description: "WhatsApp recusou (ex.: conta não é Business)" }
-  /api/sessions/{sid}/catalog/products/{id}:
-    put:
-      tags: [Catálogo]
-      summary: Edita um produto (campos ausentes ficam como estão)
-      parameters:
-        - { $ref: "#/components/parameters/Sid" }
-        - { name: id, in: path, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CatalogProductInput" }
-      responses:
-        "200":
-          description: Produto atualizado
-          content: { application/json: { schema: { $ref: "#/components/schemas/CatalogProduct" } } }
-    delete:
-      tags: [Catálogo]
-      summary: Apaga produto(s) do catálogo
-      parameters:
-        - { $ref: "#/components/parameters/Sid" }
-        - { name: id, in: path, required: true, schema: { type: string } }
-        - { name: ids, in: query, schema: { type: string }, description: "outros ids separados por vírgula" }
-      responses:
-        "200": { description: "{ deleted: n }" }
   /api/sessions/{sid}/groups/{gid}/requests:
     get:
       tags: [Grupos]
