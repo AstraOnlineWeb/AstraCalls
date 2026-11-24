@@ -49,6 +49,8 @@ tags:
     description: Iniciar, atender, rejeitar e encerrar chamadas
   - name: SIP
     description: Gateway SIP (sipgo nativo, sem Asterisk) — modelo 1 (PBX registra aqui) e modelo 2 (registrar em PBX externo, com outbound proxy)
+  - name: Catálogo
+    description: Produtos do catálogo WhatsApp Business (cadastrar, editar, apagar, listar)
   - name: Mensagens
     description: Envio e ações de mensagem (texto, mídia, localização, contato, enquete, reação, edição, exclusão, visto, digitando)
   - name: Contatos
@@ -137,6 +139,20 @@ components:
       schema: { type: string }
       description: Número ou JID do chat.
   schemas:
+    CatalogProductInput:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        price: { type: number, example: 299.9, description: "em reais" }
+        salePrice: { type: number, example: 199.9, description: "preço promocional (opcional)" }
+        currency: { type: string, default: BRL }
+        retailerId: { type: string, description: "código do produto no seu sistema (único)" }
+        url: { type: string }
+        isHidden: { type: boolean, default: false }
+        images: { type: array, items: { type: string }, description: "fotos em base64" }
+        imageUrls: { type: array, items: { type: string }, description: "fotos por URL" }
+        originCountryCode: { type: string, description: "país de origem (ISO), opcional" }
     SessionOptions:
       type: object
       properties:
@@ -3991,6 +4007,73 @@ paths:
   # ─────────────────────────────────────────────────────────────────
   # Grupos: solicitações de entrada e configurações
   # ─────────────────────────────────────────────────────────────────
+  /api/sessions/{sid}/catalog:
+    get:
+      tags: [Catálogo]
+      summary: Lista o catálogo da conta (WhatsApp Business)
+      description: >
+        Produtos do catálogo da própria conta conectada, como o WhatsApp devolve
+        (`product_catalog.products`, preço em milésimos: "299900" = R$ 299,90; `status_info.status`
+        é a análise do WhatsApp). Paginação por `cursor` (`paging.after`).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: limit, in: query, schema: { type: integer, default: 10, maximum: 100 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: "{ product_catalog: { catalog_id, products[], paging } }" }
+        "502": { description: "WhatsApp recusou (conta não Business ou sem catálogo ativado no app)" }
+  /api/sessions/{sid}/catalog/products:
+    post:
+      tags: [Catálogo]
+      summary: Cadastra um produto no catálogo (conta WhatsApp Business)
+      description: >
+        Sobe as fotos ao WhatsApp e cadastra o produto. O `id` devolvido serve no `productId` do
+        `/messages/product-native`, e aí o botão "Ver" abre o produto. Exige conta WhatsApp
+        Business com o catálogo já ativado no app (Ferramentas comerciais → Catálogo). `retailerId`
+        não pode repetir. O WhatsApp pode deixar o produto em análise.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogProductInput" }
+            example:
+              name: Fone Bluetooth AstraSound
+              description: Fone sem fio com cancelamento de ruído, 30h de bateria.
+              price: 299.90
+              salePrice: 199.90
+              currency: BRL
+              retailerId: FONE-001
+              url: https://astraonline.com.br
+              imageUrls: ["https://exemplo.com/fone.jpg"]
+      responses:
+        "200": { description: "produto cadastrado (com id)" }
+        "400": { description: "faltou name, price ou foto" }
+        "502": { description: "WhatsApp recusou (ex.: retailerId repetido, conta não Business)" }
+  /api/sessions/{sid}/catalog/products/{id}:
+    put:
+      tags: [Catálogo]
+      summary: Edita um produto (campos ausentes ficam como estão)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogProductInput" }
+      responses:
+        "200": { description: "produto atualizado" }
+    delete:
+      tags: [Catálogo]
+      summary: Apaga produto(s) do catálogo
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: ids, in: query, schema: { type: string }, description: "outros ids separados por vírgula" }
+      responses:
+        "200": { description: "{ deleted_count }" }
   /api/sessions/{sid}/groups/{gid}/requests:
     get:
       tags: [Grupos]

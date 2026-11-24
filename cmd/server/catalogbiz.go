@@ -383,13 +383,60 @@ func bizNoCatalog(err error) bool {
 	return strings.Contains(m, "2498049") || strings.Contains(m, "2498052")
 }
 
-// bizJIDCandidates: telefone e, se houver, o LID da própria conta.
+// bizJIDCandidates: para as mutations o WhatsApp identifica a conta pelo LID
+// (validado: com o telefone dá "Bad Request Error while getting catalog"); o
+// telefone fica de reserva. A leitura do catálogo aceita o telefone.
 func (s *Session) bizJIDCandidates(pn string) []string {
-	out := []string{pn}
 	if lid := s.client.Store.LID; !lid.IsEmpty() {
-		out = append(out, lid.ToNonAD().String())
+		return []string{lid.ToNonAD().String(), pn}
 	}
-	return out
+	return []string{pn}
+}
+
+// bizMutate roda a mutation tentando cada biz_jid candidato.
+func (s *Session) bizMutate(ctx context.Context, pn, docID string, vars func(bizJID string) map[string]any) (map[string]json.RawMessage, error) {
+	var data map[string]json.RawMessage
+	var err error
+	for _, bj := range s.bizJIDCandidates(pn) {
+		data, err = s.bizGraphQL(ctx, docID, vars(bj))
+		if !bizNoCatalog(err) {
+			return data, err
+		}
+	}
+	return data, err
+}
+
+// bizFindProduct procura no catálogo um produto pelo retailerId (ou nome).
+func (s *Session) bizFindProduct(ctx context.Context, pn, retailerID, name string) (json.RawMessage, bool) {
+	data, err := s.bizGraphQL(ctx, bizDocFetchCatalog, map[string]any{
+		"request": map[string]any{"product_catalog": map[string]any{
+			"jid": pn, "limit": "100", "width": "100", "height": "100", "allow_shop_source": false,
+		}, "platform": "WEB"},
+	})
+	if err != nil {
+		return nil, false
+	}
+	var cat struct {
+		ProductCatalog struct {
+			Products []json.RawMessage `json:"products"`
+		} `json:"product_catalog"`
+	}
+	if json.Unmarshal(data["xfb_whatsapp_catalog"], &cat) != nil {
+		return nil, false
+	}
+	for _, raw := range cat.ProductCatalog.Products {
+		var p struct {
+			Name       string  `json:"name"`
+			RetailerID *string `json:"retailer_id"`
+		}
+		if json.Unmarshal(raw, &p) != nil {
+			continue
+		}
+		if (retailerID != "" && p.RetailerID != nil && *p.RetailerID == retailerID) || (retailerID == "" && p.Name == name) {
+			return raw, true
+		}
+	}
+	return nil, false
 }
 
 // bizResult escreve a resposta: 200 com o nó de dados, ou 502 com o erro.
@@ -469,19 +516,26 @@ func (s *server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	// o WhatsApp Web novo identifica a conta pelo LID; tenta telefone e depois LID
 	info := in.productInfo(imgs, true)
-	var data map[string]json.RawMessage
-	for _, bj := range sess.bizJIDCandidates(jid) {
-		data, err = sess.bizGraphQL(r.Context(), bizDocAddProduct, map[string]any{
-			"input": map[string]any{"product": map[string]any{
-				"biz_jid": bj, "width": 100, "height": 100, "product_info": info,
-			}},
-		})
-		if !bizNoCatalog(err) {
-			break
+	data, err := sess.bizMutate(r.Context(), jid, bizDocAddProduct, func(bj string) map[string]any {
+		return map[string]any{"input": map[string]any{"product": map[string]any{
+			"biz_jid": bj, "width": 100, "height": 100, "product_info": info,
+		}}}
+	})
+	if err != nil && strings.Contains(err.Error(), "2498055") {
+		// "erro interno" do GraphQL vem mesmo com o produto gravado (validado):
+		// confirma no catálogo e devolve o produto.
+		rid, name := "", ""
+		if in.RetailerID != nil {
+			rid = *in.RetailerID
 		}
-		sess.log.Info("cadastro de produto recusado com este biz_jid; tentando o próximo", "biz_jid", bj, "err", err)
+		name = *in.Name
+		if p, ok := sess.bizFindProduct(r.Context(), jid, rid, name); ok {
+			sess.log.Info("produto cadastrado no catálogo (confirmado após erro interno do GraphQL)")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(p)
+			return
+		}
 	}
 	if err == nil {
 		sess.log.Info("produto cadastrado no catálogo")
@@ -510,11 +564,12 @@ func (s *server) handleUpdateProduct(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	data, err := sess.bizGraphQL(r.Context(), bizDocEditProduct, map[string]any{
-		"input": map[string]any{"product": map[string]any{
-			"biz_jid": jid, "product_id": r.PathValue("id"), "width": "100", "height": "100",
-			"product_info": in.productInfo(imgs, false),
-		}},
+	info := in.productInfo(imgs, false)
+	data, err := sess.bizMutate(r.Context(), jid, bizDocEditProduct, func(bj string) map[string]any {
+		return map[string]any{"input": map[string]any{"product": map[string]any{
+			"biz_jid": bj, "product_id": r.PathValue("id"), "width": "100", "height": "100",
+			"product_info": info,
+		}}}
 	})
 	bizResult(w, data, "xfb_whatsapp_catalog_edit_product", err)
 }
@@ -536,8 +591,8 @@ func (s *server) handleDeleteProduct(w http.ResponseWriter, r *http.Request) {
 			ids = append(ids, x)
 		}
 	}
-	data, err := sess.bizGraphQL(r.Context(), bizDocDeleteProd, map[string]any{
-		"input": map[string]any{"biz_jid": jid, "product_ids": ids},
+	data, err := sess.bizMutate(r.Context(), jid, bizDocDeleteProd, func(bj string) map[string]any {
+		return map[string]any{"input": map[string]any{"biz_jid": bj, "product_ids": ids}}
 	})
 	bizResult(w, data, "xfb_whatsapp_catalog_delete_product", err)
 }
