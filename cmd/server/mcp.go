@@ -213,6 +213,19 @@ var mcpTools = []mcpTool{
 		Description: "Lista as sessões (números de WhatsApp) do AstraCalls com ID, nome, telefone e estado da conexão.",
 	},
 	{
+		Name: "rename_session", Title: "Renomear sessão",
+		Description: "Troca o nome (rótulo no painel) da sessão/número. Não altera o perfil do WhatsApp.",
+		Props:       map[string]any{"name": pStr("Novo nome da sessão (até 60 caracteres).")},
+		Required:    []string{"name"},
+		Build: func(a mcpArgs) (mcpCall, error) {
+			name, err := a.need("name")
+			if err != nil {
+				return mcpCall{}, err
+			}
+			return mcpCall{Method: "PUT", Path: "/name", Body: map[string]any{"name": name}}, nil
+		},
+	},
+	{
 		Name: "get_send_limit", Title: "Limite de conversas novas", ReadOnly: true,
 		Description: "Consulta o limite do WhatsApp para iniciar conversas novas (cota usada, restante, status de aviso/travado).",
 		Build:       func(a mcpArgs) (mcpCall, error) { return mcpCall{Method: "GET", Path: "/capping"}, nil },

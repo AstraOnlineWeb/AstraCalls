@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Loader2, Plus, Trash2, KeyRound } from "lucide-react";
+import { Loader2, Plus, Trash2, KeyRound, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { NameDialog } from "@/components/shared/NameDialog";
 import { setActiveSession, useSessions } from "@/stores/sessions";
-import { createSession, deleteSession } from "@/services/sessions";
+import { createSession, deleteSession, renameSession } from "@/services/sessions";
 import { EXTENSION_DOWNLOAD_URL } from "@/lib/passkey";
 import { phoneFromJid } from "@/utils/format";
 import { useVersion } from "@/hooks/useVersion";
@@ -25,18 +26,28 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
   const activeId = useSessions((s) => s.activeId);
   const [creating, setCreating] = useState(false);
   const [toDelete, setToDelete] = useState<SessionInfo | null>(null);
+  const [askName, setAskName] = useState(false);
+  const [toRename, setToRename] = useState<SessionInfo | null>(null);
   const { label: version, commit } = useVersion();
 
-  const onNew = async () => {
+  const onNew = async (name: string) => {
     setCreating(true);
     try {
-      const { id } = await createSession("WhatsApp");
+      const { id } = await createSession(name);
       setActiveSession(id);
       onNavigate?.();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const rename = async (id: string, name: string) => {
+    try {
+      await renameSession(id, name);
+    } catch (e) {
+      toast.error((e as Error).message);
     }
   };
 
@@ -60,7 +71,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
           </span>
         )}
       </div>
-      <Button className="w-full" onClick={onNew} disabled={creating}>
+      <Button className="w-full" onClick={() => setAskName(true)} disabled={creating}>
         {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
         Nova conta
       </Button>
@@ -96,6 +107,16 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                setToRename(s);
+              }}
+              className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+              aria-label={`Renomear ${s.name}`}
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
                 setToDelete(s);
               }}
               className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
@@ -119,6 +140,26 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
         <KeyRound className="h-3.5 w-3.5 shrink-0" />
         Extensão Passkey (.zip)
       </a>
+
+      <NameDialog
+        open={askName}
+        onOpenChange={setAskName}
+        title="Nova conta"
+        description="Dê um nome para identificar este número no painel."
+        initialValue="WhatsApp"
+        confirmLabel="Criar"
+        onConfirm={(name) => void onNew(name)}
+      />
+
+      <NameDialog
+        open={!!toRename}
+        onOpenChange={(o) => !o && setToRename(null)}
+        title="Renomear conta"
+        initialValue={toRename?.name ?? ""}
+        onConfirm={(name) => {
+          if (toRename) void rename(toRename.id, name);
+        }}
+      />
 
       <ConfirmDialog
         open={!!toDelete}
