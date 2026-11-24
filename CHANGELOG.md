@@ -2,6 +2,51 @@
 
 Todas as mudanças relevantes do AstraCalls.
 
+## v1.1.7 — 2026-11-24
+
+Foco em **anti-ban e notificações**: o celular volta a notificar com a API conectada, os
+fluxos automáticos param de consultar o grupo a cada mensagem, e o whatsmeow foi atualizado
+(16/11) com correções de estabilidade.
+
+### ⚙️ Opções da conta (painel)
+
+- Botão **Opções** na conta com dois interruptores: **Ler mensagens automaticamente** e
+  **Sempre online**. API: `GET/PUT /api/sessions/{sid}/options`.
+- **O celular volta a notificar:** com um dispositivo online o WhatsApp não notifica o
+  celular. Agora, com "Sempre online" desligado (padrão), a conta fica online só 1 minuto a
+  cada reforço de presença e volta para offline. Isso basta para evitar o aviso "Será
+  desconectado hoje".
+- Os flags `read_messages`/`always_online` da config do Chatwoot continuam valendo e ficam
+  alinhados com as opções da conta.
+
+### 🛡️ Anti-ban
+
+- **Nome de grupo e de canal em cache** (6 h; erro fica 5 min) nos fluxos automáticos:
+  Chatwoot, enquetes e visualização única. Antes, cada mensagem de grupo consultava o
+  WhatsApp, o que levava à restrição da conta. Quando o grupo é renomeado, o cache é
+  atualizado pelo próprio evento.
+- A nova tentativa de envio em grupo só de admins consulta o grupo no máximo uma vez a cada
+  5 min.
+
+### 💬 Chatwoot
+
+- **Origem do contato (#202):** link `wa.me` e busca do WhatsApp não aparecem mais como
+  "veio de um anúncio". Só vira nota de anúncio quando há `ctwaClid` ou `sourceType: ad`;
+  nos outros casos a nota mostra a origem ("📍 Origem: link do WhatsApp", "busca do
+  WhatsApp"...).
+
+### 👤 Contatos
+
+- `GET /contacts/{jid}` devolve `isBusiness` e `verifiedName` (nome comercial verificado
+  das contas WhatsApp Business).
+
+### 🔧 whatsmeow 16/11
+
+- Sincronização entre aparelhos mais robusta (não descarta atualizações nem sobrescreve
+  chaves), reconexão sem atropelar desconexão, mais formatos de confirmação de leitura,
+  mensagens que falham na descriptografia tratadas antes da confirmação, e cache de grupo
+  corrigido.
+
 ## v1.1.6 — 2026-11-05
 
 Aproveita os recursos novos do whatsmeow de 02/11: o vídeo começa a tocar antes de baixar
