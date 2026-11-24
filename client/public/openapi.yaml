@@ -4054,7 +4054,10 @@ paths:
   /api/sessions/{sid}/catalog/products/{id}:
     put:
       tags: [Catálogo]
-      summary: Edita um produto (campos ausentes ficam como estão)
+      summary: "Edita um produto (EXPERIMENTAL: ainda não validado)"
+      description: >
+        Em validação: hoje o WhatsApp responde "tente novamente mais tarde". Para alterar um
+        produto, use o app por enquanto.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -4067,7 +4070,10 @@ paths:
         "200": { description: "produto atualizado" }
     delete:
       tags: [Catálogo]
-      summary: Apaga produto(s) do catálogo
+      summary: "Apaga produto(s) do catálogo (EXPERIMENTAL: ainda não validado)"
+      description: >
+        Em validação: hoje o WhatsApp responde "item não encontrado". Para apagar, use o app por
+        enquanto.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { name: id, in: path, required: true, schema: { type: string } }
