@@ -49,3 +49,21 @@ func TestOrderChargeWithCatalogItems(t *testing.T) {
 		t.Fatalf("sem chave Pix deveria ir cards desligado: %v", ps)
 	}
 }
+
+// confirmação real sem order_request_id/total: completa pela cobrança citada
+func TestOrderUpdateFromQuoted(t *testing.T) {
+	charge := `{"order_request_id":"30000177439568054","reference_id":"PIXMWVA0TA7","currency":"BRL","total_amount":{"value":19990,"offset":100},"order":{"status":"payment_requested","items":[]}}`
+	confirm := `{"reference_id":"PIXMWVA0TA7","payment_method":"confirm","payment_timestamp":1795561515,"order":{"status":"payment_requested","items":[{"product_id":"28935733206126350","name":"Fone","amount":{"value":19990,"offset":100},"quantity":1}]}}`
+	nf := func(name, params string) *waE2E.InteractiveMessage {
+		return &waE2E.InteractiveMessage{InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+			Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{{Name: proto.String(name), ButtonParamsJSON: proto.String(params)}},
+		}}}
+	}
+	im := nf("payment_method", confirm)
+	im.ContextInfo = &waE2E.ContextInfo{QuotedMessage: &waE2E.Message{InteractiveMessage: nf("review_and_pay", charge)}}
+	ou := orderUpdateSummary(&waE2E.Message{InteractiveMessage: im})
+	if ou["orderId"] != "30000177439568054" || ou["total"] != 199.9 || ou["type"] != "payment" {
+		b, _ := json.Marshal(ou)
+		t.Fatalf("não completou pela citada: %s", b)
+	}
+}

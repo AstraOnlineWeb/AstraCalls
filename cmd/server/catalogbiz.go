@@ -900,6 +900,28 @@ func orderSummary(om *waE2E.OrderMessage) map[string]any {
 // cobrança do vendedor; payment_method = confirmação do cliente; order_status =
 // atualização de status) e devolve um resumo para o webhook (campo orderUpdate).
 func orderUpdateSummary(m *waE2E.Message) map[string]any {
+	out := orderUpdateFrom(m)
+	if out == nil {
+		return nil
+	}
+	// A confirmação do cliente nem sempre repete order_request_id e total (validado
+	// 24/11/2026: com cobrança mandada pela API veio sem os dois), mas cita a
+	// cobrança: completa a partir da mensagem citada.
+	if _, ok := out["orderId"]; !ok || out["total"] == nil {
+		if q := m.GetInteractiveMessage().GetContextInfo().GetQuotedMessage(); q != nil {
+			if qo := orderUpdateFrom(q); qo != nil {
+				for _, k := range []string{"orderId", "total", "currency"} {
+					if _, has := out[k]; !has && qo[k] != nil {
+						out[k] = qo[k]
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+func orderUpdateFrom(m *waE2E.Message) map[string]any {
 	im := m.GetInteractiveMessage()
 	if im == nil || im.GetNativeFlowMessage() == nil {
 		return nil
