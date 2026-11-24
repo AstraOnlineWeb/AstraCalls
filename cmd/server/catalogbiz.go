@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -673,6 +674,9 @@ const (
 	bizDocCommerceConfig = "9797519763673469"
 )
 
+// bizSessionID: id de sessão de edição do catálogo (o WA Web agrupa as edições por ele).
+func bizSessionID() string { return uuid.NewString() }
+
 func (s *server) bizSession(w http.ResponseWriter, r *http.Request) (*Session, string, bool) {
 	sess := s.pairedSession(w, r.PathValue("sid"))
 	if sess == nil {
@@ -718,10 +722,9 @@ func (s *server) handleCreateCollection(w http.ResponseWriter, r *http.Request) 
 		b.ProductIDs = []string{}
 	}
 	data, err := sess.bizMutate(r.Context(), jid, bizDocCreateColl, func(bj string) map[string]any {
-		return map[string]any{"input": map[string]any{
-			"collection": map[string]any{"name": b.Name, "product_ids": b.ProductIDs},
-			"biz_jid":    bj,
-		}}
+		return map[string]any{"input": map[string]any{"collection": map[string]any{
+			"name": b.Name, "product_ids": b.ProductIDs, "biz_jid": bj, "catalog_session_id": bizSessionID(),
+		}}}
 	})
 	bizResult(w, data, "xfb_whatsapp_catalog_create_collection", err)
 }
@@ -742,7 +745,7 @@ func (s *server) handleUpdateCollection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	data, err := sess.bizMutate(r.Context(), jid, bizDocUpdateColl, func(bj string) map[string]any {
-		c := map[string]any{"id": r.PathValue("id")}
+		c := map[string]any{"id": r.PathValue("id"), "biz_jid": bj, "catalog_session_id": bizSessionID()}
 		if b.Name != nil {
 			c["name"] = *b.Name
 		}
@@ -752,7 +755,7 @@ func (s *server) handleUpdateCollection(w http.ResponseWriter, r *http.Request) 
 		if len(b.Remove) > 0 {
 			c["remove"] = map[string]any{"ids": b.Remove}
 		}
-		return map[string]any{"input": map[string]any{"collection": c, "biz_jid": bj}}
+		return map[string]any{"input": map[string]any{"collection": c}}
 	})
 	bizResult(w, data, "xfb_whatsapp_catalog_update_collection", err)
 }
@@ -770,9 +773,9 @@ func (s *server) handleDeleteCollection(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	data, err := sess.bizMutate(r.Context(), jid, bizDocDeleteColl, func(bj string) map[string]any {
-		return map[string]any{"input": map[string]any{
-			"collections": map[string]any{"collection_ids": ids}, "biz_jid": bj,
-		}}
+		return map[string]any{"input": map[string]any{"collections": map[string]any{
+			"collection_ids": ids, "biz_jid": bj, "catalog_session_id": bizSessionID(),
+		}}}
 	})
 	bizResult(w, data, "xfb_whatsapp_catalog_delete_collections", err)
 }
