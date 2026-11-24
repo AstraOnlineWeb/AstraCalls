@@ -601,3 +601,62 @@ func (s *server) handleDeleteProduct(w http.ResponseWriter, r *http.Request) {
 	})
 	bizResult(w, data, "xfb_whatsapp_catalog_delete_product", err)
 }
+
+// GET /api/sessions/{sid}/catalog/products/{id} → um produto do catálogo, com a
+// situação da análise do WhatsApp em status_info.status (APPROVED, NO_REVIEW,
+// PENDING, REJECTED...). Procura por id ou, com ?by=retailerId, pelo código.
+func (s *server) handleGetProduct(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	jid, err := sess.bizOwnJID()
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
+	}
+	want := strings.TrimSpace(r.PathValue("id"))
+	byRetailer := r.URL.Query().Get("by") == "retailerId"
+	after := ""
+	for page := 0; page < 20; page++ { // até 2000 produtos
+		pc := map[string]any{"jid": jid, "limit": "100", "width": "100", "height": "100", "allow_shop_source": false}
+		if after != "" {
+			pc["after"] = after
+		}
+		data, err := sess.bizGraphQL(r.Context(), bizDocFetchCatalog, map[string]any{
+			"request": map[string]any{"product_catalog": pc, "platform": "WEB"},
+		})
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		var cat struct {
+			ProductCatalog struct {
+				Products []json.RawMessage `json:"products"`
+				Paging   struct {
+					After string `json:"after"`
+				} `json:"paging"`
+			} `json:"product_catalog"`
+		}
+		_ = json.Unmarshal(data["xfb_whatsapp_catalog"], &cat)
+		for _, raw := range cat.ProductCatalog.Products {
+			var p struct {
+				ID         string  `json:"id"`
+				RetailerID *string `json:"retailer_id"`
+			}
+			if json.Unmarshal(raw, &p) != nil {
+				continue
+			}
+			if (!byRetailer && p.ID == want) || (byRetailer && p.RetailerID != nil && *p.RetailerID == want) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(raw)
+				return
+			}
+		}
+		after = cat.ProductCatalog.Paging.After
+		if after == "" || len(cat.ProductCatalog.Products) == 0 {
+			break
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "produto não encontrado no catálogo"})
+}

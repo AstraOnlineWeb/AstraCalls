@@ -4052,6 +4052,20 @@ paths:
         "400": { description: "faltou name, price ou foto" }
         "502": { description: "WhatsApp recusou (ex.: retailerId repetido, conta não Business)" }
   /api/sessions/{sid}/catalog/products/{id}:
+    get:
+      tags: [Catálogo]
+      summary: Consulta um produto e a situação da análise do WhatsApp
+      description: >
+        Devolve o produto como o WhatsApp guarda. A situação da análise fica em
+        `status_info.status`: `NO_REVIEW` (aguardando), `APPROVED`, `PENDING`, `REJECTED`...
+        Com `?by=retailerId`, busca pelo código do produto no lugar do id.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: id, in: path, required: true, schema: { type: string }, description: "id do produto (ou retailerId com ?by=retailerId)" }
+        - { name: by, in: query, schema: { type: string, enum: [id, retailerId] } }
+      responses:
+        "200": { description: "produto (id, name, price, sale_price, retailer_id, media, status_info)" }
+        "404": { description: "produto não encontrado no catálogo" }
     put:
       tags: [Catálogo]
       summary: "Edita um produto (EXPERIMENTAL: ainda não validado)"

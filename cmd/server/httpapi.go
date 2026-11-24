@@ -92,6 +92,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/catalog", s.handleSendCatalog)
 	mux.HandleFunc("GET /api/sessions/{sid}/catalog", s.handleGetCatalog)
 	mux.HandleFunc("POST /api/sessions/{sid}/catalog/products", s.handleCreateProduct)
+	mux.HandleFunc("GET /api/sessions/{sid}/catalog/products/{id}", s.handleGetProduct)
 	mux.HandleFunc("PUT /api/sessions/{sid}/catalog/products/{id}", s.handleUpdateProduct)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/catalog/products/{id}", s.handleDeleteProduct)
 	mux.HandleFunc("POST /api/sessions/{sid}/meta-ai", s.handleMetaAI)
