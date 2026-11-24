@@ -25,6 +25,8 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	if log.Enabled(ctx, slog.LevelDebug) {
 		waLogger = waLog.Stdout("WA", "DEBUG", true)
 	}
+	// captura o nonce do catálogo Business (notification que o whatsmeow não trata)
+	waLogger = newNonceTapLogger(waLogger)
 
 	provider, err := newDBProvider(ctx, pgURL, pgNamespace, waLogger, log)
 	if err != nil {
