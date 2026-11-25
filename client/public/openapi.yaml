@@ -3874,6 +3874,59 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/SendOK" }
 
+  /api/sessions/{sid}/messages/sound-sticker:
+    post:
+      tags: [Mensagens]
+      summary: Envia figurinha COM SOM (toca ao tocar na figurinha)
+      description: >
+        Figurinha animada com um clipe de áudio dentro (`audioStickerMessage`). Ao tocar na
+        figurinha o som toca, no celular e no WhatsApp Web.
+
+        **Figurinha:** WebP animado passa como está. PNG, JPG ou WebP estático vira uma
+        animação de 1 s. GIF, MP4 ou WebM é convertido (até 6 s, 512x512).
+
+        **Áudio:** OGG/Opus passa como está; mp3, wav e outros são convertidos (até 15 s;
+        o ideal é 1–5 s). O WebP recebe no EXIF o SHA-256 do áudio, que é como o app pareia
+        os dois.
+
+        Sem figurinha e sem áudio, envia uma figurinha de demonstração.
+
+        Só funciona em **conversa privada** (grupo não é suportado). Se o WhatsApp do
+        destinatário não tiver figurinha com som liberada, ela chega muda. Aceita
+        `X-Message-ID`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, example: "5561999999999" }
+                sticker: { type: string, description: "URL http(s) ou base64/data URI da figurinha (atalho para stickerUrl/stickerBase64)" }
+                stickerBase64: { type: string }
+                stickerUrl: { type: string }
+                audio: { type: string, description: "URL http(s) ou base64/data URI do áudio (atalho para audioUrl/audioBase64)" }
+                audioBase64: { type: string }
+                audioUrl: { type: string }
+                packName: { type: string, default: "Figurinhas com som" }
+                publisher: { type: string, default: "AstraCalls" }
+                emojis: { type: array, items: { type: string }, example: ["🔊"] }
+            example:
+              to: "5561999999999"
+              sticker: "https://exemplo.com/gato.gif"
+              audio: "https://exemplo.com/miau.mp3"
+      responses:
+        "200":
+          description: Enviada
+          content:
+            application/json:
+              example: { id: "3EB0ABC123", to: "5561999999999@s.whatsapp.net", timestamp: 1764000000000, seconds: 2, stickerBytes: 57012, audioBytes: 11004 }
+        "400": { description: "Grupo/canal, mídia inválida ou falha na conversão" }
+
   /api/sessions/{sid}/messages/pix:
     post:
       tags: [Mensagens]

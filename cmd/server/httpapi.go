@@ -111,6 +111,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{sid}/schedule/{id}", s.handleCancelScheduled)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/document", s.handleSendDocument)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/sticker", s.handleSendSticker)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/sound-sticker", s.handleSendSoundSticker)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/location", s.handleSendLocation)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/contact", s.handleSendContact)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll", s.handleSendPoll)
