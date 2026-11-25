@@ -97,6 +97,74 @@ func webpIsAnimated(webp []byte) bool {
 	return false
 }
 
+// asAnimatedWebP embrulha um WebP de 1 quadro (simples VP8/VP8L, ou VP8X sem
+// animação) num contêiner animado de 1 quadro: VP8X(anim) + ANIM + ANMF. O
+// libwebp_anim grava imagem estática no formato simples, sem VP8X para o EXIF.
+func asAnimatedWebP(webp []byte) ([]byte, error) {
+	if webpIsAnimated(webp) {
+		return webp, nil
+	}
+	chunks, err := readWebPChunks(webp)
+	if err != nil {
+		return nil, err
+	}
+	w, h := soundStickerSize, soundStickerSize
+	var frame bytes.Buffer
+	alpha := false
+	for _, c := range chunks {
+		switch c.id {
+		case "VP8X":
+			if len(c.payload) >= 10 {
+				w = int(uint32(c.payload[4])|uint32(c.payload[5])<<8|uint32(c.payload[6])<<16) + 1
+				h = int(uint32(c.payload[7])|uint32(c.payload[8])<<8|uint32(c.payload[9])<<16) + 1
+			}
+		case "VP8 ":
+			if len(c.payload) >= 10 {
+				w = int(binary.LittleEndian.Uint16(c.payload[6:8]) & 0x3fff)
+				h = int(binary.LittleEndian.Uint16(c.payload[8:10]) & 0x3fff)
+			}
+		case "VP8L":
+			if len(c.payload) >= 5 {
+				v := binary.LittleEndian.Uint32(c.payload[1:5])
+				w = int(v&0x3fff) + 1
+				h = int((v>>14)&0x3fff) + 1
+				alpha = alpha || (v>>28)&1 == 1
+			}
+		}
+		if c.id == "ALPH" || c.id == "VP8 " || c.id == "VP8L" {
+			if c.id == "ALPH" {
+				alpha = true
+			}
+			var hd [8]byte
+			copy(hd[:4], c.id)
+			binary.LittleEndian.PutUint32(hd[4:], uint32(len(c.payload)))
+			frame.Write(hd[:])
+			frame.Write(c.payload)
+			if len(c.payload)%2 == 1 {
+				frame.WriteByte(0)
+			}
+		}
+	}
+	if frame.Len() == 0 {
+		return nil, errors.New("WebP sem quadro de imagem")
+	}
+	put24 := func(b []byte, v int) { b[0], b[1], b[2] = byte(v), byte(v>>8), byte(v>>16) }
+	vp8x := make([]byte, 10)
+	vp8x[0] = 0x02 // animação
+	if alpha {
+		vp8x[0] |= 0x10
+	}
+	put24(vp8x[4:], w-1)
+	put24(vp8x[7:], h-1)
+	anim := []byte{0, 0, 0, 0, 0, 0} // fundo transparente, loop infinito
+	anmf := make([]byte, 16)
+	put24(anmf[6:], w-1)
+	put24(anmf[9:], h-1)
+	put24(anmf[12:], 1000) // 1 s
+	anmf = append(anmf, frame.Bytes()...)
+	return writeWebP([]webpChunk{{"VP8X", vp8x}, {"ANIM", anim}, {"ANMF", anmf}}), nil
+}
+
 type soundStickerPack struct {
 	ID, Name, Publisher string
 	Emojis              []string
@@ -212,11 +280,16 @@ func toAnimatedSticker(in []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("converter figurinha em WebP animado: %w", err)
 	}
+	if out, err = asAnimatedWebP(out); err != nil {
+		return nil, err
+	}
 	if len(out) > 1<<20 {
 		// passou de ~1 MB: refaz com qualidade menor
 		after[8] = "30"
 		if o2, e2 := runFFmpeg(in, before, after); e2 == nil {
-			out = o2
+			if o3, e3 := asAnimatedWebP(o2); e3 == nil {
+				out = o3
+			}
 		}
 	}
 	return out, nil

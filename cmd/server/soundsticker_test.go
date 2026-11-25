@@ -62,3 +62,19 @@ func TestWithSoundExif(t *testing.T) {
 		t.Fatalf("ogg: %v %d", err, sec)
 	}
 }
+
+func TestAsAnimatedWebP(t *testing.T) {
+	// VP8L 1x1 mínimo (cabeçalho), basta para o embrulho
+	vp8l := []byte{0x2f, 0, 0, 0, 0x10, 0x07, 0x10, 0x11, 0x11}
+	simple := writeWebP([]webpChunk{{"VP8L", vp8l}})
+	out, err := asAnimatedWebP(simple)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !webpIsAnimated(out) {
+		t.Fatal("não ficou animado")
+	}
+	if _, err := withSoundExif(out, []byte("a"), soundStickerPack{}); err != nil {
+		t.Fatal(err)
+	}
+}
