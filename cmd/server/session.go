@@ -1097,7 +1097,11 @@ func (s *Session) info() SessionInfo {
 }
 
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {
-	oldB, oldOC, found := s.reg.setBridge(callID, b, oc)
+	oldB, oldOC, oldWS, found := s.reg.setBridgeExclusive(callID, b, oc)
+	if oldWS != nil {
+		oldWS.DisableTerminate()
+		oldWS.Close()
+	}
 	if !found {
 		b.Close()
 		if oc != nil {
@@ -1126,6 +1130,9 @@ func (s *Session) removeCall(callID string) {
 		"no_bridge", atomic.LoadUint64(&ac.noBrowserN), "webrtc", ac.bridge != nil, "ws", ac.wsBridge != nil)
 	s.finalizeRecording(ac)
 	ac.spies.closeAll()
+	if c := ac.consult.Swap(nil); c != nil {
+		c.close()
+	}
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}

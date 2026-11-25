@@ -3750,6 +3750,7 @@ paths:
               type: object
               properties:
                 moh: { type: boolean, default: true, description: "Tocar música de espera para o interlocutor" }
+                moh_url: { type: string, description: "URL de áudio (mp3/ogg/wav…) para usar como música de espera nesta chamada. Sem ela usa a da sessão (PUT /moh) ou a padrão. Se a URL falhar, toca a padrão." }
       responses:
         "200":
           description: Em espera
@@ -3808,8 +3809,10 @@ paths:
             schema:
               type: object
               properties:
-                to: { type: string, description: "clientId do atendente alvo (opcional = fila)" }
+                to: { type: string, description: "clientId do atendente alvo (opcional = fila). Liste os colegas em GET /calls/agents." }
+                fromLabel: { type: string, description: "nome de quem transferiu; volta como `fromName` no evento call-transfer-offer (sem ele usa o label registrado do clientId de origem)" }
                 moh: { type: boolean, description: "música de espera durante a transferência (padrão true)" }
+                moh_url: { type: string, description: "música de espera própria (URL de áudio) — ver /hold" }
       responses:
         "200":
           description: Transferida
@@ -3821,7 +3824,190 @@ paths:
                   status: { type: string, example: ok }
                   transferred: { type: boolean, example: true }
                   to: { type: string }
-        "404": { description: "no such call" }
+        "404": { description: "no such call, ou `code: agent_offline` quando o `to` não está conectado" }
+        "409": { description: "há uma consulta em andamento (conclua ou cancele antes)" }
+
+  /api/sessions/{sid}/calls/agents:
+    get:
+      tags: [Chamadas]
+      summary: Atendentes conectados (para transferir/consultar um colega)
+      description: >
+        Lista os navegadores conectados no SSE `/api/events` que enxergam esta sessão
+        (mesmo escopo de conta/caixa dos eventos). O `label` vem de `?label=` no SSE ou de
+        `POST /api/calls/register`. `busy` = é dono de alguma chamada em andamento. O próprio
+        chamador (X-Client-Id) é omitido, a não ser com `?includeSelf=true`. Alias:
+        `/calls/clients`. Mudanças no roster disparam o evento SSE `{"type":"agents-changed"}`
+        (busque a lista de novo).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/ClientId" }
+        - { name: includeSelf, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Roster
+          content:
+            application/json:
+              example:
+                agents:
+                  - { clientId: "astrachat_acc1_u7", label: "Maria", busy: false, connections: 1, connectedAt: 1764000000000 }
+                  - { clientId: "astrachat_acc1_u9", label: "João", busy: true, callId: "A1B2C3", connections: 2, connectedAt: 1763990000000 }
+
+  /api/calls/register:
+    post:
+      tags: [Chamadas]
+      summary: Registra o nome do atendente (label) no roster
+      description: >
+        Nomeia o clientId (header `X-Client-Id` ou `?clientId=`) em todas as conexões SSE
+        dele. Alternativa: conectar o SSE com `/api/events?clientId=...&label=Maria`.
+        Liberado para a chave/token de widget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [label], properties: { label: { type: string, example: "Maria" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { example: { clientId: "astrachat_acc1_u7", label: "Maria" } } } }
+        "400": { description: sem clientId }
+        "404": { description: o clientId não tem conexão no SSE }
+
+  /api/sessions/{sid}/calls/{id}/consult:
+    post:
+      tags: [Chamadas]
+      summary: Inicia transferência COM CONSULTA (atendida)
+      description: >
+        O atendente A (dono da chamada) chama o colega B (`to` = clientId) para conversar
+        antes de passar a ligação. O cliente vai para a espera com música e B recebe o
+        evento SSE `call-consult-offer` {id, consultId, from, fromName, to, toName, peer}.
+
+
+        Fluxo:
+
+        1. A → `POST .../consult {to, fromLabel}`
+
+        2. B → `POST .../consult/webrtc {sdp_offer}` (header X-Client-Id de B): conecta
+        A ↔ B (o cliente segue na espera e não ouve).
+
+        3. A (ou B) → `POST .../consult/complete`: o cliente passa a falar com B (B vira o
+        dono; a ponte WebRTC de B vira a ponte da chamada, sem renegociar), A é desligado
+        da chamada e ela sai da espera. Ou `POST .../consult/cancel`: B sai e o cliente
+        volta para A.
+
+
+        Todos os painéis da sessão recebem `call-consult-state` {state: offered | active |
+        completed | cancelled, reason?}. No `completed` também sai `call-transfer-claimed`
+        com o novo dono. A pode estar em WebRTC ou WS (pcm16); B usa WebRTC. Ainda não
+        disponível para a chamada do modo agente SIP (`sip-…`).
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, description: "clientId do colega (GET /calls/agents)" }
+                fromLabel: { type: string, description: "nome de quem consulta (padrão: label registrado)" }
+                moh: { type: boolean, default: true }
+                moh_url: { type: string }
+      responses:
+        "200":
+          description: Consulta oferecida
+          content:
+            application/json:
+              example: { status: ok, consult: { consultId: "9f2c…", id: "A1B2C3", state: offered, from: "astrachat_acc1_u9", fromName: "João", to: "astrachat_acc1_u7", toName: "Maria", peer: "5561999999999@s.whatsapp.net", startedAt: 1764000000000 } }
+        "400": { description: "sem `to`, ou `to` = você mesmo" }
+        "404": { description: "no such call / agent_offline" }
+        "409": { description: "chamada não ativa, sem áudio de atendente, ou já há consulta" }
+        "501": { description: chamada SIP (modo agente) }
+    get:
+      tags: [Chamadas]
+      summary: Estado da consulta em andamento
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200": { description: "`{consult: {...}}` ou `{consult: null}`" }
+
+  /api/sessions/{sid}/calls/{id}/consult/webrtc:
+    post:
+      tags: [Chamadas]
+      summary: Colega (B) conecta o áudio da consulta
+      description: "Mesmo contrato do `/webrtc` da chamada (SDP offer com transceiver de áudio). Só o clientId alvo da consulta pode conectar."
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [sdp_offer], properties: { sdp_offer: { type: string } } }
+      responses:
+        "200": { description: OK, content: { application/json: { example: { sdp_answer: "v=0…", consultId: "9f2c…" } } } }
+        "403": { description: a consulta é para outro atendente }
+        "404": { description: nenhuma consulta em andamento }
+
+  /api/sessions/{sid}/calls/{id}/consult/complete:
+    post:
+      tags: [Chamadas]
+      summary: Conclui a consulta (cliente ↔ colega)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200": { description: OK, content: { application/json: { example: { status: ok, owner: "astrachat_acc1_u7" } } } }
+        "404": { description: nenhuma consulta em andamento }
+        "409": { description: o colega ainda não conectou o áudio }
+
+  /api/sessions/{sid}/calls/{id}/consult/cancel:
+    post:
+      tags: [Chamadas]
+      summary: Cancela/recusa a consulta (cliente volta para quem consultou)
+      description: "Serve para A cancelar e para B recusar. Body opcional `{reason}`; padrão \"cancelada\" (A) ou \"recusada pelo colega\" (B). Se B fechar a conexão, cancela sozinho."
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        "200": { description: OK, content: { application/json: { example: { status: ok, state: cancelled } } } }
+        "404": { description: nenhuma consulta em andamento }
+
+  /api/sessions/{sid}/moh:
+    get:
+      tags: [Chamadas]
+      summary: Música de espera da sessão
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200": { description: OK, content: { application/json: { example: { url: "https://exemplo.com/espera.mp3" } } } }
+    put:
+      tags: [Chamadas]
+      summary: Define a música de espera da sessão (por número/caixa)
+      description: >
+        URL de áudio usada por padrão no hold, na transferência e na consulta das chamadas
+        WhatsApp desta sessão (o `moh_url` do pedido tem prioridade). O áudio é baixado e
+        convertido na hora (valida a URL; até 5 min, em loop). `url: ""` volta para a
+        música padrão. Também aparece em GET/PUT /options como `moh_url`.
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { url: { type: string } } }
+      responses:
+        "200": { description: OK, content: { application/json: { example: { url: "https://exemplo.com/espera.mp3", seconds: 92.4 } } } }
+        "400": { description: não consegui baixar/converter o áudio }
 
   /api/sessions/{sid}/calls/{id}/pickup:
     post:

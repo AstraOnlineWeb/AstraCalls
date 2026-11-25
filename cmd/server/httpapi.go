@@ -73,6 +73,19 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/silence", s.handleCallSilence)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/transfer", s.handleTransfer)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/pickup", s.handlePickup)
+	// transferência com consulta (atendida) — ver consult.go
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/consult", s.handleConsultStart)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/consult", s.handleConsultGet)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/consult/webrtc", s.handleConsultWebRTC)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/consult/complete", s.handleConsultComplete)
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/consult/cancel", s.handleConsultCancel)
+	// roster de atendentes conectados (transferir/consultar um colega) — agents.go
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/agents", s.handleCallAgents)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/clients", s.handleCallAgents)
+	mux.HandleFunc("POST /api/calls/register", s.handleCallRegister)
+	// música de espera própria da sessão — moh.go
+	mux.HandleFunc("GET /api/sessions/{sid}/moh", s.handleGetMOH)
+	mux.HandleFunc("PUT /api/sessions/{sid}/moh", s.handleSetMOH)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 
@@ -436,6 +449,8 @@ func widgetAllowed(r *http.Request) bool {
 	switch {
 	case p == "/api/events": // SSE de chamadas
 		return true
+	case r.Method == http.MethodPost && p == "/api/calls/register": // nome do atendente (roster)
+		return true
 	case r.Method == http.MethodGet && p == "/api/chatwoot/resolve": // nome/telefone do contato
 		return true
 	// operações de chamada: iniciar, atender/recusar, webrtc, vídeo, encerrar
@@ -774,12 +789,17 @@ func (s *server) handleHold(w http.ResponseWriter, r *http.Request) {
 	}
 	moh := true // por padrão toca música de espera
 	var body struct {
-		MOH *bool `json:"moh"`
+		MOH    *bool  `json:"moh"`
+		MOHURL string `json:"moh_url"`
 	}
 	if json.NewDecoder(r.Body).Decode(&body) == nil && body.MOH != nil {
 		moh = *body.MOH
 	}
-	if err := ac.cm.Hold(moh); err != nil {
+	var loop []float32
+	if moh {
+		loop = sess.mohFor(body.MOHURL)
+	}
+	if err := ac.cm.HoldWith(moh, loop); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
@@ -830,12 +850,23 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		To string `json:"to"`
+		To        string `json:"to"`
+		FromLabel string `json:"fromLabel"`
+		MOHURL    string `json:"moh_url"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	to := strings.TrimSpace(body.To)
+	if to != "" && !s.broker.isConnected(sess.id, to) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "atendente de destino não está conectado", "code": "agent_offline"})
+		return
+	}
+	if c := ac.consult.Load(); c != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "há uma consulta em andamento: conclua ou cancele antes"})
+		return
+	}
 
 	// Melhor esforço: coloca em espera com música. Se já estiver em espera, tudo bem.
-	_ = ac.cm.Hold(true)
+	_ = ac.cm.HoldWith(true, sess.mohFor(body.MOHURL))
 
 	from := clientID(r)
 	s.broker.reassignOwner(id, nil) // libera o dono para o alvo poder assumir
@@ -843,8 +874,8 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	if cr, ok := s.broker.getCall(id); ok && cr != nil {
 		peer = cr.Peer
 	}
-	s.broker.emitTransferOffer(sess.id, id, peer, from, strings.TrimSpace(body.To))
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": strings.TrimSpace(body.To)})
+	s.broker.emitTransferOffer(sess.id, id, peer, from, strings.TrimSpace(body.FromLabel), to)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": to})
 }
 
 // handlePickup assume uma chamada transferida: fixa o novo dono SEM re-aceitar no
@@ -982,19 +1013,7 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		s.log.Warn("browser Opus codec unavailable — call audio disabled", "err", ocErr)
 		browserOpus = nil
 	}
-	bridge.OnBrowserRTP = func(payload []byte) {
-		if browserOpus == nil {
-			return
-		}
-		pcm48, err := browserOpus.Decode(payload)
-		if err != nil {
-			return
-		}
-		down := media.Downsample48to16(pcm48)
-		ac.recorder.writeBrowser(down)
-		ac.spies.feed(spySideAgent, down)
-		ac.cm.FeedCapturedPCM(down)
-	}
+	bridge.OnBrowserRTP = agentRTPHandler(ac, browserOpus)
 	bridge.OnBrowserVideo = func(au []byte) {
 		ac.cm.FeedCapturedVideo(au)
 	}

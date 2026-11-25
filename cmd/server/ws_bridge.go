@@ -212,6 +212,10 @@ func (s *server) handleWSBridge(w http.ResponseWriter, r *http.Request) {
 	// uplink: PCM16 16 kHz do consumidor → grava + injeta na chamada (codec MLow
 	// do WhatsApp). Sem Opus intermediário.
 	bridge.OnBrowserPCM = func(pcm16 []float32) {
+		if c := ac.consult.Load(); c != nil {
+			c.fromAgentPCM(pcm16) // em consulta: a voz do atendente vai para o colega
+			return
+		}
 		ac.recorder.writeBrowser(pcm16)
 		ac.spies.feed(spySideAgent, pcm16)
 		ac.cm.FeedCapturedPCM(pcm16)

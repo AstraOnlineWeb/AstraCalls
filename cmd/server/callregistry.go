@@ -14,16 +14,17 @@ type activeCall struct {
 	bridge      *Bridge
 	wsBridge    *wsBridge // ponte WebSocket (alternativa ao pion WebRTC para proxies HTTP)
 	browserOpus media.Codec
-	recorder    *callRecorder // nil quando a gravação está desligada na sessão
-	rtpBridge   *SIPRTPBridge // ponte RTP p/ SIP; nil quando a chamada não é SIP
-	peerAudioN  uint64        // diagnóstico: nº de frames de áudio do peer (WhatsApp) recebidos
-	toBrowserN  uint64        // diagnóstico: frames do peer entregues ao navegador (WebRTC ou WS)
-	noBrowserN  uint64        // diagnóstico: frames do peer descartados sem ponte com o navegador
-	ringTimer   *time.Timer   // timeout de toque: expira a chamada que nunca recebe encerramento
-	answered    atomic.Bool   // marca que a chamada ficou ativa (atendida) — não expirar
-	spies       *spyHub       // espiões (escuta em tempo real do mix dos dois lados); ver spy.go
-	volumeMilli atomic.Int32  // ganho do áudio interlocutor→atendente, em milésimos +1 (0 = não ajustado = 1.0)
-	silenced    atomic.Bool   // toque silenciado na tela (o celular continua tocando)
+	recorder    *callRecorder              // nil quando a gravação está desligada na sessão
+	rtpBridge   *SIPRTPBridge              // ponte RTP p/ SIP; nil quando a chamada não é SIP
+	peerAudioN  uint64                     // diagnóstico: nº de frames de áudio do peer (WhatsApp) recebidos
+	toBrowserN  uint64                     // diagnóstico: frames do peer entregues ao navegador (WebRTC ou WS)
+	noBrowserN  uint64                     // diagnóstico: frames do peer descartados sem ponte com o navegador
+	ringTimer   *time.Timer                // timeout de toque: expira a chamada que nunca recebe encerramento
+	answered    atomic.Bool                // marca que a chamada ficou ativa (atendida) — não expirar
+	spies       *spyHub                    // espiões (escuta em tempo real do mix dos dois lados); ver spy.go
+	volumeMilli atomic.Int32               // ganho do áudio interlocutor→atendente, em milésimos +1 (0 = não ajustado = 1.0)
+	silenced    atomic.Bool                // toque silenciado na tela (o celular continua tocando)
+	consult     atomic.Pointer[consultLeg] // consulta em andamento (transferência atendida); ver consult.go
 }
 
 type callRegistry struct {
@@ -91,15 +92,22 @@ func (r *callRegistry) count() int {
 }
 
 func (r *callRegistry) setBridge(callID string, b *Bridge, oc media.Codec) (*Bridge, media.Codec, bool) {
+	oldB, oldOC, _, ok := r.setBridgeExclusive(callID, b, oc)
+	return oldB, oldOC, ok
+}
+
+// setBridgeExclusive instala a ponte WebRTC e tira a WebSocket (se havia): com
+// as duas, o áudio do interlocutor iria só para a WS (ver OnPeerAudio).
+func (r *callRegistry) setBridgeExclusive(callID string, b *Bridge, oc media.Codec) (*Bridge, media.Codec, *wsBridge, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ac, ok := r.calls[callID]
 	if !ok {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
-	oldB, oldOC := ac.bridge, ac.browserOpus
-	ac.bridge, ac.browserOpus = b, oc
-	return oldB, oldOC, true
+	oldB, oldOC, oldWS := ac.bridge, ac.browserOpus, ac.wsBridge
+	ac.bridge, ac.browserOpus, ac.wsBridge = b, oc, nil
+	return oldB, oldOC, oldWS, true
 }
 
 func (r *callRegistry) setWSBridge(callID string, b *wsBridge, oc media.Codec) (*wsBridge, *Bridge, media.Codec, bool) {

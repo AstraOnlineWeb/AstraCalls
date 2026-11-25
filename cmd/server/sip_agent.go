@@ -568,8 +568,9 @@ func (c *sipAgentCall) isAnswered() bool {
 // O atendente assume com /pickup (ou /accept) e abre o áudio com /webrtc ou /ws.
 func (s *server) sipAgentTransfer(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To  string `json:"to"`
-		MOH *bool  `json:"moh"`
+		To        string `json:"to"`
+		MOH       *bool  `json:"moh"`
+		FromLabel string `json:"fromLabel"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if !c.isAnswered() {
@@ -581,7 +582,7 @@ func (s *server) sipAgentTransfer(c *sipAgentCall, w http.ResponseWriter, r *htt
 	c.detachAgentWS("transfer")
 	s.broker.reassignOwner(c.id, nil)
 	to := strings.TrimSpace(body.To)
-	s.broker.emitTransferOffer(c.sessionID, c.id, c.phone, clientID(r), to)
+	s.broker.emitTransferOffer(c.sessionID, c.id, c.phone, clientID(r), strings.TrimSpace(body.FromLabel), to)
 	s.log.Info("SIP agent: transferida", "id", c.id, "to", to)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": to})
 }

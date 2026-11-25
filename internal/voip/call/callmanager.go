@@ -52,6 +52,8 @@ type CallManager struct {
 	held       bool
 	mohEnabled bool
 	mohPos     int
+	// mohCustom: música de espera própria (PCM 16 kHz mono, em loop); nil = a padrão.
+	mohCustom []float32
 
 	audioTimelineSet   bool
 	audioBaseTs        uint32
@@ -115,7 +117,11 @@ func (m *CallManager) CurrentCall() *CallInfo {
 // áudio do atendente (enviando música de espera se moh=true, senão silêncio) e de
 // encaminhar o áudio do peer ao navegador. Não sinaliza mute ao WhatsApp de propósito,
 // para o interlocutor continuar recebendo mídia (a música).
-func (m *CallManager) Hold(moh bool) error {
+func (m *CallManager) Hold(moh bool) error { return m.HoldWith(moh, nil) }
+
+// HoldWith é o Hold com música de espera própria (PCM 16 kHz mono, tocada em
+// loop). loop nil/vazio usa a música padrão.
+func (m *CallManager) HoldWith(moh bool, loop []float32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.currentCall == nil {
@@ -127,6 +133,7 @@ func (m *CallManager) Hold(moh bool) error {
 	m.held = true
 	m.mohEnabled = moh
 	m.mohPos = 0
+	m.mohCustom = loop
 	m.emitState()
 	return nil
 }

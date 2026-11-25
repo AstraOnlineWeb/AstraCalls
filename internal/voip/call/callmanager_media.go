@@ -140,13 +140,20 @@ func (m *CallManager) startMediaSendLoopLocked() {
 // de espera, avançando a posição. Deve ser chamado com m.mu travado.
 func (m *CallManager) nextMohFrameLocked(frameSize int) []float32 {
 	frame := make([]float32, frameSize)
-	if len(mohLoop) == 0 {
+	loop := mohLoop
+	if len(m.mohCustom) > 0 {
+		loop = m.mohCustom
+	}
+	if len(loop) == 0 {
 		return frame
 	}
 	for i := 0; i < frameSize; i++ {
-		frame[i] = mohLoop[m.mohPos]
+		if m.mohPos >= len(loop) {
+			m.mohPos = 0
+		}
+		frame[i] = loop[m.mohPos]
 		m.mohPos++
-		if m.mohPos >= len(mohLoop) {
+		if m.mohPos >= len(loop) {
 			m.mohPos = 0
 		}
 	}

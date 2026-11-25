@@ -19,6 +19,9 @@ type sessionOptions struct {
 	// o WhatsApp entende que a pessoa está no computador e NÃO notifica o
 	// celular; por isso o padrão é ficar online só por um instante.
 	AlwaysOnline bool `json:"always_online"`
+	// MOHURL: música de espera própria da sessão (URL de áudio), usada no hold,
+	// na transferência e na consulta quando o pedido não traz moh_url. "" = padrão.
+	MOHURL string `json:"moh_url,omitempty"`
 }
 
 // presenceOnlinePulse é quanto tempo a conta fica "online" a cada reforço de
@@ -82,7 +85,7 @@ func (s *server) handleGetOptions(w http.ResponseWriter, r *http.Request) {
 
 // effectiveOptions junta as opções da sessão com os flags legados do Chatwoot.
 func (sess *Session) effectiveOptions() sessionOptions {
-	return sessionOptions{ReadMessages: sess.readMessagesEnabled(), AlwaysOnline: sess.alwaysOnlineEnabled()}
+	return sessionOptions{ReadMessages: sess.readMessagesEnabled(), AlwaysOnline: sess.alwaysOnlineEnabled(), MOHURL: sess.getOptions().MOHURL}
 }
 
 // PUT /api/sessions/{sid}/options { "read_messages": bool, "always_online": bool }

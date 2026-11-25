@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -77,6 +78,11 @@ type subscriber struct {
 	// chamada da caixa B da mesma empresa.
 	inboxes map[int]bool
 	ch      chan []byte
+	// label: nome do atendente informado pelo cliente (?label= no SSE ou
+	// POST /api/calls/register) — usado no roster /calls/agents e no
+	// "transferida por" da oferta de transferência.
+	label       string
+	connectedAt int64
 }
 
 // wants diz se o assinante deve receber um evento da sessão com esse escopo.
@@ -230,11 +236,21 @@ func (b *Broker) broadcastForSessionTargeted(sessionID, targetClientID string, e
 
 // emitTransferOffer avisa o(s) painel(is) que uma chamada ativa foi transferida e está
 // disponível para atender (pickup). Se target != "", só o navegador alvo recebe.
-func (b *Broker) emitTransferOffer(sessionID, id, peer, from, target string) {
-	b.broadcastForSessionTargeted(sessionID, target, map[string]any{
+// fromName é o nome de quem transferiu (fromLabel do pedido ou o label
+// registrado do clientId de origem).
+func (b *Broker) emitTransferOffer(sessionID, id, peer, from, fromName, target string) {
+	if fromName == "" {
+		fromName = b.labelOf(from)
+	}
+	ev := map[string]any{
 		"type": "call-transfer-offer", "sessionId": sessionID, "id": id, "peer": peer,
-		"from": from, "offeredAt": time.Now().UnixMilli(),
-	})
+		"from": from, "fromName": fromName, "offeredAt": time.Now().UnixMilli(),
+	}
+	if target != "" {
+		ev["to"] = target
+		ev["toName"] = b.labelOf(target)
+	}
+	b.broadcastForSessionTargeted(sessionID, target, ev)
 }
 
 // emitTransferClaimed some com a oferta de transferência nos outros painéis quando
@@ -549,7 +565,20 @@ func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID strin
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	sub := b.subscribeInboxes(clientID, accountID, cwHost, inboxes)
+	b.mu.Lock()
+	sub.label = strings.TrimSpace(r.URL.Query().Get("label"))
+	if sub.label == "" {
+		sub.label = b.labelOfLocked(clientID)
+	}
+	sub.connectedAt = time.Now().UnixMilli()
+	b.mu.Unlock()
+	if clientID != "" {
+		defer func() { go b.emitAgentsChanged() }() // roda depois do unsubscribe
+	}
 	defer b.unsubscribe(sub)
+	if clientID != "" {
+		b.emitAgentsChanged()
+	}
 
 	if b.SessionsFn != nil {
 		sessions := b.SessionsFn()
