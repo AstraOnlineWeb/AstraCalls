@@ -3511,6 +3511,16 @@ paths:
               required: [sdp_offer]
               properties:
                 sdp_offer: { type: string, description: "SDP offer do RTCPeerConnection" }
+                reloadSafe:
+                  type: boolean
+                  description: >
+                    Modo reload-safe (opt-in; padrão = env WACALLS_RELOAD_SAFE). Se a ponte do
+                    navegador cair (recarregar a página, rede), a ligação NÃO é encerrada: vai
+                    para a espera com música, sai o SSE `call-webrtc-failed` {reason,
+                    graceSeconds, reloadSafe:true} e o servidor espera um novo `/webrtc` ou
+                    `/ws` nesta chamada. Ao reconectar, ela sai da espera sozinha e sai
+                    `call-agent-reconnected`. Sem reconexão no prazo, encerra.
+                graceSeconds: { type: integer, default: 60, maximum: 600, description: "prazo para reconectar no modo reload-safe" }
       responses:
         "200":
           description: SDP answer
@@ -3547,6 +3557,10 @@ paths:
 
         A chamada precisa já existir (crie/atenda antes: `POST .../calls` ou `.../accept`).
         Áudio-only (sem vídeo). Autentique com `?apiKey=`.
+
+
+        **Reload-safe:** `?reloadSafe=1&graceSeconds=60` (ver `/webrtc`): se o socket
+        fechar, a ligação vai para a espera e aguarda reconexão em vez de encerrar.
 
 
         ⚠️ Fechar o WebSocket ENCERRA a chamada no WhatsApp.

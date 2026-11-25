@@ -25,6 +25,10 @@ type activeCall struct {
 	volumeMilli atomic.Int32               // ganho do áudio interlocutor→atendente, em milésimos +1 (0 = não ajustado = 1.0)
 	silenced    atomic.Bool                // toque silenciado na tela (o celular continua tocando)
 	consult     atomic.Pointer[consultLeg] // consulta em andamento (transferência atendida); ver consult.go
+	// modo reload-safe (ver reloadsafe.go): a ponte do atendente caiu e a chamada
+	// espera (com música) ele reconectar até o timer expirar.
+	orphanMu    sync.Mutex
+	orphanTimer *time.Timer
 }
 
 type callRegistry struct {

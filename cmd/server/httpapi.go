@@ -996,12 +996,15 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body struct {
-		SDPOffer string `json:"sdp_offer"`
+		SDPOffer     string `json:"sdp_offer"`
+		ReloadSafe   *bool  `json:"reloadSafe"`
+		GraceSeconds int    `json:"graceSeconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.SDPOffer == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sdp_offer required"})
 		return
 	}
+	rs := reloadSafeFrom(body.ReloadSafe, body.GraceSeconds)
 	bridge, answer, err := NewBridge(body.SDPOffer, s.log)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -1018,6 +1021,10 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		ac.cm.FeedCapturedVideo(au)
 	}
 	bridge.OnTerminalICE = func() {
+		if rs.enabled {
+			go s.orphanCall(sess, ac, callID, func() bool { return ac.bridge == bridge }, rs.grace, "webrtc_failed")
+			return
+		}
 		go sess.terminateCall(callID, core.EndCallReasonUserEnded)
 	}
 	sess.setBridge(callID, bridge, browserOpus)

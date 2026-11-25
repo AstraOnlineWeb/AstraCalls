@@ -1098,6 +1098,9 @@ func (s *Session) info() SessionInfo {
 
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {
 	oldB, oldOC, oldWS, found := s.reg.setBridgeExclusive(callID, b, oc)
+	if found {
+		s.reattached(callID)
+	}
 	if oldWS != nil {
 		oldWS.DisableTerminate()
 		oldWS.Close()
@@ -1209,6 +1212,9 @@ func (s *Session) wsCallEvent(callID string, ev map[string]any) {
 // o encerramento da chamada (DisableTerminate).
 func (s *Session) setWSBridge(callID string, b *wsBridge, oc media.Codec) {
 	oldWSB, oldB, oldOC, found := s.reg.setWSBridge(callID, b, oc)
+	if found {
+		s.reattached(callID)
+	}
 	if !found {
 		b.Close()
 		if oc != nil {

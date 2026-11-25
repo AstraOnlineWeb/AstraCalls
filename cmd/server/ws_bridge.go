@@ -220,7 +220,12 @@ func (s *server) handleWSBridge(w http.ResponseWriter, r *http.Request) {
 		ac.spies.feed(spySideAgent, pcm16)
 		ac.cm.FeedCapturedPCM(pcm16)
 	}
+	rs := reloadSafeFromQuery(r)
 	bridge.OnTerminalWS = func() {
+		if rs.enabled {
+			go s.orphanCall(sess, ac, callID, func() bool { return ac.wsBridge == bridge }, rs.grace, "ws_closed")
+			return
+		}
 		go sess.terminateCall(callID, core.EndCallReasonUserEnded)
 	}
 
