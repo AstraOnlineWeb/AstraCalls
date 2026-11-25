@@ -73,6 +73,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/silence", s.handleCallSilence)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/transfer", s.handleTransfer)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/pickup", s.handlePickup)
+	// fila ring-next das transferências — transferqueue.go
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/transfer/decline", s.handleTransferDecline)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/queue", s.handleTransferQueue)
 	// transferência com consulta (atendida) — ver consult.go
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/consult", s.handleConsultStart)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/consult", s.handleConsultGet)
@@ -850,9 +853,11 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		To        string `json:"to"`
-		FromLabel string `json:"fromLabel"`
-		MOHURL    string `json:"moh_url"`
+		To          string `json:"to"`
+		FromLabel   string `json:"fromLabel"`
+		MOHURL      string `json:"moh_url"`
+		Mode        string `json:"mode"`        // "" = fila ring-next; "all" = oferta a todos
+		RingSeconds int    `json:"ringSeconds"` // fila: tempo de toque por atendente
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	to := strings.TrimSpace(body.To)
@@ -874,8 +879,8 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	if cr, ok := s.broker.getCall(id); ok && cr != nil {
 		peer = cr.Peer
 	}
-	s.broker.emitTransferOffer(sess.id, id, peer, from, strings.TrimSpace(body.FromLabel), to)
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": to})
+	mode := s.offerTransfer(sess.id, id, peer, from, strings.TrimSpace(body.FromLabel), to, body.Mode, body.RingSeconds)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": to, "mode": mode})
 }
 
 // handlePickup assume uma chamada transferida: fixa o novo dono SEM re-aceitar no
@@ -897,8 +902,7 @@ func (s *server) handlePickup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner := clientID(r)
-	if !s.broker.reassignOwner(id, &owner) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+	if !s.claimTransfer(w, id, owner) {
 		return
 	}
 	s.broker.emitTransferClaimed(sess.id, id, owner)

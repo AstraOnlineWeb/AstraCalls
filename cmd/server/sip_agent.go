@@ -568,9 +568,11 @@ func (c *sipAgentCall) isAnswered() bool {
 // O atendente assume com /pickup (ou /accept) e abre o áudio com /webrtc ou /ws.
 func (s *server) sipAgentTransfer(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To        string `json:"to"`
-		MOH       *bool  `json:"moh"`
-		FromLabel string `json:"fromLabel"`
+		To          string `json:"to"`
+		MOH         *bool  `json:"moh"`
+		FromLabel   string `json:"fromLabel"`
+		Mode        string `json:"mode"`
+		RingSeconds int    `json:"ringSeconds"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if !c.isAnswered() {
@@ -582,9 +584,9 @@ func (s *server) sipAgentTransfer(c *sipAgentCall, w http.ResponseWriter, r *htt
 	c.detachAgentWS("transfer")
 	s.broker.reassignOwner(c.id, nil)
 	to := strings.TrimSpace(body.To)
-	s.broker.emitTransferOffer(c.sessionID, c.id, c.phone, clientID(r), strings.TrimSpace(body.FromLabel), to)
-	s.log.Info("SIP agent: transferida", "id", c.id, "to", to)
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": to})
+	mode := s.offerTransfer(c.sessionID, c.id, c.phone, clientID(r), strings.TrimSpace(body.FromLabel), to, body.Mode, body.RingSeconds)
+	s.log.Info("SIP agent: transferida", "id", c.id, "to", to, "mode", mode)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "transferred": true, "to": to, "mode": mode})
 }
 
 // sipAgentPickup: POST /calls/{id}/pickup — o atendente assume a chamada
@@ -596,8 +598,7 @@ func (s *server) sipAgentPickup(c *sipAgentCall, w http.ResponseWriter, r *http.
 		return
 	}
 	owner := clientID(r)
-	if !s.broker.reassignOwner(c.id, &owner) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+	if !s.claimTransfer(w, c.id, owner) {
 		return
 	}
 	s.broker.emitTransferClaimed(c.sessionID, c.id, owner)

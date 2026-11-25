@@ -3823,7 +3823,20 @@ paths:
             schema:
               type: object
               properties:
-                to: { type: string, description: "clientId do atendente alvo (opcional = fila). Liste os colegas em GET /calls/agents." }
+                to: { type: string, description: "clientId do atendente alvo (só ele pode assumir). Sem `to` = fila. Liste os colegas em GET /calls/agents." }
+                mode:
+                  type: string
+                  enum: [queue, all]
+                  default: queue
+                  description: >
+                    Sem `to`: `queue` (padrão) = fila FIFO ring-next — oferece a UM atendente livre
+                    por vez (o que está há mais tempo sem receber da fila), por `ringSeconds`; se ele
+                    não assumir ou recusar (`.../transfer/decline`) sai `call-transfer-withdrawn` e
+                    vai para o próximo; chamadas mais antigas primeiro. O `call-transfer-offer` da
+                    fila traz `queue:true, ringSeconds, attempt, position, waitingSince`. Mudanças de
+                    posição saem em `call-queue-position` {id, position, waiting, offeredTo}.
+                    `all` = comportamento antigo (oferta a todos; o primeiro /pickup leva).
+                ringSeconds: { type: integer, default: 20, minimum: 5, maximum: 120, description: "fila: tempo de toque por atendente" }
                 fromLabel: { type: string, description: "nome de quem transferiu; volta como `fromName` no evento call-transfer-offer (sem ele usa o label registrado do clientId de origem)" }
                 moh: { type: boolean, description: "música de espera durante a transferência (padrão true)" }
                 moh_url: { type: string, description: "música de espera própria (URL de áudio) — ver /hold" }
@@ -3839,6 +3852,33 @@ paths:
                   transferred: { type: boolean, example: true }
                   to: { type: string }
         "404": { description: "no such call, ou `code: agent_offline` quando o `to` não está conectado" }
+
+  /api/sessions/{sid}/calls/{id}/transfer/decline:
+    post:
+      tags: [Chamadas]
+      summary: Recusa a oferta da fila (passa para o próximo atendente)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+        - { $ref: "#/components/parameters/ClientId" }
+      responses:
+        "200": { description: OK }
+        "409": { description: não há oferta da fila desta chamada para você }
+
+  /api/sessions/{sid}/calls/queue:
+    get:
+      tags: [Chamadas]
+      summary: Chamadas aguardando atendente (fila e transferências pendentes)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+      responses:
+        "200":
+          description: Fila em ordem de chegada
+          content:
+            application/json:
+              example:
+                queue:
+                  - { id: "A1B2C3", mode: queue, position: 1, peer: "5561999999999@s.whatsapp.net", from: "astrachat_acc1_u9", fromName: "João", waitingSince: 1764000000000, offeredTo: "astrachat_acc1_u7", offeredAt: 1764000005000, ringSeconds: 20, attempts: 1 }
         "409": { description: "há uma consulta em andamento (conclua ou cancele antes)" }
 
   /api/sessions/{sid}/calls/agents:
@@ -4030,6 +4070,8 @@ paths:
       description: >
         Fixa o novo dono (`X-Client-Id`) de uma chamada transferida (não re-atende no
         WhatsApp). Depois o navegador chama `.../webrtc` (abre a ponte) e `.../resume`.
+        Travas: transferência direcionada só o alvo assume; na fila, só quem está com a
+        oferta no momento; e nunca dois donos (409 `offered_to_other` / `already_claimed`).
         Na chamada SIP do modo agente, conectar `.../webrtc` ou `.../ws` já tira da espera.
       parameters:
         - { $ref: "#/components/parameters/Sid" }

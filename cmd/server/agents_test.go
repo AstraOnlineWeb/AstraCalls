@@ -71,6 +71,9 @@ func TestMOHCache(t *testing.T) {
 	calls := 0
 	old := mohLoader
 	defer func() { mohLoader = old }()
+	mohCacheMu.Lock()
+	mohCache = map[string]mohEntry{}
+	mohCacheMu.Unlock()
 	mohLoader = func(url string) ([]float32, error) {
 		calls++
 		if url == "ruim" {

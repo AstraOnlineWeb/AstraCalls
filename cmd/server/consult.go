@@ -254,6 +254,7 @@ func (s *server) handleConsultStart(w http.ResponseWriter, r *http.Request) {
 		id: newSpyID(), callID: id, sessionID: sess.id, from: from, fromName: fromName,
 		to: to, toName: s.broker.labelOf(to), peer: peer, startedAt: time.Now().UnixMilli(),
 	}
+	s.transfers().drop(id, "consulta")
 	if !ac.consult.CompareAndSwap(nil, c) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "já há uma consulta em andamento nesta chamada"})
 		return

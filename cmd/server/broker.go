@@ -239,6 +239,11 @@ func (b *Broker) broadcastForSessionTargeted(sessionID, targetClientID string, e
 // fromName é o nome de quem transferiu (fromLabel do pedido ou o label
 // registrado do clientId de origem).
 func (b *Broker) emitTransferOffer(sessionID, id, peer, from, fromName, target string) {
+	b.emitTransferOfferEx(sessionID, id, peer, from, fromName, target, nil)
+}
+
+// emitTransferOfferEx é o emitTransferOffer com campos extras (ex.: fila).
+func (b *Broker) emitTransferOfferEx(sessionID, id, peer, from, fromName, target string, extra map[string]any) {
 	if fromName == "" {
 		fromName = b.labelOf(from)
 	}
@@ -250,7 +255,27 @@ func (b *Broker) emitTransferOffer(sessionID, id, peer, from, fromName, target s
 		ev["to"] = target
 		ev["toName"] = b.labelOf(target)
 	}
+	for k, v := range extra {
+		ev[k] = v
+	}
 	b.broadcastForSessionTargeted(sessionID, target, ev)
+}
+
+// claimOwner fixa o dono só se a chamada estiver sem dono (ou já for dele):
+// trava contra dois atendentes assumindo a mesma transferência.
+func (b *Broker) claimOwner(id, owner string) (ok, exists bool) {
+	b.mu.Lock()
+	c, found := b.calls[id]
+	if !found {
+		b.mu.Unlock()
+		return false, false
+	}
+	if c.Owner != nil && *c.Owner != owner {
+		b.mu.Unlock()
+		return false, true
+	}
+	b.mu.Unlock()
+	return b.reassignOwner(id, &owner), true
 }
 
 // emitTransferClaimed some com a oferta de transferência nos outros painéis quando

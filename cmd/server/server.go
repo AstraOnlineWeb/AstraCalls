@@ -5,12 +5,15 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 type server struct {
 	broker    *Broker
+	queue     *transferQueue // fila/trava das transferências (transferqueue.go); use transfers()
+	queueOnce sync.Once
 	sessions  *SessionManager
 	log       *slog.Logger
 	staticDir string
