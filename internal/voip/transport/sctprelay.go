@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"wacalls/internal/voip/core"
 
@@ -26,9 +30,21 @@ const (
 	// maxDialRelays limita quantos relays são discados por chamada (corta
 	// goroutines/conexões desnecessárias quando o WhatsApp anuncia muitos relays).
 	maxDialRelays = 3
-	// maxOpenRelays limita quantos relays ficam abertos ao mesmo tempo por chamada.
-	maxOpenRelays = 2
 )
+
+// maxOpenRelays limita quantos relays ficam abertos ao mesmo tempo por chamada. O
+// padrão deixa abertos todos os discados: com outro aparelho do destino online (ex.:
+// WhatsApp Web), a mídia de quem atende no celular pode vir justamente pelo relay
+// excedente, e fechá-lo deixava a origem muda. WACALLS_MAX_OPEN_RELAYS troca o limite.
+var maxOpenRelays = parseMaxOpenRelays(os.Getenv("WACALLS_MAX_OPEN_RELAYS"))
+
+func parseMaxOpenRelays(v string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return maxDialRelays
+	}
+	return max(n, 1)
+}
 
 // relayAPI compartilha uma API do pion com mDNS desligado: evita o custo/latência
 // da coleta de candidatos MulticastDNS, que não serve pra nada nesse caso (os
@@ -232,7 +248,12 @@ func (m *SctpRelayManager) connectToRelay(info RelayConfig) {
 		}
 	})
 	channel.OnClose(func() { m.closeConnection(id) })
+	var firstRtpLogged atomic.Bool
 	channel.OnMessage(func(msg webrtc.DataChannelMessage) {
+		// diagnóstico: mostra por qual relay a mídia do peer chega (uma vez por conexão).
+		if IsRtpPacket(msg.Data) && firstRtpLogged.CompareAndSwap(false, true) {
+			m.log.Info("relay first rtp", "id", id, "name", info.Name)
+		}
 		if m.onReceive != nil {
 			m.onReceive(msg.Data)
 		}

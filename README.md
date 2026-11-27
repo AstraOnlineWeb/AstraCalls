@@ -275,6 +275,7 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_DEFAULT_TRANSPORT` | `auto` | Transporte de áudio do navegador: `auto` (WebRTC → fallback WS), `webrtc`, `websocket` |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` |
 | `WACALLS_RING_TIMEOUT_SECONDS` | — | Expira chamada recebida que nunca é encerrada |
+| `WACALLS_MAX_OPEN_RELAYS` | `3` | Relays abertos ao mesmo tempo por chamada (mínimo `1`). Abaixo de `3`, a chamada de saída pode ficar muda quando o destino tem o WhatsApp Web aberto e atende no celular |
 | `WACALLS_UNIFIED_SESSION_MINUTES` | `5` | Intervalo mínimo entre os sinais "unified session" enviados ao conectar, como faz o WhatsApp Web (`0` desliga) |
 | `WACALLS_DEVICE_NAME` | `Windows` | Nome do aparelho em "Dispositivos conectados" (vale para pareamentos novos) |
 | `WACALLS_DEVICE_BROWSER` | `chrome` | Ícone/plataforma do aparelho: `chrome`, `edge`, `firefox`, `safari` ou `desktop` |
